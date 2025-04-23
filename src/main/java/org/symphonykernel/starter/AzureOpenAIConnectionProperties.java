@@ -8,20 +8,20 @@ public class AzureOpenAIConnectionProperties {
     public static final String CONFIG_PREFIX = "client.azureopenai";
 
     /**
-     * Azure OpenAI API endpoint.From the Azure AI OpenAI at 'Resource Management' select `Keys and
-     * Endpoint` and find it on the right side.
+     * Azure OpenAI API endpoint.From the Azure AI OpenAI at 'Resource
+     * Management' select `Keys and Endpoint` and find it on the right side.
      */
     private String endpoint;
 
     /**
-     * Azure OpenAI API key.From the Azure AI OpenAI at 'Resource Management' select `Keys and
-     * Endpoint` and find it on the right side.
+     * Azure OpenAI API key.From the Azure AI OpenAI at 'Resource Management'
+     * select `Keys and Endpoint` and find it on the right side.
      */
     private String key;
 
     /**
-     * Azure OpenAI API deployment name specified in the Azure Open AI studio under Management ->
-     * Deployments.
+     * Azure OpenAI API deployment name specified in the Azure Open AI studio
+     * under Management -> Deployments.
      */
     private String deploymentName;
 

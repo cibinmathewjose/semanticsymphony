@@ -1,4 +1,5 @@
 package org.symphonykernel.core;
+
 import java.util.Iterator;
 import java.util.Map;
 
@@ -6,94 +7,94 @@ import org.apache.commons.text.similarity.LevenshteinDistance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.*;
-
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.BooleanNode;
+import com.fasterxml.jackson.databind.node.DoubleNode;
+import com.fasterxml.jackson.databind.node.LongNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 
 public class JsonTransformer {
+
     private final ObjectMapper mapper = new ObjectMapper();
 
     public JsonNode compareAndReplaceJson(String templateJson, JsonNode payloadNode) throws Exception {
         JsonNode templateNode = mapper.readTree(templateJson);
-       // System.out.println("Procesing " + templateJson +" With "+payloadNode);
-        JsonNode result= processJson(null,templateNode, payloadNode,templateNode.isArray());
-      //  System.out.println("output " + result);
+        // System.out.println("Procesing " + templateJson +" With "+payloadNode);
+        JsonNode result = processJson(null, templateNode, payloadNode, templateNode.isArray());
+        //  System.out.println("output " + result);
         return result;
     }
-    public JsonNode processJson(String parentNode,JsonNode inputNode,JsonNode payloadNode,boolean IsInArray) {
-    	if(isTypedNode(inputNode))
-    	{
-    		return processValueNode(parentNode,inputNode,payloadNode,IsInArray);
-    	}
-    	else if (inputNode.isObject()) {
+
+    public JsonNode processJson(String parentNode, JsonNode inputNode, JsonNode payloadNode, boolean IsInArray) {
+        if (isTypedNode(inputNode)) {
+            return processValueNode(parentNode, inputNode, payloadNode, IsInArray);
+        } else if (inputNode.isObject()) {
             ObjectNode resultNode = mapper.createObjectNode();
             inputNode.fieldNames().forEachRemaining(fieldName -> {
-                JsonNode childNode = inputNode.get(fieldName);    
-                resultNode.set(fieldName, processJson(fieldName,childNode,payloadNode,childNode.isArray()));
+                JsonNode childNode = inputNode.get(fieldName);
+                resultNode.set(fieldName, processJson(fieldName, childNode, payloadNode, childNode.isArray()));
             });
             return resultNode;
         } else if (inputNode.isArray()) {
-        	if(isTypedArray(inputNode))
-        	{
-        		 return processValueArrayNode(parentNode,inputNode,payloadNode,IsInArray);
-        	}
-        	else
-        	{
-	            ArrayNode resultArray = mapper.createArrayNode();
-	            for (JsonNode item : inputNode) {
-	                resultArray.add(processJson(parentNode,item,payloadNode,true));
-	            }
-	            return resultArray;
-        	}
-        } else {            
-            return processValueNode(parentNode,inputNode,payloadNode,IsInArray);
+            if (isTypedArray(inputNode)) {
+                return processValueArrayNode(parentNode, inputNode, payloadNode, IsInArray);
+            } else {
+                ArrayNode resultArray = mapper.createArrayNode();
+                for (JsonNode item : inputNode) {
+                    resultArray.add(processJson(parentNode, item, payloadNode, true));
+                }
+                return resultArray;
+            }
+        } else {
+            return processValueNode(parentNode, inputNode, payloadNode, IsInArray);
         }
     }
-    
 
-    private JsonNode processValueNode(String parentNodeforArray,JsonNode valueNode, JsonNode payloadNode,boolean IsInArray) {   	
-    	//System.out.println("Procesing " + parentNodeforArray);
+    private JsonNode processValueNode(String parentNodeforArray, JsonNode valueNode, JsonNode payloadNode, boolean IsInArray) {
+        //System.out.println("Procesing " + parentNodeforArray);
         if (isTypedNode(valueNode)) {
-        	String expectedType = valueNode.elements().next().get("type").asText();
-        	String fieldNameToMatch=IsInArray?parentNodeforArray:valueNode.fieldNames().next();        	
-        	JsonNode bestMatch = findBestMatch(fieldNameToMatch,payloadNode);
-        	 if (bestMatch != null)
-        	 {
-        		bestMatch= castValue(bestMatch, expectedType);		                
-	        //	System.out.println("Need processing for: " +parentNodeforArray+" and " + fieldNameToMatch + " "+expectedType +" found "+bestMatch);
-	        	
-        	 }
-        		ObjectNode objectNode = (ObjectNode) valueNode;
-	            objectNode.set(fieldNameToMatch, bestMatch);          
-	            return objectNode;
+            String expectedType = valueNode.elements().next().get("type").asText();
+            String fieldNameToMatch = IsInArray ? parentNodeforArray : valueNode.fieldNames().next();
+            JsonNode bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
+            if (bestMatch != null) {
+                bestMatch = castValue(bestMatch, expectedType);
+                //	System.out.println("Need processing for: " +parentNodeforArray+" and " + fieldNameToMatch + " "+expectedType +" found "+bestMatch);
+
+            }
+            ObjectNode objectNode = (ObjectNode) valueNode;
+            objectNode.set(fieldNameToMatch, bestMatch);
+            return objectNode;
         }
-       // else
+        // else
         //	System.out.println("No Procesing needed for: " + valueNode);
 
         return valueNode; // Leave as is for non-processed types
     }
-    private JsonNode processValueArrayNode(String parentNodeforArray,JsonNode valueNode, JsonNode payloadNode,boolean IsInArray) {   	
-    	//System.out.println("Procesing " + parentNodeforArray);
+
+    private JsonNode processValueArrayNode(String parentNodeforArray, JsonNode valueNode, JsonNode payloadNode, boolean IsInArray) {
+        //System.out.println("Procesing " + parentNodeforArray);
         if (isTypedArray(valueNode)) {
-        	String expectedType = valueNode.get(0).get("type").asText();
-        	String fieldNameToMatch=parentNodeforArray;        	
-        	 ArrayNode resultArray = mapper.createArrayNode();
-        	 if(payloadNode.isArray())
-        	 {
-	            for (JsonNode item : payloadNode) {
-	            	JsonNode bestMatch = findBestMatch(fieldNameToMatch, item);
-	                if (bestMatch != null)
-	                resultArray.add(castValue(bestMatch, expectedType));
-	                }
-        	 }
-        	 else
-        	 {
-        		 JsonNode bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
-	                if (bestMatch != null)
-	                resultArray.add(castValue(bestMatch, expectedType));    
-        	 }
-	         return resultArray;        	
+            String expectedType = valueNode.get(0).get("type").asText();
+            String fieldNameToMatch = parentNodeforArray;
+            ArrayNode resultArray = mapper.createArrayNode();
+            if (payloadNode.isArray()) {
+                for (JsonNode item : payloadNode) {
+                    JsonNode bestMatch = findBestMatch(fieldNameToMatch, item);
+                    if (bestMatch != null) {
+                        resultArray.add(castValue(bestMatch, expectedType));
+                    }
+                }
+            } else {
+                JsonNode bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
+                if (bestMatch != null) {
+                    resultArray.add(castValue(bestMatch, expectedType));
+                }
+            }
+            return resultArray;
         }
-       // else
+        // else
         //	System.out.println("No Procesing needed for: " + valueNode);
 
         return valueNode; // Leave as is for non-processed types
@@ -121,6 +122,7 @@ public class JsonTransformer {
             return NullNode.getInstance();
         }
     }
+
     private JsonNode findBestMatch(String templateFieldName, JsonNode payloadNode) {
         LevenshteinDistance levenshtein = new LevenshteinDistance();
         JsonNode flattened = flattenPayload(payloadNode);
@@ -141,13 +143,14 @@ public class JsonTransformer {
 
         return bestValue;
     }
+
     private JsonNode flattenPayload(JsonNode payloadNode) {
         if (payloadNode.isArray() && payloadNode.size() > 0) {
             ObjectNode merged = mapper.createObjectNode();
             for (JsonNode item : payloadNode) {
                 if (item.isObject()) {
-                    item.fields().forEachRemaining(field ->
-                        merged.set(field.getKey(), field.getValue())
+                    item.fields().forEachRemaining(field
+                            -> merged.set(field.getKey(), field.getValue())
                     );
                 }
             }
@@ -155,6 +158,7 @@ public class JsonTransformer {
         }
         return payloadNode;
     }
+
     private JsonNode transform(JsonNode template, JsonNode payload) {
         if (template.isObject()) {
             if (isTypedTemplate(template)) {
@@ -165,7 +169,9 @@ public class JsonTransformer {
                 template.fieldNames().forEachRemaining(field -> {
                     if (payload.has(field)) {
                         JsonNode transformed = transform(template.get(field), payload.get(field));
-                        if (transformed != null) result.set(field, transformed);
+                        if (transformed != null) {
+                            result.set(field, transformed);
+                        }
                     }
                 });
                 return result;
@@ -177,13 +183,17 @@ public class JsonTransformer {
                 for (JsonNode item : payload) {
                     if (template.size() > 0) {
                         JsonNode transformed = transform(template.get(0), item);
-                        if (transformed != null) result.add(transformed);
+                        if (transformed != null) {
+                            result.add(transformed);
+                        }
                     }
                 }
             } else {
                 if (template.size() > 0) {
                     JsonNode transformed = transform(template.get(0), payload);
-                    if (transformed != null) result.add(transformed);
+                    if (transformed != null) {
+                        result.add(transformed);
+                    }
                 }
             }
 
@@ -192,32 +202,39 @@ public class JsonTransformer {
 
         return template;
     }
+
     private boolean isTypedNode(JsonNode node) {
-   	 if (node.isObject() && node.size() == 1) {
-   	        JsonNode inner = node.elements().next();
-   	        return inner.isObject() && inner.has("type") && inner.size() == 1;
-   	    }
-   	    return false;
-   }
+        if (node.isObject() && node.size() == 1) {
+            JsonNode inner = node.elements().next();
+            return inner.isObject() && inner.has("type") && inner.size() == 1;
+        }
+        return false;
+    }
+
     private boolean isTypedArray(JsonNode node) {
-      	 if (node.isArray() && node.size() == 1) {
-      	        JsonNode inner = node.get(0);
-      	        return inner.isObject() && inner.has("type") && inner.size() == 1;
-      	    }
-      	    return false;
-      }
+        if (node.isArray() && node.size() == 1) {
+            JsonNode inner = node.get(0);
+            return inner.isObject() && inner.has("type") && inner.size() == 1;
+        }
+        return false;
+    }
+
     private boolean isTypedTemplate(JsonNode node) {
         return node.size() == 1 && node.has("type");
     }
 
     private JsonNode extractTypedValue(JsonNode node, String type) {
-        if (node == null || node.isNull()) return NullNode.getInstance();
+        if (node == null || node.isNull()) {
+            return NullNode.getInstance();
+        }
 
         switch (type) {
             case "string":
                 return node.isTextual() ? node : TextNode.valueOf(node.asText());
             case "number":
-                if (node.isNumber()) return node;
+                if (node.isNumber()) {
+                    return node;
+                }
                 try {
                     return new DoubleNode(node.asDouble());
                 } catch (Exception e) {

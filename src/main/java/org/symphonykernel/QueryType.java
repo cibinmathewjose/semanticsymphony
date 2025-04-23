@@ -1,10 +1,11 @@
 package org.symphonykernel;
+
 public enum QueryType {
-	UNKNOWN,
-	SQL,
+    UNKNOWN,
+    SQL,
     GRAPHQL,
-	SYMPHNOY,
-	REST,
+    SYMPHNOY,
+    REST,
     PLUGIN,
-	TEXT
+    TEXT
 }

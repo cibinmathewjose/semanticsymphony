@@ -5,10 +5,6 @@ import java.util.List;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class FlowJson {
-	public FlowJson()
-	{
-		
-	}
     @JsonProperty("Flow")
     public List<FlowItem> Flow;
     

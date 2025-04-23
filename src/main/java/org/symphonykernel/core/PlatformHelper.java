@@ -8,10 +8,9 @@ import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.text.similarity.LevenshteinDistance;
+import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -23,34 +22,39 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Service
 public class PlatformHelper {
 
+    public String generateAdaptiveCardJson(JsonNode jsonNode, String mappingTemplate) {
 
-	
-	public String generateAdaptiveCardJson(JsonNode jsonNode,  String mappingTemplate) throws IOException {
-		
-		JsonNode data =null;
-		if (jsonNode.isObject()) {
+        JsonNode data = null;
+        if (jsonNode.isObject()) {
             Iterator<Entry<String, JsonNode>> fields = jsonNode.fields();
             while (fields.hasNext()) {
                 Entry<String, JsonNode> field = fields.next();
                 //System.out.println("Field: " + field.getKey());
-                data =field.getValue();
-				break;
+                data = field.getValue();
+                break;
             }
-		}
-		
-		if (data==null)       
-			return "";
-		
+        }
+
+        if (data == null) {
+            return "";
+        }
+
         String cardTemplateJson = "{\"type\":\"AdaptiveCard\",\"$schema\":\"http://adaptivecards.io/schemas/adaptive-card.json\",\"version\":\"1.0\",\"body\":[]}";
 
         //String mappingJson = "{\"countryName\":{\"type\":\"TextBlock\",\"dataPath\":\"/country/0/countryName\",\"label\":\"Country\",\"weight\":\"Bolder\"},\"acceptabilityCountry\":{\"type\":\"TextBlock\",\"dataPath\":\"/acceptabilityCountry\",\"label\":\"Acceptability\"},\"waiverExists\":{\"type\":\"TextBlock\",\"dataPath\":\"/waiverExists\",\"label\":\"Waiver Exists\"},\"tentativeRemarks\":{\"type\":\"TextBlock\",\"dataPath\":\"/tentativeRemarks\",\"label\":\"Remarks\",\"wrap\":true}}";
-
         ObjectMapper mapper = new ObjectMapper();
-        ObjectNode cardTemplate = (ObjectNode) mapper.readTree(cardTemplateJson);
-
-		JsonNode mapping = mapper.readTree(mappingTemplate);
-        ArrayNode body = (ArrayNode) cardTemplate.get("body");
-        body.removeAll();
+        ObjectNode cardTemplate;
+        JsonNode mapping;
+        ArrayNode body;
+        try {
+            cardTemplate = (ObjectNode) mapper.readTree(cardTemplateJson);
+            mapping = mapper.readTree(mappingTemplate);
+            body = (ArrayNode) cardTemplate.get("body");
+            body.removeAll();
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+            return "";
+        }
 
         for (JsonNode item : data) {
             ObjectNode container = JsonNodeFactory.instance.objectNode();
@@ -80,7 +84,7 @@ public class PlatformHelper {
                     if (!weight.equals("Default")) {
                         element.put("weight", weight);
                     }
-                    if(wrap){
+                    if (wrap) {
                         element.put("wrap", wrap);
                     }
 
@@ -106,18 +110,19 @@ public class PlatformHelper {
             sep.put("text", "--------------------------------");
             ArrayNode emptyArray = JsonNodeFactory.instance.arrayNode();
             column.set("items", emptyArray);
-           // column.get("items").add(sep);
+            // column.get("items").add(sep);
             ArrayNode columns = JsonNodeFactory.instance.arrayNode();
             columns.add(column);
             separatorLine.set("columns", columns);
             separator.set("items", JsonNodeFactory.instance.arrayNode());
-          //  separator.get("items").add(separatorLine);
+            //  separator.get("items").add(separatorLine);
             body.add(separator);
         }
 
         return cardTemplate.toString();
     }
-	public JsonNode compareAndReplaceJsonv2(String templateJson, JsonNode payloadNode) throws IOException {
+
+    public JsonNode compareAndReplaceJsonv2(String templateJson, JsonNode payloadNode) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
 
         JsonNode templateNode = objectMapper.readTree(templateJson);
@@ -139,15 +144,15 @@ public class PlatformHelper {
                     if (matchedValue != null) {
                         String expectedType = fieldTemplate.get(0).get("type").asText();
                         switch (expectedType) {
-                            case "number" :
-                            	arrayResult.add(Long.parseLong(matchedValue.asText()));
-                            	break;
-                            case "boolean" :
-                            	arrayResult.add(Boolean.parseBoolean(matchedValue.asText()));
-                            	break;
-                            default :
-                            	arrayResult.add(matchedValue.asText());
-                            	break;
+                            case "number":
+                                arrayResult.add(Long.parseLong(matchedValue.asText()));
+                                break;
+                            case "boolean":
+                                arrayResult.add(Boolean.parseBoolean(matchedValue.asText()));
+                                break;
+                            default:
+                                arrayResult.add(matchedValue.asText());
+                                break;
                         }
                     }
                 }
@@ -169,18 +174,19 @@ public class PlatformHelper {
 
         return resultNode;
     }
-	public JsonNode compareAndReplaceJson(String templateJson, JsonNode payloadNode) throws IOException {
+
+    public JsonNode compareAndReplaceJson(String templateJson, JsonNode payloadNode) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
-        
+
         // Parse the template JSON and payload JSON
-        JsonNode templateNode = objectMapper.readTree(templateJson);        
+        JsonNode templateNode = objectMapper.readTree(templateJson);
 
         // Prepare a new JSON node to hold the result
         JsonNode resultNode = objectMapper.createObjectNode();
-        
+
         // Traverse through each field in the template JSON
         Iterator<Map.Entry<String, JsonNode>> templateFields = templateNode.fields();
-        
+
         while (templateFields.hasNext()) {
             Map.Entry<String, JsonNode> templateField = templateFields.next();
             String templateFieldName = templateField.getKey();
@@ -192,9 +198,8 @@ public class PlatformHelper {
                 // If a match is found, convert the value to the expected type in the template
                 if (templateField.getValue().has("type") && "number".equals(templateField.getValue().get("type").asText())) {
                     ((ObjectNode) resultNode).put(templateFieldName, Long.parseLong(payloadValue.asText()));
-                }
-                else {
-                	 ((ObjectNode) resultNode).put(templateFieldName,payloadValue.asText());
+                } else {
+                    ((ObjectNode) resultNode).put(templateFieldName, payloadValue.asText());
                 }
                 // Add other type checks here (e.g., "string", "boolean", etc.)
             }
@@ -203,7 +208,8 @@ public class PlatformHelper {
         // Return the result as a string
         return resultNode;
     }
-	public String replacePlaceholders(String query, String paramDefJson, JsonNode userDataNode) throws IOException {
+
+    public String replacePlaceholders(String query, String paramDefJson, JsonNode userDataNode) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
 
         // Parse parameter definitions
@@ -212,7 +218,6 @@ public class PlatformHelper {
         paramDefNode.fields().forEachRemaining(entry -> {
             paramTypes.put(entry.getKey(), entry.getValue().get("type").asText());
         });
-
 
         // Replace placeholders
         String replacedQuery = query;
@@ -242,67 +247,67 @@ public class PlatformHelper {
 
         return sb.toString();
     }
-	private static JsonNode findMatchingFieldv3(String templateFieldName, JsonNode payloadNode) {
+
+    private static JsonNode findMatchingFieldv3(String templateFieldName, JsonNode payloadNode) {
         String bestMatch = null;
         int bestDistance = Integer.MAX_VALUE;
         JsonNode bestValue = null;
 
         // Create a LevenshteinDistance instance
         LevenshteinDistance levenshteinDistance = new LevenshteinDistance();
-        JsonNode item=payloadNode;
-        if(payloadNode.isArray())
-        {
-        	item=payloadNode.get(0);
+        JsonNode item = payloadNode;
+        if (payloadNode.isArray()) {
+            item = payloadNode.get(0);
         }
         // Iterate over payload array and find the best match using fuzzy matching (Levenshtein distance)
         //for (JsonNode item : payloadNode) {
-            Iterator<Map.Entry<String, JsonNode>> payloadFields = item.fields();
-            while (payloadFields.hasNext()) {
-                Map.Entry<String, JsonNode> payloadField = payloadFields.next();
-                String payloadFieldName = payloadField.getKey();
+        Iterator<Map.Entry<String, JsonNode>> payloadFields = item.fields();
+        while (payloadFields.hasNext()) {
+            Map.Entry<String, JsonNode> payloadField = payloadFields.next();
+            String payloadFieldName = payloadField.getKey();
 
-                // Calculate the Levenshtein distance between the template field and the payload field name
-                int distance = levenshteinDistance.apply(templateFieldName.toLowerCase(), payloadFieldName.toLowerCase());
+            // Calculate the Levenshtein distance between the template field and the payload field name
+            int distance = levenshteinDistance.apply(templateFieldName.toLowerCase(), payloadFieldName.toLowerCase());
 
-                // If we find a better match (smaller distance), store it
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    bestMatch = payloadFieldName;
-                    bestValue = payloadField.getValue();
-                }
+            // If we find a better match (smaller distance), store it
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestMatch = payloadFieldName;
+                bestValue = payloadField.getValue();
             }
+        }
         //}
         return bestValue;
     }
-	private static JsonNode findMatchingFieldv2(String templateFieldName, JsonNode payloadNode) {
+
+    private static JsonNode findMatchingFieldv2(String templateFieldName, JsonNode payloadNode) {
         String bestMatch = null;
         int bestDistance = Integer.MAX_VALUE;
         JsonNode bestValue = null;
 
         // Create a LevenshteinDistance instance
         LevenshteinDistance levenshteinDistance = new LevenshteinDistance();
-        JsonNode item=payloadNode;
-        if(payloadNode.isArray())
-        {
-        	item=payloadNode.get(0);
+        JsonNode item = payloadNode;
+        if (payloadNode.isArray()) {
+            item = payloadNode.get(0);
         }
         // Iterate over payload array and find the best match using fuzzy matching (Levenshtein distance)
         //for (JsonNode item : payloadNode) {
-            Iterator<Map.Entry<String, JsonNode>> payloadFields = item.fields();
-            while (payloadFields.hasNext()) {
-                Map.Entry<String, JsonNode> payloadField = payloadFields.next();
-                String payloadFieldName = payloadField.getKey();
+        Iterator<Map.Entry<String, JsonNode>> payloadFields = item.fields();
+        while (payloadFields.hasNext()) {
+            Map.Entry<String, JsonNode> payloadField = payloadFields.next();
+            String payloadFieldName = payloadField.getKey();
 
-                // Calculate the Levenshtein distance between the template field and the payload field name
-                int distance = levenshteinDistance.apply(templateFieldName.toLowerCase(), payloadFieldName.toLowerCase());
+            // Calculate the Levenshtein distance between the template field and the payload field name
+            int distance = levenshteinDistance.apply(templateFieldName.toLowerCase(), payloadFieldName.toLowerCase());
 
-                // If we find a better match (smaller distance), store it
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    bestMatch = payloadFieldName;
-                    bestValue = payloadField.getValue();
-                }
+            // If we find a better match (smaller distance), store it
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestMatch = payloadFieldName;
+                bestValue = payloadField.getValue();
             }
+        }
         //}
         return bestValue;
     }
@@ -321,7 +326,7 @@ public class PlatformHelper {
 
                 // Use fuzzy matching (Levenshtein distance) to find the closest match
                 int distance = StringUtils.getLevenshteinDistance(templateFieldName.toLowerCase(), payloadFieldName.toLowerCase());
-                
+
                 // If we find a better match (smaller distance), store it
                 if (distance < bestDistance) {
                     bestDistance = distance;
@@ -333,87 +338,85 @@ public class PlatformHelper {
 
         return bestValue;
     }
-	public JsonNode resolvePayload(String key, Object value, JsonNode resolverNode) {
-	        ObjectMapper objectMapper = new ObjectMapper();
-	        ObjectNode resultNode = objectMapper.createObjectNode();
 
-	        if (resolverNode != null && resolverNode.isObject()) {
-	            resolverNode.fields().forEachRemaining(entry -> {
-	                String fieldName = entry.getKey();
-	                JsonNode fieldTypeNode = entry.getValue();
+    public JsonNode resolvePayload(String key, Object value, JsonNode resolverNode) {
+        ObjectMapper objectMapper = new ObjectMapper();
+        ObjectNode resultNode = objectMapper.createObjectNode();
 
-	                if (fieldName.equals(key)) {
-	                    if (value instanceof String) {
-	                        resultNode.put(fieldName, (String) value);
-	                    } else if (value instanceof Integer || value instanceof Long || value instanceof Double || value instanceof Float) {
-	                        resultNode.put(fieldName, ((Number) value).doubleValue());
-	                    } else if (value instanceof Boolean) {
-	                        resultNode.put(fieldName, (Boolean) value);
-	                    } else if(value == null){
-	                        resultNode.putNull(fieldName);
-	                    } else {
-	                        resultNode.set(fieldName, objectMapper.valueToTree(value));
-	                    }
+        if (resolverNode != null && resolverNode.isObject()) {
+            resolverNode.fields().forEachRemaining(entry -> {
+                String fieldName = entry.getKey();
+                JsonNode fieldTypeNode = entry.getValue();
 
-	                } else {
-	                    resultNode.set(fieldName, fieldTypeNode);
-	                }
-	            });
-	        }
-	        return resultNode;
-	    }
-	
-	public JsonNode replaceJsonValue( String resolverJson, Object... params) {
+                if (fieldName.equals(key)) {
+                    if (value instanceof String) {
+                        resultNode.put(fieldName, (String) value);
+                    } else if (value instanceof Integer || value instanceof Long || value instanceof Double || value instanceof Float) {
+                        resultNode.put(fieldName, ((Number) value).doubleValue());
+                    } else if (value instanceof Boolean) {
+                        resultNode.put(fieldName, (Boolean) value);
+                    } else if (value == null) {
+                        resultNode.putNull(fieldName);
+                    } else {
+                        resultNode.set(fieldName, objectMapper.valueToTree(value));
+                    }
+
+                } else {
+                    resultNode.set(fieldName, fieldTypeNode);
+                }
+            });
+        }
+        return resultNode;
+    }
+
+    public JsonNode replaceJsonValue(String resolverJson, Object... params) {
         ObjectMapper objectMapper = new ObjectMapper();
 
         // Create the result JSON
         ObjectNode resultNode = objectMapper.createObjectNode();
         // Parse resolver JSON
         JsonNode resolverNode;
-		try {
-			resolverNode = objectMapper.readTree(resolverJson);
-		
+        try {
+            resolverNode = objectMapper.readTree(resolverJson);
 
-        // Iterate through resolver definition fields
-        Iterator<Map.Entry<String, JsonNode>> resolverFields = resolverNode.fields();
-        int paramIndex = 0; // to track params array
+            // Iterate through resolver definition fields
+            Iterator<Map.Entry<String, JsonNode>> resolverFields = resolverNode.fields();
+            int paramIndex = 0; // to track params array
 
-        while (resolverFields.hasNext()) {
-            Map.Entry<String, JsonNode> resolverField = resolverFields.next();
-            String resultKey = resolverField.getKey();
+            while (resolverFields.hasNext()) {
+                Map.Entry<String, JsonNode> resolverField = resolverFields.next();
+                String resultKey = resolverField.getKey();
 
-            // Get the "type" field from resolver and handle accordingly
-            JsonNode typeNode = resolverField.getValue().get("type");
-            if (typeNode != null && typeNode.isTextual()) {
-                String type = typeNode.asText();
+                // Get the "type" field from resolver and handle accordingly
+                JsonNode typeNode = resolverField.getValue().get("type");
+                if (typeNode != null && typeNode.isTextual()) {
+                    String type = typeNode.asText();
 
-                // Handle the replacement based on type
-                if (paramIndex < params.length) {
-                    Object paramValue = params[paramIndex++]; // Get the current param value
+                    // Handle the replacement based on type
+                    if (paramIndex < params.length) {
+                        Object paramValue = params[paramIndex++]; // Get the current param value
 
-                    if ("number".equals(type) && paramValue instanceof Number) {
-                        resultNode.put(resultKey, ((Number) paramValue).intValue());
-                    } else if ("string".equals(type) && paramValue instanceof String) {
-                        resultNode.put(resultKey, (String) paramValue);
-                    } else {
-                        resultNode.put(resultKey, paramValue.toString()); // Default case, fallback to string
+                        if ("number".equals(type) && paramValue instanceof Number) {
+                            resultNode.put(resultKey, ((Number) paramValue).intValue());
+                        } else if ("string".equals(type) && paramValue instanceof String) {
+                            resultNode.put(resultKey, (String) paramValue);
+                        } else {
+                            resultNode.put(resultKey, paramValue.toString()); // Default case, fallback to string
+                        }
                     }
                 }
             }
-        }
         } catch (JsonProcessingException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
 
         // Convert the result node to a JSON string and return
         return resultNode;
     }
 
-	   
-	public JsonNode resolvePayload(ArrayNode payloadArray, String resolverJson) throws IOException {
-		ObjectMapper objectMapper = new ObjectMapper();
+    public JsonNode resolvePayload(ArrayNode payloadArray, String resolverJson) throws IOException {
+        ObjectMapper objectMapper = new ObjectMapper();
 
         // Parse resolver JSON
         JsonNode resolverNode = objectMapper.readTree(resolverJson);
@@ -461,7 +464,7 @@ public class PlatformHelper {
             }
         }
 
-		return resultNode;
-	}
+        return resultNode;
+    }
 
 }

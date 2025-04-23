@@ -1,95 +1,73 @@
 package org.symphonykernel.core;
 
-
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import jakarta.persistence.EntityManagerFactory;
-import jakarta.persistence.Persistence;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ExecutionContext;
-import org.symphonykernel.KnowledgeDto;
+import org.symphonykernel.Knowledge;
 import org.symphonykernel.starter.DBConnectionProperties;
 
-import java.sql.*;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-
 @Service
-public class SqlStep implements Step {
+public class SqlStep implements IStep {
 
-	@Autowired
-	DBConnectionProperties db;
-   
-	@Autowired
-	knowledgeBase knowledgeBase;
-	
+    @Autowired
+    DBConnectionProperties db;
+
+    @Autowired
+    IknowledgeBase knowledgeBase;
+
     @Autowired
     private ObjectMapper objectMapper;
-    
+
     @Autowired
-	PlatformHelper platformHelper;
+    PlatformHelper platformHelper;
 
-  
-    private final ObjectMapper mapper = new ObjectMapper();    
-    
+    private final ObjectMapper mapper = new ObjectMapper();
 
-	@Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
+    @Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
     public ArrayNode executeSqlQuery(String query) {
-        ArrayNode data =null;
-        Connection connection=null;
-        if(query!=null &&!query.isEmpty())
-        {
-        try {            
-            connection = db.getConnection();
-            Statement statement = connection.createStatement();          
-            
-            PreparedStatement stm = connection.prepareStatement(query);
-            ResultSet resultSet = stm.executeQuery();
-            data = getJSON(resultSet);
-            System.out.println("Data " + data);
-            resultSet.close();
-            statement.close();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }finally {
-            if(connection!=null)
+        ArrayNode data = null;
+        Connection connection = null;
+        if (query != null && !query.isEmpty()) {
+            try {
+                connection = db.getConnection();
+                Statement statement = connection.createStatement();
+
+                PreparedStatement stm = connection.prepareStatement(query);
+                ResultSet resultSet = stm.executeQuery();
+                data = getJSON(resultSet);
+                System.out.println("Data " + data);
+                resultSet.close();
+                statement.close();
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                if (connection != null)
                 try {
                     connection.close();
                 } catch (SQLException e) {
                     e.printStackTrace();
                 }
+            }
         }
+        if (data == null) {
+            data = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         }
-        if(data==null)
-        	data =com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         return data;
     }
+
     public <T> T executeSingleValueQuery(String query, Object... params) throws Exception {
         Connection connection = null;
         PreparedStatement preparedStatement = null;
@@ -113,7 +91,7 @@ public class SqlStep implements Step {
             } else {
                 // No result found
                 return null;
-            }            
+            }
 
         } finally {
             // Close resources in reverse order of creation
@@ -141,8 +119,6 @@ public class SqlStep implements Step {
         }
     }
 
-   
-    
     public ArrayNode getJSON(ResultSet rs) throws SQLException {
         // Create an ObjectMapper for JSON conversion
         ObjectMapper mapper = new ObjectMapper();
@@ -160,10 +136,11 @@ public class SqlStep implements Step {
             for (int i = 1; i <= columnCount; i++) {
                 String columnName = metaData.getColumnName(i);
                 Object value = rs.getObject(i);
-                if (value != null)
+                if (value != null) {
                     jsonObject.put(columnName, value.toString());
-                else
-                    jsonObject.put(columnName,"");
+                } else {
+                    jsonObject.put(columnName, "");
+                }
             }
 
             jsonArray.add(jsonObject);
@@ -172,56 +149,56 @@ public class SqlStep implements Step {
         // Print the generated JSON data
         return jsonArray;
     }
-    
-    private JsonNode executeQueryByNameWithDynamicMapping(String name, Object... params){
-    	
-    	final ArrayNode[] array = new ArrayNode[1];
-    	 KnowledgeDto kb = knowledgeBase.GetByName(name);  
-		 if(kb!=null){    	
-    		JsonNode variables =platformHelper.replaceJsonValue(kb.getParams(),params);
-    		ExecutionContext ctx = new ExecutionContext();
-    		ctx.setVariables(variables);
-    		ctx.setKnowledge(kb);
-    		array[0]=getResponse(ctx);
-    	}
-    	  return array[0];
+
+    private JsonNode executeQueryByNameWithDynamicMapping(String name, Object... params) {
+
+        final ArrayNode[] array = new ArrayNode[1];
+        Knowledge kb = knowledgeBase.GetByName(name);
+        if (kb != null) {
+            JsonNode variables = platformHelper.replaceJsonValue(kb.getParams(), params);
+            ExecutionContext ctx = new ExecutionContext();
+            ctx.setVariables(variables);
+            ctx.setKnowledge(kb);
+            array[0] = getResponse(ctx);
+        }
+        return array[0];
     }
+
     @Override
     public JsonNode executeQueryByName(ExecutionContext context) {
-    	final ArrayNode[] array = new ArrayNode[1];
-    	 KnowledgeDto kb = knowledgeBase.GetByName(context.getName());  
-		 if(kb!=null){    	
-    		JsonNode var=context.getVariables();
-        	if(context.getConvert())
-			{
-        		try {
-        			 JsonTransformer transformer = new JsonTransformer();
-           		  var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-           		 context.setVariables(var);
-           	  context.setKnowledge(kb);
-					//var=platformHelper.compareAndReplaceJson(kb.getParams(), variables);           		  
-				} catch (Exception e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-			} 
-        	array[0]=getResponse(context);
-    	}
-    	  return array[0];
+        final ArrayNode[] array = new ArrayNode[1];
+        Knowledge kb = knowledgeBase.GetByName(context.getName());
+        if (kb != null) {
+            JsonNode var = context.getVariables();
+            if (context.getConvert()) {
+                try {
+                    JsonTransformer transformer = new JsonTransformer();
+                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
+                    context.setVariables(var);
+                    context.setKnowledge(kb);
+                    //var=platformHelper.compareAndReplaceJson(kb.getParams(), variables);           		  
+                } catch (Exception e) {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
+            }
+            array[0] = getResponse(context);
+        }
+        return array[0];
     }
-    
+
     @Override
     public ArrayNode getResponse(ExecutionContext ctx) {
         // Use OpenAI API to generate SQL query based on user input
         String sqlQuery = null;
         JsonNode variables = ctx.getVariables();
-        KnowledgeDto kb =ctx.getKnowledge();
+        Knowledge kb = ctx.getKnowledge();
         if (kb != null) {
             if (kb.getParams() != null && !kb.getParams().isEmpty()) {
                 //
                 try {
-                	 System.out.println("Executing SQL " + kb.getName() +" with "+variables);
-                    sqlQuery =platformHelper.replacePlaceholders(kb.getData(), kb.getParams(), variables);
+                    System.out.println("Executing SQL " + kb.getName() + " with " + variables);
+                    sqlQuery = platformHelper.replacePlaceholders(kb.getData(), kb.getParams(), variables);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -236,6 +213,4 @@ public class SqlStep implements Step {
 
     }
 
-    
-    
 }
