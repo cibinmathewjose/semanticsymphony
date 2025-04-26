@@ -1,13 +1,6 @@
 package org.symphonykernel;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-
 import org.symphonykernel.core.IHttpHeaderProvider;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
 public class ChatRequest {
 
@@ -59,26 +52,7 @@ public class ChatRequest {
         this.query = query;
     }
 
-    public JsonNode getVariables() {
-        if (payload != null && !payload.isEmpty()) {
-            try {
-                // Decode the Base64 string
-                byte[] decodedBytes = Base64.getDecoder().decode(payload);
-                String decodedString = new String(decodedBytes, StandardCharsets.UTF_8);
-
-                // Parse the JSON string
-                ObjectMapper objectMapper = new ObjectMapper();
-                return objectMapper.readTree(decodedString);
-
-            } catch (Exception e) {
-                // Handle invalid Base64 input
-                System.out.println(e.getMessage());
-
-            }
-        }
-        return JsonNodeFactory.instance.objectNode();
-    }
-
+    
     public String getPayload() {
         return payload;
     }

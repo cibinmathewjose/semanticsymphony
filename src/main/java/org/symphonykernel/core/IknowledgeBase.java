@@ -13,6 +13,8 @@ public interface IknowledgeBase {
     String GetViewDefByName(String name);
 
     Map<String, String> getAllKnowledgeDescriptions();
+    
+    Map<String, String> getActiveKnowledgeDescriptions();
 
     Map<String, String> getAllVewDescriptions();
 }

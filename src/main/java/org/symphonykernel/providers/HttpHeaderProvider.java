@@ -1,7 +1,8 @@
-package org.symphonykernel.core;
+package org.symphonykernel.providers;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.symphonykernel.core.IHttpHeaderProvider;
 
 public class HttpHeaderProvider implements IHttpHeaderProvider {
 

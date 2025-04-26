@@ -1,4 +1,4 @@
-package org.symphonykernel.core;
+package org.symphonykernel.transformer;
 
 import java.util.Map;
 import java.util.regex.Matcher;

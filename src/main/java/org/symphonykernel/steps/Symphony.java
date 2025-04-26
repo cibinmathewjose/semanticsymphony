@@ -1,15 +1,23 @@
-package org.symphonykernel.core;
+package org.symphonykernel.steps;
 
 import java.util.HashMap;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.FlowItem;
 import org.symphonykernel.FlowJson;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.QueryType;
+import org.symphonykernel.ai.AzureOpenAIHelper;
+import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.transformer.PlatformHelper;
+import org.symphonykernel.transformer.TemplateResolver;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -20,10 +28,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Service
 public class Symphony implements IStep {
 
+    private static final Logger logger = LoggerFactory.getLogger(Symphony.class);
+
     @Autowired
     IknowledgeBase knowledgeBase;
+    
     @Autowired
     GraphQLStep graphQLHelper;
+    
     @Autowired
     SqlStep sqlAssistant;
 
@@ -36,7 +48,7 @@ public class Symphony implements IStep {
     private ObjectMapper objectMapper;
 
     @Override
-    public ArrayNode getResponse(ExecutionContext ctx) {
+    public ChatResponse getResponse(ExecutionContext ctx) {
         JsonNode input = ctx.getVariables();
         Knowledge _symphony = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
@@ -49,7 +61,7 @@ public class Symphony implements IStep {
                 Knowledge kb = knowledgeBase.GetByName(item.getName());
                 if (kb != null) {
 
-                    System.out.println("Executing Symphony: " + item.getName() + " with Payload: " + item.getPaylod());
+                	logger.info("Executing Symphony: " + item.getName() + " with Payload: " + item.getPaylod());
                     JsonNode result = null;
                     JsonNode resolverPayload = null;
                     if (item.getPaylod() != null) {
@@ -77,7 +89,7 @@ public class Symphony implements IStep {
                                     if (result.isArray() && result.size() == 1) {
                                         resultArray.add(result.get(0));
                                     } else {
-                                        System.out.println("Error Unhandled: senario" + result);
+                                    	logger.error("Error Unhandled: senario" + result);
                                     }
                                 }
                                 resolvedValues.put(kb.getName().toLowerCase(), resultArray);
@@ -133,8 +145,10 @@ public class Symphony implements IStep {
             err.put("errors", e.getMessage());
             jsonArray.add(err);
         }
-
-        return jsonArray;
+        logger.info("Data " + jsonArray);
+        ChatResponse a = new ChatResponse();
+        a.setData(jsonArray);
+        return a;
     }
 
     public JsonNode parseJson(String jsonString) {

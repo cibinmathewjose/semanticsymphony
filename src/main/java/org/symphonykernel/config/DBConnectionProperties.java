@@ -1,4 +1,4 @@
-package org.symphonykernel.starter;
+package org.symphonykernel.config;
 
 import java.sql.Connection;
 import java.sql.DriverManager;

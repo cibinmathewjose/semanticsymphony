@@ -1,4 +1,4 @@
-package org.symphonykernel.core;
+package org.symphonykernel.steps;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -7,12 +7,19 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.starter.DBConnectionProperties;
+import org.symphonykernel.config.DBConnectionProperties;
+import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.transformer.JsonTransformer;
+import org.symphonykernel.transformer.PlatformHelper;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,6 +29,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Service
 public class SqlStep implements IStep {
 
+    private static final Logger logger = LoggerFactory.getLogger(SqlStep.class);
+
     @Autowired
     DBConnectionProperties db;
 
@@ -29,12 +38,7 @@ public class SqlStep implements IStep {
     IknowledgeBase knowledgeBase;
 
     @Autowired
-    private ObjectMapper objectMapper;
-
-    @Autowired
     PlatformHelper platformHelper;
-
-    private final ObjectMapper mapper = new ObjectMapper();
 
     @Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
     public ArrayNode executeSqlQuery(String query) {
@@ -48,7 +52,7 @@ public class SqlStep implements IStep {
                 PreparedStatement stm = connection.prepareStatement(query);
                 ResultSet resultSet = stm.executeQuery();
                 data = getJSON(resultSet);
-                System.out.println("Data " + data);
+                logger.info("Data " + data);
                 resultSet.close();
                 statement.close();
             } catch (Exception e) {
@@ -150,7 +154,7 @@ public class SqlStep implements IStep {
         return jsonArray;
     }
 
-    private JsonNode executeQueryByNameWithDynamicMapping(String name, Object... params) {
+    public JsonNode executeQueryByNameWithDynamicMapping(String name, Object... params) {
 
         final ArrayNode[] array = new ArrayNode[1];
         Knowledge kb = knowledgeBase.GetByName(name);
@@ -159,7 +163,7 @@ public class SqlStep implements IStep {
             ExecutionContext ctx = new ExecutionContext();
             ctx.setVariables(variables);
             ctx.setKnowledge(kb);
-            array[0] = getResponse(ctx);
+            array[0] = getResponse(ctx).getData();
         }
         return array[0];
     }
@@ -182,35 +186,45 @@ public class SqlStep implements IStep {
                     e.printStackTrace();
                 }
             }
-            array[0] = getResponse(context);
+            array[0] = getResponse(context).getData();
         }
         return array[0];
     }
 
     @Override
-    public ArrayNode getResponse(ExecutionContext ctx) {
-        // Use OpenAI API to generate SQL query based on user input
+    public ChatResponse getResponse(ExecutionContext ctx) {     
+
         String sqlQuery = null;
         JsonNode variables = ctx.getVariables();
         Knowledge kb = ctx.getKnowledge();
         if (kb != null) {
+          
+            sqlQuery = kb.getData();
             if (kb.getParams() != null && !kb.getParams().isEmpty()) {
-                //
+                if(variables != null)
+                {
                 try {
-                    System.out.println("Executing SQL " + kb.getName() + " with " + variables);
+                	logger.info("Executing SQL " + kb.getName() + " with " + variables);
                     sqlQuery = platformHelper.replacePlaceholders(kb.getData(), kb.getParams(), variables);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
             }
+            } else {
+                logger.error("Could not execut SQL " + kb.getName() + " Parameters missing " + kb.getParams());
+            }
         }
+        ArrayNode node;
         // return sqlQuery;
         // Execute the SQL query against your database
         if (sqlQuery == null) { // Check the array element
-            return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        	node= com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         }
-        return executeSqlQuery(sqlQuery);
-
+        node= executeSqlQuery(sqlQuery);
+        logger.info("Data " + node);
+        ChatResponse a = new ChatResponse();
+        a.setData(node);
+        return a;
     }
 
 }

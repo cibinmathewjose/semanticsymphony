@@ -1,12 +1,10 @@
 package org.symphonykernel.test;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.symphonykernel.core.JsonTransformer;
+import org.symphonykernel.transformer.JsonTransformer;
 
-import static org.assertj.core.api.Assertions.assertThat;
 
 class JsonProcessorTest {
 

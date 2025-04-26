@@ -1,42 +1,26 @@
-package org.symphonykernel.starter;
+package org.symphonykernel.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 
 import com.azure.ai.openai.OpenAIAsyncClient;
 import com.azure.ai.openai.OpenAIClientBuilder;
 import com.azure.core.credential.AzureKeyCredential;
 import com.microsoft.semantickernel.Kernel;
-import com.microsoft.semantickernel.aiservices.openai.textcompletion.OpenAITextGenerationService;
-import com.microsoft.semantickernel.services.textcompletion.TextGenerationService;
+import com.microsoft.semantickernel.aiservices.openai.chatcompletion.OpenAIChatCompletion;
+import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
 
-@SpringBootApplication(scanBasePackages = "org.symphonykernel.core")
-@AutoConfiguration
-@EnableConfigurationProperties({AzureOpenAIConnectionProperties.class, DBConnectionProperties.class})
+@Component
 public class SemanticKernelAutoConfiguration {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(
             SemanticKernelAutoConfiguration.class);
 
-    private static String setModelID(AzureOpenAIConnectionProperties connectionProperties) {
-        String modelId;
-        if (connectionProperties.getDeploymentName() == null) {
-            modelId = "gpt-4o";
-            LOGGER.warn(
-                    "No deployment name specified, using default model id: " + modelId);
-        } else {
-            modelId = connectionProperties.getDeploymentName();
-            LOGGER.info("Using model id: " + modelId);
-        }
-        return modelId;
-    }
 
     /**
      * Creates a {@link OpenAIAsyncClient} with the endpoint and key specified
@@ -73,9 +57,8 @@ public class SemanticKernelAutoConfiguration {
     public Kernel semanticKernel(OpenAIAsyncClient client,
             AzureOpenAIConnectionProperties connectionProperties) {
         return Kernel.builder()
-                .withAIService(TextGenerationService.class,
-                        OpenAITextGenerationService.builder()
-                                .withModelId(setModelID(connectionProperties))
+                .withAIService(ChatCompletionService.class,OpenAIChatCompletion.builder()//TextGenerationService.class,  OpenAITextGenerationService.builder()
+                                .withModelId(connectionProperties.getDeploymentName())
                                 .withOpenAIAsyncClient(client)
                                 .build())
                 .build();

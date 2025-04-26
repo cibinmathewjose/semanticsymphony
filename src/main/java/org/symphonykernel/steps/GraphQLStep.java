@@ -1,10 +1,12 @@
-package org.symphonykernel.core;
+package org.symphonykernel.steps;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.io.Resource;
@@ -14,8 +16,14 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
+import org.symphonykernel.ai.Agent;
+import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.transformer.JsonTransformer;
+import org.symphonykernel.transformer.PlatformHelper;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,8 +33,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Service
 public class GraphQLStep implements IStep {
 
+    private static final Logger logger = LoggerFactory.getLogger(GraphQLStep.class);
+
     @Autowired
     PlatformHelper platformHelper;
+    
     @Autowired
     private ObjectMapper objectMapper;
 
@@ -34,8 +45,7 @@ public class GraphQLStep implements IStep {
     IknowledgeBase knowledgeBase;
 
     @Override
-    public ArrayNode getResponse(ExecutionContext ctx) {
-
+    public ChatResponse getResponse(ExecutionContext ctx) {        
         ArrayNode jsonArray = objectMapper.createArrayNode();
         JsonNode variables = ctx.getVariables();
         Knowledge kb = ctx.getKnowledge();
@@ -44,18 +54,17 @@ public class GraphQLStep implements IStep {
 
                 try {
 
-                    System.out.println("Executing GQL " + kb.getName() + " with " + variables);
+                	logger.info("Executing GQL " + kb.getName() + " with " + variables);
                     HttpHeaders header = ctx.getHttpHeaderProvider() != null ? ctx.getHttpHeaderProvider().getHeader() : null;
                     JsonNode root = executeGraphqlQuery(kb.getUrl(), kb.getData(), variables, header);
                     JsonNode res = root.path("data");
                     jsonArray.add(res);
-                    System.out.println("Data " + res);
+                    logger.info("Data " + res);
                 } catch (Exception e) {
                     ObjectNode err = objectMapper.createObjectNode();
                     err.put("errors", e.getMessage());
                     jsonArray.add(err);
                 }
-
             }
 
         } catch (Exception e) {
@@ -63,8 +72,9 @@ public class GraphQLStep implements IStep {
             err.put("errors", e.getMessage());
             jsonArray.add(err);
         }
-
-        return jsonArray;
+        ChatResponse a = new ChatResponse();
+        a.setData(jsonArray);
+        return a;
     }
 
     @Override
@@ -82,7 +92,7 @@ public class GraphQLStep implements IStep {
                     context.setKnowledge(kb);
                     //var=platformHelper.compareAndReplaceJsonv2(kb.getParams(), variables);
                 }
-                array[0] = getResponse(context);
+                array[0] = getResponse(context).getData();
             } catch (Exception e) {
                 // TODO Auto-generated catch block
                 e.printStackTrace();
@@ -117,7 +127,7 @@ public class GraphQLStep implements IStep {
         return responseBody;
     }
 
-    private JsonNode executeGraphqlQueryByResource(String url, Resource resource, JsonNode variables, HttpHeaders headers)
+    public JsonNode executeGraphqlQueryByResource(String url, Resource resource, JsonNode variables, HttpHeaders headers)
             throws Exception {
         InputStream inputStream = resource.getInputStream();
         String query = null;

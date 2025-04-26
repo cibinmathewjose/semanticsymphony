@@ -1,4 +1,4 @@
-package org.symphonykernel.starter;
+package org.symphonykernel.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 

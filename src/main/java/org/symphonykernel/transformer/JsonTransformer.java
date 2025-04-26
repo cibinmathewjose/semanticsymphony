@@ -1,4 +1,4 @@
-package org.symphonykernel.core;
+package org.symphonykernel.transformer;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -9,7 +9,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.BooleanNode;
-import com.fasterxml.jackson.databind.node.DoubleNode;
 import com.fasterxml.jackson.databind.node.LongNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -21,9 +20,7 @@ public class JsonTransformer {
 
     public JsonNode compareAndReplaceJson(String templateJson, JsonNode payloadNode) throws Exception {
         JsonNode templateNode = mapper.readTree(templateJson);
-        // System.out.println("Procesing " + templateJson +" With "+payloadNode);
         JsonNode result = processJson(null, templateNode, payloadNode, templateNode.isArray());
-        //  System.out.println("output " + result);
         return result;
     }
 
@@ -53,28 +50,23 @@ public class JsonTransformer {
     }
 
     private JsonNode processValueNode(String parentNodeforArray, JsonNode valueNode, JsonNode payloadNode, boolean IsInArray) {
-        //System.out.println("Procesing " + parentNodeforArray);
         if (isTypedNode(valueNode)) {
             String expectedType = valueNode.elements().next().get("type").asText();
             String fieldNameToMatch = IsInArray ? parentNodeforArray : valueNode.fieldNames().next();
             JsonNode bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
             if (bestMatch != null) {
                 bestMatch = castValue(bestMatch, expectedType);
-                //	System.out.println("Need processing for: " +parentNodeforArray+" and " + fieldNameToMatch + " "+expectedType +" found "+bestMatch);
-
             }
             ObjectNode objectNode = (ObjectNode) valueNode;
             objectNode.set(fieldNameToMatch, bestMatch);
             return objectNode;
         }
-        // else
-        //	System.out.println("No Procesing needed for: " + valueNode);
 
         return valueNode; // Leave as is for non-processed types
     }
 
     private JsonNode processValueArrayNode(String parentNodeforArray, JsonNode valueNode, JsonNode payloadNode, boolean IsInArray) {
-        //System.out.println("Procesing " + parentNodeforArray);
+     
         if (isTypedArray(valueNode)) {
             String expectedType = valueNode.get(0).get("type").asText();
             String fieldNameToMatch = parentNodeforArray;
@@ -94,8 +86,6 @@ public class JsonTransformer {
             }
             return resultArray;
         }
-        // else
-        //	System.out.println("No Procesing needed for: " + valueNode);
 
         return valueNode; // Leave as is for non-processed types
     }
@@ -159,49 +149,7 @@ public class JsonTransformer {
         return payloadNode;
     }
 
-    private JsonNode transform(JsonNode template, JsonNode payload) {
-        if (template.isObject()) {
-            if (isTypedTemplate(template)) {
-                String type = template.get("type").asText();
-                return extractTypedValue(payload, type);
-            } else {
-                ObjectNode result = mapper.createObjectNode();
-                template.fieldNames().forEachRemaining(field -> {
-                    if (payload.has(field)) {
-                        JsonNode transformed = transform(template.get(field), payload.get(field));
-                        if (transformed != null) {
-                            result.set(field, transformed);
-                        }
-                    }
-                });
-                return result;
-            }
-        } else if (template.isArray()) {
-            ArrayNode result = mapper.createArrayNode();
-
-            if (payload.isArray()) {
-                for (JsonNode item : payload) {
-                    if (template.size() > 0) {
-                        JsonNode transformed = transform(template.get(0), item);
-                        if (transformed != null) {
-                            result.add(transformed);
-                        }
-                    }
-                }
-            } else {
-                if (template.size() > 0) {
-                    JsonNode transformed = transform(template.get(0), payload);
-                    if (transformed != null) {
-                        result.add(transformed);
-                    }
-                }
-            }
-
-            return result;
-        }
-
-        return template;
-    }
+   
 
     private boolean isTypedNode(JsonNode node) {
         if (node.isObject() && node.size() == 1) {
@@ -219,31 +167,7 @@ public class JsonTransformer {
         return false;
     }
 
-    private boolean isTypedTemplate(JsonNode node) {
-        return node.size() == 1 && node.has("type");
-    }
+    
 
-    private JsonNode extractTypedValue(JsonNode node, String type) {
-        if (node == null || node.isNull()) {
-            return NullNode.getInstance();
-        }
-
-        switch (type) {
-            case "string":
-                return node.isTextual() ? node : TextNode.valueOf(node.asText());
-            case "number":
-                if (node.isNumber()) {
-                    return node;
-                }
-                try {
-                    return new DoubleNode(node.asDouble());
-                } catch (Exception e) {
-                    return NullNode.getInstance();
-                }
-            case "boolean":
-                return node.isBoolean() ? node : BooleanNode.valueOf(node.asBoolean());
-            default:
-                return node;
-        }
-    }
+  
 }

@@ -1,4 +1,4 @@
-package org.symphonykernel.core;
+package org.symphonykernel.transformer;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -8,8 +8,9 @@ import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.text.similarity.LevenshteinDistance;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -22,6 +23,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Service
 public class PlatformHelper {
 
+    private static final Logger logger = LoggerFactory.getLogger(PlatformHelper.class);
+
     public String generateAdaptiveCardJson(JsonNode jsonNode, String mappingTemplate) {
 
         JsonNode data = null;
@@ -29,7 +32,6 @@ public class PlatformHelper {
             Iterator<Entry<String, JsonNode>> fields = jsonNode.fields();
             while (fields.hasNext()) {
                 Entry<String, JsonNode> field = fields.next();
-                //System.out.println("Field: " + field.getKey());
                 data = field.getValue();
                 break;
             }
@@ -249,7 +251,7 @@ public class PlatformHelper {
     }
 
     private static JsonNode findMatchingFieldv3(String templateFieldName, JsonNode payloadNode) {
-        String bestMatch = null;
+       
         int bestDistance = Integer.MAX_VALUE;
         JsonNode bestValue = null;
 
@@ -272,7 +274,7 @@ public class PlatformHelper {
             // If we find a better match (smaller distance), store it
             if (distance < bestDistance) {
                 bestDistance = distance;
-                bestMatch = payloadFieldName;
+                
                 bestValue = payloadField.getValue();
             }
         }
@@ -281,7 +283,7 @@ public class PlatformHelper {
     }
 
     private static JsonNode findMatchingFieldv2(String templateFieldName, JsonNode payloadNode) {
-        String bestMatch = null;
+       
         int bestDistance = Integer.MAX_VALUE;
         JsonNode bestValue = null;
 
@@ -304,7 +306,7 @@ public class PlatformHelper {
             // If we find a better match (smaller distance), store it
             if (distance < bestDistance) {
                 bestDistance = distance;
-                bestMatch = payloadFieldName;
+               
                 bestValue = payloadField.getValue();
             }
         }
@@ -312,32 +314,7 @@ public class PlatformHelper {
         return bestValue;
     }
 
-    private static JsonNode findMatchingFieldv1(String templateFieldName, JsonNode payloadNode) {
-        String bestMatch = null;
-        int bestDistance = Integer.MAX_VALUE;
-        JsonNode bestValue = null;
-
-        // Iterate over payload array and find the best match using fuzzy matching (Levenshtein distance)
-        for (JsonNode item : payloadNode) {
-            Iterator<Map.Entry<String, JsonNode>> payloadFields = item.fields();
-            while (payloadFields.hasNext()) {
-                Map.Entry<String, JsonNode> payloadField = payloadFields.next();
-                String payloadFieldName = payloadField.getKey();
-
-                // Use fuzzy matching (Levenshtein distance) to find the closest match
-                int distance = StringUtils.getLevenshteinDistance(templateFieldName.toLowerCase(), payloadFieldName.toLowerCase());
-
-                // If we find a better match (smaller distance), store it
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    bestMatch = payloadFieldName;
-                    bestValue = payloadField.getValue();
-                }
-            }
-        }
-
-        return bestValue;
-    }
+    
 
     public JsonNode resolvePayload(String key, Object value, JsonNode resolverNode) {
         ObjectMapper objectMapper = new ObjectMapper();

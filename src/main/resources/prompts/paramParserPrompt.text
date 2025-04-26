@@ -1,0 +1,28 @@
+Analyze the JSON {{$DATA_SET}} and the user's question {{$QUESTION}}. 
+Create a Base64 string by mapping the values from the user's question to the correct field names, strictly following the field names in the provided JSON. 
+Only include the exact Base64 text in the response and do not explain.
+
+Example 1:
+Input: {"frm_id": {"type":"number"}}
+Question: Show the details of formula 1111
+Output: eyJmcm1faWQiOiAxMTExfQ==
+
+Example 2:
+Input: {"formula_number":{"type":"string"},"country":{"type":"string"}}
+Question: Review formula 1111 for China
+Output: eyJmb3JtdWxhX251bWJlciI6IDExMTEsImNvdW50cnkiOiJDaGluYSJ9
+
+Example 3:
+Input: [{"formula_number":{"type":"string"}}]
+Question: Compare formulas TRE1665/1 with TRE1665/2
+Output: W3siZm9ybXVsYV9udW1iZXIiOiAiVFJFMTY2NS8xIn0seyJmb3JtdWxhX251bWJlciI6IlRSRTE2NjUvMiJ9XQ==
+
+Example 4:
+Input: {"formulaId":[{"type":"number"}]}
+Question: Compare formulas 1, 2
+Output: eyJmb3JtdWxhSWQiOlsxLDJdfQ==
+
+Example 5:
+Input: [{"formula_number":{"type":"string"}}]
+Question: Compare formula TR7401035 to TRT003B02
+Output: W3siZm9ybXVsYV9udW1iZXIiOiAiVFI3NDAxMDM1In0seyJmb3JtdWxhX251bWJlciI6IlRSVDAwM0IwMiJ9XQ==

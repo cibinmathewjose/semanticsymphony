@@ -10,6 +10,17 @@ public class ChatResponse {
     private String messageType;
     private String statusCode;
     private ArrayNode node;
+    
+    /**
+     * Default constructor for ChatResponse.
+     * Initializes an empty instance of the class.
+     */
+    public ChatResponse() {
+       
+    }
+    public ChatResponse(String message) {
+        this.message = message;       
+    }
 
     public String getRequestId() {
         return requestId;
@@ -40,6 +51,8 @@ public class ChatResponse {
 
     public void setData(ArrayNode message) {
         this.node = message;
+        if(this.node!=null)
+        {
         if (isAdaptiveCard()) {
             messageType = "AdaptiveCard";
             this.message = node.toString();
@@ -51,6 +64,12 @@ public class ChatResponse {
                 this.message = data;
                 this.node = null;
             }
+            else
+            {
+            	this.message=message.toPrettyString();
+            	messageType = "JSON";
+            }
+        }
         }
     }
 
