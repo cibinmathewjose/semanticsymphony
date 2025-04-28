@@ -1,11 +1,14 @@
 package org.symphonykernel;
 
+import java.util.concurrent.ScheduledFuture;
+
 import org.symphonykernel.core.IDelta;
 
 public class Indexer<T> {
 	String indexName;
 	Class<T> modelClass;
 	IDelta<T> provider;
+	ScheduledFuture<?> future;
 	String cronExpression;
 
 	public Indexer(String indexName, Class<T> modelClass, IDelta<T> provider) {
@@ -31,5 +34,12 @@ public class Indexer<T> {
 
 	public IDelta<T> getProvider() {
 		return provider;
+	}
+	
+	public ScheduledFuture<?> getFuture() {
+		return future;
+	}
+	public void setFuture(ScheduledFuture<?> future) {
+		 this.future=future;
 	}
 }

@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 
@@ -115,5 +116,12 @@ public class SymphonyKernelAutoConfiguration {
         .endpoint(connectionProperties.getEndpoint())
         .credential( new AzureKeyCredential(connectionProperties.getKey()))
         .buildClient();
+    }
+     @Bean
+    public ThreadPoolTaskScheduler taskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(10); // Adjust pool size as needed
+        scheduler.setThreadNamePrefix("DynamicScheduler-");
+        return scheduler;
     }
 }

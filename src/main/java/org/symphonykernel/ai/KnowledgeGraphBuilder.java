@@ -2,6 +2,7 @@ package org.symphonykernel.ai;
 
 import java.util.Map;
 
+import org.json.JSONArray;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ import org.symphonykernel.UserSession;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.SessionProvider;
+import org.symphonykernel.scheduling.DefaultIndexTrakingProvider;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.SqlStep;
@@ -26,6 +28,7 @@ import org.symphonykernel.transformer.PlatformHelper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
@@ -66,6 +69,8 @@ public class KnowledgeGraphBuilder {
 
     @Autowired
     SessionProvider sessionManager;
+    @Autowired
+    VectorSearchHelper vector;
 
     @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchKnowledgePrompt.text') }")
     private String matchKnowledgePrompt;
@@ -144,8 +149,10 @@ public class KnowledgeGraphBuilder {
     private Knowledge matchKnowledge(String question) {
         try {
             // Fetch knowledge descriptions and convert to JSON string
-            //Todo: Optimize the query to fetch only the required knowledge descriptions based on the input query
-            Map<String, String> knowledgeDesc = knowledgeBaserepo.getActiveKnowledgeDescriptions();
+
+        	ArrayNode knowledgeDesc = vector.Search(DefaultIndexTrakingProvider.csKnowledgeIndex, question,null);// 
+        	
+            //Map<String, String> knowledgeDesc = knowledgeBaserepo.getActiveKnowledgeDescriptions();
             String jsonString = objectMapper.writeValueAsString(knowledgeDesc);
 
             // Get response from OpenAI

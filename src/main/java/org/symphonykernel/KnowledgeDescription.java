@@ -1,4 +1,6 @@
 package org.symphonykernel;
+import java.util.List;
+
 import com.azure.search.documents.indexes.SearchableField;
 import com.azure.search.documents.indexes.SimpleField;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -16,4 +18,7 @@ public class KnowledgeDescription  {
     @SearchableField(analyzerName = "en.microsoft")
 	public String desc;	
 	
+	//@JsonProperty("content_vector")
+	//@SearchableField
+    //private List<Float> contentVector;
 }

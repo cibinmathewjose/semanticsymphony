@@ -38,6 +38,8 @@ import com.azure.search.documents.models.VectorQuery;
 import com.azure.search.documents.util.AutocompletePagedIterable;
 import com.azure.search.documents.util.SearchPagedIterable;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 
 import reactor.core.publisher.Mono;
 
@@ -77,15 +79,17 @@ import com.azure.search.documents.util.SearchPagedIterable;
 import com.azure.search.documents.indexes.models.AzureOpenAIModelName;
 
 @Service
-public class KnowledgeVector {
+public class VectorSearchHelper {
 
 	  private static final Logger LOGGER = LoggerFactory.getLogger(
-			  KnowledgeVector.class);
+			  VectorSearchHelper.class);
 
     private final AzureAISearchConnectionProperties aisearchProps;
+    ObjectMapper objectMapper ;
 
-    public KnowledgeVector(AzureAISearchConnectionProperties connectionProperties) {
+    public VectorSearchHelper(AzureAISearchConnectionProperties connectionProperties,ObjectMapper objectMapper) {
         this.aisearchProps = connectionProperties;
+        this.objectMapper=objectMapper;
     }
     
     public SearchClient createSearchClient(String indexName) {
@@ -95,14 +99,9 @@ public class KnowledgeVector {
                 .indexName(indexName)
                 .buildClient();
     }
-    
-    public <T> void createIndex(String indexName, Class<T> modelClass,List<T> data)
-    {
-    	createIndex(indexName, modelClass);     
-    	        
-        indexDocuments(indexName, data);
-    }
-
+    //public static List<Float> getEmbeddings(String text) {
+        
+   // }
 	public <T> void createIndex(String indexName, Class<T> modelClass) {
 		SearchIndexClient searchIndexClient = new SearchIndexClientBuilder()
     	            .endpoint(aisearchProps.getEndpoint())
@@ -114,6 +113,13 @@ public class KnowledgeVector {
     	searchIndexClient.createOrUpdateIndex(
     				 new SearchIndex(indexName, SearchIndexClient.buildSearchFields(modelClass, options)));
 	}
+    public <T> void createIndex(String indexName, Class<T> modelClass,List<T> data)
+    {
+    	createIndex(indexName, modelClass);     
+    	        
+        indexDocuments(indexName, data);
+    }
+
     public <T> void indexDocument(String indexName, T data) {
 	    List<T> list =new ArrayList<T>();
 	    list.add(data);
@@ -140,52 +146,6 @@ public class KnowledgeVector {
         }        
         }
 	}
-    public void search(String indexName,String text)
-    {
-    	SearchOptions options = new SearchOptions();
-        options.setIncludeTotalCount(true);
-        options.setFilter("");
-        options.setOrderBy("");
-        options.setIncludeTotalCount(true);
-        options.setSelect("product_name", "brand_name", "file_name", "product_code", "content");
-        options.setQueryType(com.azure.search.documents.models.QueryType.SEMANTIC);
-        
-
-	     // Create an instance of SemanticSearchOptions
-	     SemanticSearchOptions semanticOptions = new SemanticSearchOptions();
-	     semanticOptions.setSemanticConfigurationName("default"); // Set your semantic configuration name here
-	     QueryCaption caption =new QueryCaption(QueryCaptionType.EXTRACTIVE);
-	     caption.setHighlightEnabled(true);
-	     semanticOptions.setQueryCaption(caption);
-	     QueryAnswer answers =new QueryAnswer(QueryAnswerType.EXTRACTIVE);
-	     semanticOptions.setQueryAnswer(answers);
-	     // Set the semanticOptions in the SearchOptions
-	     options.setSemanticSearchOptions(semanticOptions);
-     
-        //options.setQueryLanguage("en-us");
-        //options.setQueryRewrites("generative");
-        options.setTop(2);
-        options.setSkip(1);
-
-        VectorSearchOptions voptions = new VectorSearchOptions();
-        List<VectorQuery> vQuery = new ArrayList<>();
-        VectorQuery q = new VectorizableTextQuery(text)
-        		.setFields("content_vector");   
-            	//.setQueryRewrites("generative");
-        vQuery.add(q);
-        voptions.setQueries(vQuery);
-        //voptions.setVectorFilterMode("postFilter");
-        options.setVectorSearchOptions(voptions);
-        
-    	 SearchClient searchClient = createSearchClient(indexName);    	 
-    	 
-         SearchPagedIterable searchResults = searchClient.search(text, options, Context.NONE);
-         LOGGER.info("Count = "+searchResults.getTotalCount());
-         searchResults.iterator().forEachRemaining(result ->
-         {
-        	 LOGGER.info(result.getDocument(JsonNode.class).toString());
-         });
-    }
     @ServiceMethod(returns = ReturnType.SINGLE)
     public <T> T getDocument(String indexName,String key, Class<T> modelClass) 
     {    
@@ -208,6 +168,62 @@ public class KnowledgeVector {
         return searchResults.stream()
                             .map(result -> result.getDocument(modelClass))
                             .iterator();
+    }
+
+    public ArrayNode Search(String indexName,String text,String fields)
+    {
+    	SearchOptions options = new SearchOptions();
+        options.setIncludeTotalCount(true);
+        options.setFilter("");
+        options.setOrderBy("");
+        options.setIncludeTotalCount(true);
+        if(fields!=null)
+        options.setSelect(fields);
+        //options.setQueryType(com.azure.search.documents.models.QueryType.SEMANTIC);
+        
+
+	     // Create an instance of SemanticSearchOptions
+	     //SemanticSearchOptions semanticOptions = new SemanticSearchOptions();
+	    // semanticOptions.setSemanticConfigurationName("default"); // Set your semantic configuration name here
+	     QueryCaption caption =new QueryCaption(QueryCaptionType.EXTRACTIVE);
+	     caption.setHighlightEnabled(true);
+	  //   semanticOptions.setQueryCaption(caption);
+	     QueryAnswer answers =new QueryAnswer(QueryAnswerType.EXTRACTIVE);
+	  //   semanticOptions.setQueryAnswer(answers);
+	     // Set the semanticOptions in the SearchOptions
+	    // options.setSemanticSearchOptions(semanticOptions);
+     
+        //options.setQueryLanguage("en-us");
+        //options.setQueryRewrites("generative");
+        options.setTop(2);
+        options.setSkip(1);
+
+        VectorSearchOptions voptions = new VectorSearchOptions();
+        List<VectorQuery> vQuery = new ArrayList<>();
+        VectorQuery q = new VectorizableTextQuery(text)
+        		.setFields("content_vector");   
+            	//.setQueryRewrites("generative");
+        vQuery.add(q);
+        voptions.setQueries(vQuery);
+        //voptions.setVectorFilterMode("postFilter");
+       // options.setVectorSearchOptions(voptions);
+    	 SearchClient searchClient = createSearchClient(indexName);    	 
+         SearchPagedIterable searchResults = searchClient.search(text, options, Context.NONE);
+         // Convert results to JSONArray
+    
+        // Convert results to ArrayNode
+	    
+	    ArrayNode arrayNode = objectMapper.createArrayNode();
+	
+	    searchResults.forEach(result -> {
+	        JsonNode document = result.getDocument(JsonNode.class);
+	        if (document != null) {
+	            arrayNode.add(document);
+	        }
+	    });
+
+    return arrayNode;
+        
     }
 
     

@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 
 import org.springframework.stereotype.Component;
@@ -20,9 +21,11 @@ import org.symphonykernel.Index;
 import org.symphonykernel.Indexer;
 import org.symphonykernel.KnowledgeDescription;
 import org.symphonykernel.ai.Agent;
-import org.symphonykernel.ai.KnowledgeVector;
+import org.symphonykernel.ai.VectorSearchHelper;
 import org.symphonykernel.core.IIndexTraker;
 import org.symphonykernel.core.IknowledgeBase;
+import org.springframework.scheduling.support.CronExpression;
+import org.springframework.scheduling.support.CronTrigger;
 
 @Component
 @Configuration
@@ -31,15 +34,26 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 	
 	private static final Logger logger = LoggerFactory.getLogger(DefaultIndexTrakingProvider.class);
 	private final static String indexTrakerIndex = "cs_auto_indexes";
-	private final static String csKnowledgeIndex = "cs_copilot_knowledge";
+	public final static String csKnowledgeIndex = "cs_copilot_knowledge";
 	IknowledgeBase knowledgeBaserepo;	
-	KnowledgeVector knowledgeVector;
+	VectorSearchHelper knowledgeVector;
 	ScheduledTaskRegistrar taskRegistrar ;
+	private boolean isValidCronExpression(String cronExpression) {
+		 try {
+		        CronExpression.parse(cronExpression);
+		        return true;
+		    } catch (IllegalArgumentException ex) {
+		        logger.error("Invalid cron expression: " + cronExpression, ex);
+		        return false;
+		    }
+	}
+	@Autowired
+	private ThreadPoolTaskScheduler taskScheduler;
 
 	private static final ConcurrentMap<String, Indexer<?>> indexerMap = new ConcurrentHashMap<>();
 
 	@Autowired
-	public DefaultIndexTrakingProvider(IknowledgeBase knowledgeBaserepo,KnowledgeVector knowledgeVector) {
+	public DefaultIndexTrakingProvider(IknowledgeBase knowledgeBaserepo,VectorSearchHelper knowledgeVector) {
 		this.knowledgeBaserepo=knowledgeBaserepo;
 		this.knowledgeVector=knowledgeVector;
 	}
@@ -48,35 +62,37 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 	{
 		knowledgeVector.createIndex(indexTrakerIndex, Index.class);
 		Indexer<KnowledgeDescription> indexer =new Indexer<KnowledgeDescription>(csKnowledgeIndex, KnowledgeDescription.class, this.knowledgeBaserepo);
-		indexer.setCronExpression("0 * * * * ?");
 		registerIndexer(indexer);		
     }
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar taskRegistrar) {
     	this.taskRegistrar=taskRegistrar;
+		taskRegistrar.setTaskScheduler(taskScheduler);
 	}
-    @Scheduled(cron = "0 0 * * * ?") // Runs every hour at the 0th minute
+   /* @Scheduled(cron = "0 0 * * * ?") // Runs every hour at the 0th minute
     public void runEveryhour() {
     	logger.info("Scheduled run" );
     	Collection<Indexer<?>> indexers = getAllIndexers();
         for (Indexer<?> idx : indexers) {
         	executeIndexing(idx);
         }
-    }
-
+    }*/
 	private void registerSchedule(Indexer<?> idx) {
-		String cronExpression = idx.getCronExpression(); // Fetch the cron expression from your task service
-		if (cronExpression != null&&this.taskRegistrar!=null) {
-			logger.info("indexer for: " + idx.getIndexName()+" scheduled for "+idx.getCronExpression());
-			this.taskRegistrar.addCronTask(() -> {
-		        // Your task logic here
-		        executeIndexing(idx); // The task to execute (your service method)
-		    }, cronExpression);
-		} else {
-		    // Handle the case where the cron expression is not found (e.g., log a warning)
-			logger.error("Cron expression not found for task: " + idx);
-		}
+    String cronExpression = idx.getCronExpression();
+    if (cronExpression != null && isValidCronExpression(cronExpression)) {        
+        if(idx.getFuture()!=null)
+        {
+        	if(idx.getFuture().cancel(false))
+        	{
+        		logger.info("scheduler for: " + idx.getIndexName() + " canceled");
+        	}
+        }
+        idx.setFuture(taskScheduler.schedule(() -> executeIndexing(idx), new CronTrigger(cronExpression)));
+        logger.info("Indexer for: " + idx.getIndexName() + " scheduled for " + idx.getCronExpression());
+    } else {
+        logger.error("Invalid or missing cron expression for task: " + idx);
+    }
 	}
 
 	@Override
@@ -86,8 +102,9 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 			logger.info("Start indexing for: " + indexer.getIndexName());
 			String indexName =indexer.getIndexName();
 			Index idx= knowledgeVector.getDocument(indexTrakerIndex, indexName, Index.class);
-			if(idx!=null &&indexName!=null&&indexName.equals(idx.indexName) && !"running".equals(idx.indexingStatus))
+			if(idx!=null &&!"running".equals(idx.indexingStatus))
 			{
+				
 				Date lastrun=idx.lastRefreshDate;
 		    	Calendar calendar = Calendar.getInstance();
 				idx.lastRefreshDate =calendar.getTime();
@@ -97,6 +114,7 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 				idx.indexingStatus = "ready";
 				knowledgeVector.indexDocument(indexTrakerIndex, idx);
 				logger.info("indexing completed for: " + indexer.getIndexName());
+				
 			}
 			
 		}
@@ -153,7 +171,8 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 				idx.indexName=indexer.getIndexName();
 				idx.indexingStatus = "pending";
 				knowledgeVector.indexDocument(indexTrakerIndex, idx);
-			}
+			};
+			registerSchedule(indexer);
 		}
 	}
 
