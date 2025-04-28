@@ -1,31 +1,50 @@
 package org.symphonykernel.config;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-@ConfigurationProperties
+@ConfigurationProperties(DBConnectionProperties.CONFIG_PREFIX)
 public class DBConnectionProperties {
+
+    public static final String CONFIG_PREFIX = "spring.datasource";
 
     @Value("${spring.datasource.driver.class}")
     private String driverClassName;
-
-    @Value("${spring.datasource.url}")
     private String url;
-
-    @Value("${spring.datasource.username}")
     private String username;
-
-    @Value("${spring.datasource.password}")
     private String password;
 
-    public Connection getConnection() throws Exception {
-        // Load JDBC driver
-        Class.forName(driverClassName);
-        // Get connection
-        Connection conn = DriverManager.getConnection(url, username, password);
-        return conn;
+    // Getters and setters for all fields
+    public String getDriverClassName() {
+        return driverClassName;
     }
+
+    public void setDriverClassName(String driverClassName) {
+        this.driverClassName = driverClassName;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
 }

@@ -6,6 +6,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
+import org.symphonykernel.ExecutionContext;
+import org.symphonykernel.Knowledge;
+import org.symphonykernel.KnowledgeDescription;
+import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IknowledgeBase;
 
 /**
  * The {@code Agent} class is a service responsible for processing chat requests
@@ -47,26 +52,21 @@ public class Agent {
     private static final Logger logger = LoggerFactory.getLogger(Agent.class);
 
     private final KnowledgeGraphBuilder knowledgeGraphBuilder;
-
     @Autowired
     public Agent(KnowledgeGraphBuilder knowledgeGraphBuilder) {
         this.knowledgeGraphBuilder = knowledgeGraphBuilder;
     }
 
-    public ChatResponse process(ChatRequest request) {
-        if (logger.isInfoEnabled()) {
-            // Log the request query or indicate if the request is null
-            logger.info("Processing request: {}", request != null ? request.getQuery() : "Received null request");
-        }
+    public ChatResponse process(ChatRequest request) {      
+        logger.info("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
         if (null == request) {
             return new ChatResponse("Request is null");
-        }   
-        return knowledgeGraphBuilder
-                .createContext(request)
-                .identifyIntent()
-                .setParameters()
-                .initExecuter()
-                .getResponse();
+        } 
+        ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
+				         ctx = knowledgeGraphBuilder.identifyIntent(ctx);
+				         ctx = knowledgeGraphBuilder.setParameters(ctx);       
+        return knowledgeGraphBuilder.getResponse(ctx);
     }
+    
 
 }

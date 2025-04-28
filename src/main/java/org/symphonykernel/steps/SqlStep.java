@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.config.DBConnectionProperties;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.JsonTransformer;
@@ -32,7 +31,7 @@ public class SqlStep implements IStep {
     private static final Logger logger = LoggerFactory.getLogger(SqlStep.class);
 
     @Autowired
-    DBConnectionProperties db;
+    Connection connection;
 
     @Autowired
     IknowledgeBase knowledgeBase;
@@ -43,12 +42,9 @@ public class SqlStep implements IStep {
     @Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
     public ArrayNode executeSqlQuery(String query) {
         ArrayNode data = null;
-        Connection connection = null;
         if (query != null && !query.isEmpty()) {
             try {
-                connection = db.getConnection();
                 Statement statement = connection.createStatement();
-
                 PreparedStatement stm = connection.prepareStatement(query);
                 ResultSet resultSet = stm.executeQuery();
                 data = getJSON(resultSet);
@@ -57,14 +53,7 @@ public class SqlStep implements IStep {
                 statement.close();
             } catch (Exception e) {
                 e.printStackTrace();
-            } finally {
-                if (connection != null)
-                try {
-                    connection.close();
-                } catch (SQLException e) {
-                    e.printStackTrace();
-                }
-            }
+            } 
         }
         if (data == null) {
             data = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
@@ -73,12 +62,10 @@ public class SqlStep implements IStep {
     }
 
     public <T> T executeSingleValueQuery(String query, Object... params) throws Exception {
-        Connection connection = null;
         PreparedStatement preparedStatement = null;
         ResultSet resultSet = null;
 
         try {
-            connection = db.getConnection();
             preparedStatement = connection.prepareStatement(query);
 
             // Set parameters if any
@@ -109,13 +96,6 @@ public class SqlStep implements IStep {
             if (preparedStatement != null) {
                 try {
                     preparedStatement.close();
-                } catch (SQLException e) {
-                    e.printStackTrace(); // Or log the exception
-                }
-            }
-            if (connection != null) {
-                try {
-                    connection.close();
                 } catch (SQLException e) {
                     e.printStackTrace(); // Or log the exception
                 }
@@ -197,8 +177,7 @@ public class SqlStep implements IStep {
         String sqlQuery = null;
         JsonNode variables = ctx.getVariables();
         Knowledge kb = ctx.getKnowledge();
-        if (kb != null) {
-          
+        if (kb != null) {          
             sqlQuery = kb.getData();
             if (kb.getParams() != null && !kb.getParams().isEmpty()) {
                 if(variables != null)

@@ -15,6 +15,7 @@ public class ExecutionContext {
     boolean convert;
     ChatHistory chatHistory;
     UserSession info ;
+    ChatRequest request;
 
     public void setName(String name) {
         this.name = name;
@@ -40,6 +41,13 @@ public class ExecutionContext {
     }
     public String getRequestId() {
         return info!=null ? info.getRequestId() : null;
+    }
+    public void setRequest(ChatRequest request) {
+        this.request = request;
+    }
+
+    public ChatRequest getRequest() {
+        return request;
     }
     public void setUsersQuery(String usersQuery) {
         this.usersQuery = usersQuery;

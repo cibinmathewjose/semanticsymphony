@@ -1,9 +1,11 @@
 package org.symphonykernel.ai;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import com.microsoft.semantickernel.Kernel;
@@ -49,28 +51,37 @@ public class AzureOpenAIHelper {
                                     .build());
 
         } catch (ServiceNotFoundException e) {
-            throw new RuntimeException(e);
+            logger.error("Error occurred while executing prompt: {}", e.getMessage(), e);
+            return Mono.empty(); // Return an empty Mono in case of an exception
         }
     }
 
-    public String Ask(String question) {
+    public String ask(String question) {
         try {
             List<ChatMessageContent<?>> responses = askQuestion(question).block();
             if (responses != null && !responses.isEmpty()) {
                 ChatMessageContent<?> lastResponse = responses.get(responses.size() - 1);
-                return lastResponse.getContent().toString(); // Assuming getContent() returns the message
+                return lastResponse != null ? lastResponse.getContent() : null; // Handle potential null content
             } else {
                 return null; // Or handle the empty response case as needed
             }
         } catch (RuntimeException e) {
             // Handle any exceptions that occurred during the Mono execution
-            e.printStackTrace();
+            logger.error("Error occurred while executing Mono: {}", e.getMessage(), e);
             return null; // Or throw the exception if appropriate
         }
     }
 
     public String execute(String systemPrompt, String userPrompt) {
-        return Ask(systemPrompt + " " + userPrompt);
+        return ask(systemPrompt + " " + userPrompt);
+    }
+    @Async
+    public CompletableFuture<String> askAsync(String question) {
+        return CompletableFuture.supplyAsync(() -> ask(question));
+    }
+    @Async
+    public CompletableFuture<String> evaluatePromptAsync(String prompt, String jsonString, String question) {
+        return CompletableFuture.supplyAsync(() -> evaluatePrompt(prompt, jsonString, question));
     }
     public String evaluatePrompt(String promptToEval,String dataSet, String question) {
         try {
@@ -80,7 +91,7 @@ public class AzureOpenAIHelper {
                     .replace(QUESTION, question);
 
             // Get response from OpenAI
-            String response = Ask(prompt);
+            String response = ask(prompt);
 
             // Return the response if valid
             if (response != null && !NONE.equalsIgnoreCase(response.trim())) {
@@ -88,7 +99,7 @@ public class AzureOpenAIHelper {
             }
         } catch (Exception e) {
             // Log the exception for debugging
-            e.printStackTrace();
+            logger.error("Error occurred while evaluating prompt: {}", e.getMessage(), e);
         }
         return null;
     }

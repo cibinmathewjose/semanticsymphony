@@ -1,18 +1,23 @@
 package org.symphonykernel;
 
-public class Knowledge  {
+public class Knowledge extends KnowledgeDescription  {
 
-	private String name;	
+	
+ 
 	private QueryType type;
-	private String desc;
+	
+	
 	private String params;
-
+	
 	private String data;
+	
 	private String resolver;
-
+	
 	private String card;
 	
 	private String url;
+	
+	
 	
 	public String getUrl() {
 		return url;
@@ -63,7 +68,7 @@ public class Knowledge  {
 	public void setType(QueryType val) {
 		this.type = val;
 	}
-
+	
 	public String getName() {
 		return name;
 	}
