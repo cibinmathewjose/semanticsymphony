@@ -2,13 +2,10 @@ package org.symphonykernel.ai;
 
 import java.util.Map;
 
-import org.json.JSONArray;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
@@ -20,7 +17,6 @@ import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.providers.SessionProvider;
-import org.symphonykernel.scheduling.DefaultIndexTrakingProvider;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;
@@ -31,10 +27,60 @@ import org.symphonykernel.transformer.PlatformHelper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
+/**
+ * The KnowledgeGraphBuilder class is responsible for building and managing the execution context
+ * for processing user queries, identifying intents, setting parameters, and generating responses.
+ * It integrates with various components such as knowledge bases, OpenAI, and execution steps 
+ * (e.g., SQL, GraphQL, REST, etc.) to provide a seamless query processing pipeline.
+ * 
+ * <p>This class is annotated with Spring's {@code @Component} to enable dependency injection
+ * and is designed to work within a Spring application context.</p>
+ * 
+ * <h2>Key Responsibilities:</h2>
+ * <ul>
+ *   <li>Create and manage {@link ExecutionContext} for user queries.</li>
+ *   <li>Identify user intent by matching queries with knowledge descriptions.</li>
+ *   <li>Set parameters for queries using OpenAI prompt evaluation.</li>
+ *   <li>Generate responses by executing the appropriate step based on the identified knowledge type.</li>
+ * </ul>
+ * 
+ * <h2>Dependencies:</h2>
+ * <ul>
+ *   <li>{@link IknowledgeBase} - Repository for managing knowledge descriptions.</li>
+ *   <li>{@link PlatformHelper} - Helper for platform-specific operations.</li>
+ *   <li>{@link AzureOpenAIHelper} - Integration with OpenAI for prompt evaluation.</li>
+ *   <li>{@link ObjectMapper} - JSON processing utility.</li>
+ *   <li>{@link QueryHandler} - Handles query matching and parsing.</li>
+ *   <li>{@link Symphony}, {@link GraphQLStep}, {@link RESTStep}, {@link SqlStep}, {@link PluginStep} - Execution steps for various query types.</li>
+ *   <li>{@link SessionProvider} - Manages user sessions and chat history.</li>
+ *   <li>{@link VectorSearchHelper} - Provides vector-based search capabilities.</li>
+ *   <li>{@link FileContentProvider} - Loads file-based content for prompts.</li>
+ * </ul>
+ * 
+ * <h2>Thread Safety:</h2>
+ * <p>This class uses a {@link ThreadLocal} to manage {@link ExecutionContext} instances
+ * for each thread, ensuring thread safety for context-specific operations.</p>
+ * 
+ * <h2>Methods:</h2>
+ * <ul>
+ *   <li>{@link #getLocalExecutionContext()} - Retrieves the thread-local execution context.</li>
+ *   <li>{@link #createContext(ChatRequest)} - Creates a new execution context for a given chat request.</li>
+ *   <li>{@link #identifyIntent(ExecutionContext)} - Identifies the intent of the user's query.</li>
+ *   <li>{@link #setParameters(ExecutionContext)} - Sets parameters for the query using OpenAI prompt evaluation.</li>
+ *   <li>{@link #getResponse(ExecutionContext)} - Generates a response based on the execution context.</li>
+ *   <li>{@link #matchKnowledge(String)} - Matches a query to a knowledge description or SQL query.</li>
+ *   <li>{@link #getExecuter(Knowledge)} - Retrieves the appropriate execution step based on the knowledge type.</li>
+ * </ul>
+ * 
+ * <h2>Logging:</h2>
+ * <p>Uses SLF4J for logging important events and errors during query processing.</p>
+ * 
+ * <h2>Usage:</h2>
+ * <p>This class is intended to be used as a Spring-managed bean and should not be instantiated manually.</p>
+ */
 @Component
 public class KnowledgeGraphBuilder {
 
@@ -93,10 +139,21 @@ public class KnowledgeGraphBuilder {
 
     private static final ThreadLocal<ExecutionContext> threadLocalContext = ThreadLocal.withInitial(ExecutionContext::new);
 
+    /**
+     * Retrieves the thread-local execution context for the current thread.
+     * 
+     * @return the {@link ExecutionContext} associated with the current thread.
+     */
     public ExecutionContext getLocalExecutionContext() {
         return threadLocalContext.get();
     }
 
+    /**
+     * Creates a new execution context for a given chat request.
+     * 
+     * @param request the {@link ChatRequest} containing user query and metadata.
+     * @return a new {@link ExecutionContext} initialized with the request data.
+     */
     public ExecutionContext createContext(ChatRequest request) {
         ExecutionContext ctx = new ExecutionContext();
         ctx.setRequest(request);
@@ -110,13 +167,24 @@ public class KnowledgeGraphBuilder {
         return ctx;
     }
 
+    /**
+     * Identifies the intent of the user's query by matching it with knowledge descriptions.
+     * 
+     * @param ctx the {@link ExecutionContext} containing the user's query.
+     * @return the updated {@link ExecutionContext} with identified knowledge.
+     */
     public ExecutionContext identifyIntent(ExecutionContext ctx ) {
         Knowledge knowledge = matchKnowledge(ctx.getUsersQuery());
         ctx.setKnowledge(knowledge);
         return ctx;
     }
 
-
+    /**
+     * Sets parameters for the query using OpenAI prompt evaluation.
+     * 
+     * @param ctx the {@link ExecutionContext} containing the query and knowledge.
+     * @return the updated {@link ExecutionContext} with parameters set.
+     */
     public ExecutionContext setParameters(ExecutionContext ctx) {
         ChatRequest request=ctx.getRequest();
         Knowledge knowledge=ctx.getKnowledge();
@@ -143,6 +211,12 @@ public class KnowledgeGraphBuilder {
         return JsonNodeFactory.instance.objectNode();
     }
 
+    /**
+     * Generates a response based on the execution context.
+     * 
+     * @param ctx the {@link ExecutionContext} containing the query and execution details.
+     * @return a {@link ChatResponse} generated from the execution context.
+     */
     public ChatResponse getResponse(ExecutionContext ctx) {       
         Knowledge knowledge= ctx.getKnowledge();        
         IStep step = getExecuter(knowledge);
@@ -191,6 +265,12 @@ public class KnowledgeGraphBuilder {
         return null;
     }
 
+    /**
+     * Retrieves the appropriate execution step based on the knowledge type.
+     * 
+     * @param knowledge the {@link Knowledge} object containing the query type and data.
+     * @return the {@link IStep} implementation for executing the query.
+     */
     public IStep getExecuter(Knowledge knowledge) {
 
         if (knowledge == null || knowledge.getType() == null) {

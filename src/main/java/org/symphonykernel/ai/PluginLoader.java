@@ -1,3 +1,4 @@
+
 package org.symphonykernel.ai;
 
 import java.lang.reflect.InvocationTargetException;
@@ -14,6 +15,49 @@ import com.microsoft.semantickernel.Kernel;
 import com.microsoft.semantickernel.plugin.KernelPlugin;
 import com.microsoft.semantickernel.plugin.KernelPluginFactory;
 import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
+
+/**
+ * The PluginLoader class is a Spring-managed service that implements the {@link IPluginLoader} 
+ * interface and the {@link ApplicationContextAware} interface. It is responsible for loading 
+ * plugins into the Semantic Kernel and creating instances of classes with support for Spring's 
+ * dependency injection.
+ *
+ * <p>Key Responsibilities:
+ * <ul>
+ *   <li>Provides a method to create an instance of a class given its fully qualified name, 
+ *       leveraging Spring's autowiring capabilities.</li>
+ *   <li>Implements the {@code load} method to load a plugin into the Semantic Kernel, 
+ *       integrating it with a specified {@link ChatCompletionService}.</li>
+ * </ul>
+ *
+ * <p>Dependencies:
+ * <ul>
+ *   <li>{@link ApplicationContext} - Used to access Spring's bean factory for creating instances.</li>
+ *   <li>{@link KernelPluginFactory} - Used to create a {@link KernelPlugin} from an object.</li>
+ *   <li>{@link Kernel} - Represents the Semantic Kernel to which plugins are added.</li>
+ *   <li>{@link ChatCompletionService} - AI service used by the kernel.</li>
+ * </ul>
+ *
+ * <p>Exception Handling:
+ * <ul>
+ *   <li>Handles various exceptions such as {@link ClassNotFoundException}, 
+ *       {@link InstantiationException}, {@link IllegalAccessException}, 
+ *       {@link InvocationTargetException}, and {@link NoSuchMethodException} 
+ *       during object creation and plugin loading.</li>
+ *   <li>Logs errors and returns {@code null} if plugin loading fails.</li>
+ * </ul>
+ *
+ * <p>Usage:
+ * <pre>
+ * {@code
+ * PluginLoader pluginLoader = new PluginLoader();
+ * Kernel kernel = pluginLoader.load(chatCompletionService, "com.example.MyPlugin");
+ * }
+ * </pre>
+ */
+/**
+ * Implementation of the {@link IPluginLoader} interface for loading plugins into the kernel.
+ */
 @Service
 public class PluginLoader implements IPluginLoader, ApplicationContextAware {
 

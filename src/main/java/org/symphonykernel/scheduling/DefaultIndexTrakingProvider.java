@@ -30,14 +30,32 @@ import org.springframework.scheduling.support.CronTrigger;
 @Component
 @Configuration
 @EnableScheduling
-public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfigurer {
+/**
+ * Provides default implementation for index tracking and scheduling.
+ * 
+ * <p>This class implements {@link IIndexTraker} and {@link SchedulingConfigurer}.
+ * 
+ * @version 1.0
+ * @since 1.0
+ */
+public class DefaultIndexTrakingProvider implements IIndexTraker, SchedulingConfigurer {
 	
 	private static final Logger logger = LoggerFactory.getLogger(DefaultIndexTrakingProvider.class);
 	private final static String indexTrakerIndex = "cs_auto_indexes";
-	public final static String csKnowledgeIndex = "cs_copilot_knowledge";
+    /**
+     * Knowledge index constant used for tracking.
+     */
+    public final static String csKnowledgeIndex = "cs_copilot_knowledge";
 	IknowledgeBase knowledgeBaserepo;	
 	VectorSearchHelper knowledgeVector;
 	ScheduledTaskRegistrar taskRegistrar ;
+
+    /**
+     * Validates a cron expression.
+     *
+     * @param cronExpression the cron expression to validate
+     * @return true if the cron expression is valid, false otherwise
+     */
 	private boolean isValidCronExpression(String cronExpression) {
 		 try {
 		        CronExpression.parse(cronExpression);
@@ -52,6 +70,12 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 
 	private static final ConcurrentMap<String, Indexer<?>> indexerMap = new ConcurrentHashMap<>();
 
+	/**
+     * Constructs a DefaultIndexTrakingProvider with the specified knowledge base and vector search helper.
+     * 
+     * @param knowledgeBaserepo the knowledge base repository
+     * @param knowledgeVector the vector search helper
+     */
 	@Autowired
 	public DefaultIndexTrakingProvider(IknowledgeBase knowledgeBaserepo,VectorSearchHelper knowledgeVector) {
 		this.knowledgeBaserepo=knowledgeBaserepo;

@@ -2,8 +2,6 @@ package org.symphonykernel.config;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.util.HashSet;
-import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,10 +22,7 @@ import com.microsoft.semantickernel.aiservices.openai.chatcompletion.OpenAIChatC
 import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
 
 import redis.clients.jedis.DefaultJedisClientConfig;
-import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.JedisClientConfig;
-import redis.clients.jedis.JedisCluster;
-import redis.clients.jedis.JedisPooled;
 import redis.clients.jedis.UnifiedJedis;
 
 @Component
@@ -61,7 +56,7 @@ public class SymphonyKernelAutoConfiguration {
     /**
      * Creates a {@link Kernel} with a default
      * {@link com.microsoft.semantickernel.services.AIService} that uses the
-     * {@link com.microsoft.semantickernel.chatcompletion;} with the model id
+     * {@link com.microsoft.semantickernel.aiservices.openai.chatcompletion.OpenAIChatCompletion} with the model id
      * specified in the {@link AzureOpenAIConnectionProperties} as
      * DeploymentName.
      *

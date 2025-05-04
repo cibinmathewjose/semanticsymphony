@@ -1,3 +1,4 @@
+
 package org.symphonykernel.ai;
 
 import java.io.InputStream;
@@ -78,6 +79,40 @@ import com.azure.search.documents.models.VectorizableTextQuery;
 import com.azure.search.documents.util.SearchPagedIterable;
 import com.azure.search.documents.indexes.models.AzureOpenAIModelName;
 
+/**
+ * Helper class for performing vector search operations using Azure AI Search.
+ * Provides methods for creating search clients, managing search indexes, indexing documents,
+ * retrieving documents, and performing search operations.
+ * 
+ * <p>This class is annotated with {@code @Service} to indicate that it is a Spring service component.</p>
+ * 
+ * <p>Key functionalities include:</p>
+ * <ul>
+ *   <li>Creating search clients for specific indexes.</li>
+ *   <li>Creating and updating search indexes based on model classes.</li>
+ *   <li>Indexing single or multiple documents into a search index.</li>
+ *   <li>Retrieving documents from a search index by key.</li>
+ *   <li>Performing search operations with various options, including semantic and vector search.</li>
+ * </ul>
+ * 
+ * <p>Dependencies:</p>
+ * <ul>
+ *   <li>Azure AI Search SDK for Java</li>
+ *   <li>Jackson ObjectMapper for JSON processing</li>
+ *   <li>SLF4J for logging</li>
+ *   <li>Spring Framework for dependency injection</li>
+ * </ul>
+ * 
+ * <p>Example usage:</p>
+ * <pre>{@code
+ * VectorSearchHelper helper = new VectorSearchHelper(connectionProperties, objectMapper);
+ * helper.createIndex("myIndex", MyModel.class);
+ * helper.indexDocument("myIndex", new MyModel());
+ * MyModel document = helper.getDocument("myIndex", "documentKey", MyModel.class);
+ * }</pre>
+ * 
+ * <p>Note: Ensure that the Azure AI Search connection properties are properly configured.</p>
+ */
 @Service
 public class VectorSearchHelper {
 

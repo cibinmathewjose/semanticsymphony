@@ -7,44 +7,26 @@ import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
-import org.symphonykernel.Knowledge;
-import org.symphonykernel.KnowledgeDescription;
-import org.symphonykernel.core.IStep;
-import org.symphonykernel.core.IknowledgeBase;
-
 /**
- * The {@code Agent} class is a service responsible for processing chat requests
- * and generating appropriate responses by interacting with the {@link KnowledgeGraphBuilder}.
+ * The Agent class is a Spring service responsible for processing chat requests
+ * and generating responses using a knowledge graph.
  * 
- * <p>This class uses a dependency-injected {@code KnowledgeGraphBuilder} to handle
- * the creation of context, intent identification, parameter setting, execution initialization,
- * and response generation for a given chat request.
- * 
- * <p>Logging is performed to track the processing of requests, including handling null requests.
+ * <p>This class interacts with {@link KnowledgeGraphBuilder} to create an
+ * execution context, identify the intent of the request, set parameters, and
+ * generate a response.
  * 
  * <p>Usage:
- * <pre>
- * {@code
- * Agent agent = new Agent(knowledgeGraphBuilder);
- * ChatResponse response = agent.process(chatRequest);
- * }
- * </pre>
- * 
- * Dependencies:
  * <ul>
- *   <li>{@link KnowledgeGraphBuilder} - Handles the processing pipeline for chat requests.</li>
+ *   <li>Inject an instance of {@link KnowledgeGraphBuilder} into the constructor.</li>
+ *   <li>Call the {@link #process(ChatRequest)} method with a {@link ChatRequest} object
+ *       to process the request and obtain a {@link ChatResponse}.</li>
  * </ul>
  * 
- * Annotations:
- * <ul>
- *   <li>{@code @Service} - Marks this class as a Spring service component.</li>
- *   <li>{@code @Autowired} - Indicates that the {@code KnowledgeGraphBuilder} dependency is injected.</li>
- * </ul>
+ * <p>Logging is performed using SLF4J to track the processing of requests.
  * 
- * Methods:
- * <ul>
- *   <li>{@link #process(ChatRequest)} - Processes a chat request and returns a {@link ChatResponse}.</li>
- * </ul>
+ * @author Cibin Jose
+ * @version 1.0
+ * @since 1.0
  */
 @Service
 public class Agent {
@@ -52,21 +34,31 @@ public class Agent {
     private static final Logger logger = LoggerFactory.getLogger(Agent.class);
 
     private final KnowledgeGraphBuilder knowledgeGraphBuilder;
+
+    /**
+     * Constructs an Agent instance with the specified {@link KnowledgeGraphBuilder}.
+     * 
+     * @param knowledgeGraphBuilder the knowledge graph builder used for processing requests
+     */
     @Autowired
     public Agent(KnowledgeGraphBuilder knowledgeGraphBuilder) {
         this.knowledgeGraphBuilder = knowledgeGraphBuilder;
     }
 
+    /**
+     * Processes a chat request and generates a response.
+     * 
+     * @param request the chat request containing the query
+     * @return a {@link ChatResponse} containing the generated response
+     */
     public ChatResponse process(ChatRequest request) {      
         logger.info("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
         if (null == request) {
             return new ChatResponse("Request is null");
         } 
         ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
-				         ctx = knowledgeGraphBuilder.identifyIntent(ctx);
-				         ctx = knowledgeGraphBuilder.setParameters(ctx);       
+        ctx = knowledgeGraphBuilder.identifyIntent(ctx);
+        ctx = knowledgeGraphBuilder.setParameters(ctx);       
         return knowledgeGraphBuilder.getResponse(ctx);
     }
-    
-
 }

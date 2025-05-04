@@ -5,7 +5,6 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
@@ -14,6 +13,45 @@ import org.symphonykernel.steps.SqlStep;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+/**
+ * The QueryHandler class is a Spring Component responsible for handling queries
+ * by interacting with a knowledge base and utilizing Azure OpenAI for processing.
+ * It integrates with various components such as a knowledge base repository,
+ * a file content provider, and an SQL assistant to process and generate responses
+ * for user queries.
+ * 
+ * <p>Key Responsibilities:</p>
+ * <ul>
+ *   <li>Fetches knowledge descriptions from the knowledge base and converts them to JSON.</li>
+ *   <li>Uses Azure OpenAI to evaluate prompts and generate responses based on the input question.</li>
+ *   <li>Processes the response to retrieve view definitions and generate SQL queries.</li>
+ * </ul>
+ * 
+ * <p>Dependencies:</p>
+ * <ul>
+ *   <li>{@link IknowledgeBase} - Interface for interacting with the knowledge base repository.</li>
+ *   <li>{@link ObjectMapper} - Used for JSON serialization and deserialization.</li>
+ *   <li>{@link AzureOpenAIHelper} - Helper class for interacting with Azure OpenAI services.</li>
+ *   <li>{@link SqlStep} - SQL assistant for additional processing.</li>
+ *   <li>{@link FileContentProvider} - Provides file content for prompts.</li>
+ * </ul>
+ * 
+ * <p>Methods:</p>
+ * <ul>
+ *   <li>{@code matchSelectQuery(String question)} - Processes a user question to generate a SQL query
+ *       by interacting with the knowledge base and Azure OpenAI.</li>
+ * </ul>
+ * 
+ * <p>Exception Handling:</p>
+ * <ul>
+ *   <li>Handles {@link JsonProcessingException} during JSON serialization.</li>
+ * </ul>
+ * 
+ * <p>Logging:</p>
+ * <ul>
+ *   <li>Uses SLF4J Logger for logging debug and error information.</li>
+ * </ul>
+ */
 @Component
 public class QueryHandler {
 
@@ -41,8 +79,14 @@ public class QueryHandler {
         this.openAIHelper = openAIHelper;
     }
 
-   
-
+    /**
+     * Processes a user question to generate a SQL query by interacting with the knowledge base
+     * and Azure OpenAI. It fetches knowledge descriptions, evaluates prompts, and retrieves
+     * view definitions to construct the SQL query.
+     *
+     * @param question the user question to process
+     * @return the generated SQL query, or {@code null} if processing fails
+     */
     public String matchSelectQuery(String question) {
         try {
             // Fetch knowledge descriptions and convert to JSON string
