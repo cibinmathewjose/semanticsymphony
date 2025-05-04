@@ -6,6 +6,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
@@ -34,7 +35,12 @@ public class Symphony implements IStep {
     IknowledgeBase knowledgeBase;
     
     @Autowired
+    @Qualifier("GraphQLStep")
     GraphQLStep graphQLHelper;
+
+    @Autowired
+    @Qualifier("RESTStep")
+    RESTStep restHelper;
     
     @Autowired
     SqlStep sqlAssistant;
@@ -42,6 +48,8 @@ public class Symphony implements IStep {
     @Autowired
     PlatformHelper platformHelper;
 
+    @Autowired
+    PluginStep pluginStep;
     @Autowired
     AzureOpenAIHelper azureOpenAIHelper;
     @Autowired
@@ -79,13 +87,7 @@ public class Symphony implements IStep {
                                     newCtx.setVariables(idNode);
                                     newCtx.setHttpHeaderProvider(ctx.getHttpHeaderProvider());
                                     newCtx.setConvert(true);
-                                    if (kb.getType() == QueryType.SQL) {
-                                        result = sqlAssistant.executeQueryByName(newCtx);
-                                    } else if (kb.getType() == QueryType.GRAPHQL) {
-                                        result = graphQLHelper.executeQueryByName(newCtx);
-                                    } else if (kb.getType() == QueryType.SYMPHNOY) {
-                                        result = executeQueryByName(newCtx);
-                                    }
+                                    result = getResult(kb, newCtx);
                                     if (result.isArray() && result.size() == 1) {
                                         resultArray.add(result.get(0));
                                     } else {
@@ -102,14 +104,7 @@ public class Symphony implements IStep {
                         newCtx.setHttpHeaderProvider(ctx.getHttpHeaderProvider());
                         newCtx.setUsersQuery(ctx.getUsersQuery());
                         newCtx.setConvert(true);
-
-                        if (kb.getType() == QueryType.SQL) {
-                            result = sqlAssistant.executeQueryByName(newCtx);
-                        } else if (kb.getType() == QueryType.GRAPHQL) {
-                            result = graphQLHelper.executeQueryByName(newCtx);
-                        } else if (kb.getType() == QueryType.SYMPHNOY) {
-                            result = executeQueryByName(newCtx);
-                        }
+                        result = getResult(kb, newCtx);                        
                         resolvedValues.put(kb.getName().toLowerCase(), result);
                     }
                 }
@@ -150,6 +145,23 @@ public class Symphony implements IStep {
         a.setData(jsonArray);
         return a;
     }
+
+	private JsonNode getResult(Knowledge kb, ExecutionContext newCtx) {
+		JsonNode result = null;
+		if (kb.getType() == QueryType.SQL) {
+		    result = sqlAssistant.executeQueryByName(newCtx);
+		} else if (kb.getType() == QueryType.GRAPHQL) {
+		    result = graphQLHelper.executeQueryByName(newCtx);
+		} else if (kb.getType() == QueryType.REST) {
+		    result = restHelper.executeQueryByName(newCtx);
+		} else if (kb.getType() == QueryType.SYMPHNOY) {
+		    result = executeQueryByName(newCtx);
+		}
+		else if (kb.getType() == QueryType.PLUGIN) {
+		    result = pluginStep.executeQueryByName(newCtx);
+		}
+		return result;
+	}
 
     public JsonNode parseJson(String jsonString) {
         ObjectMapper objectMapper = new ObjectMapper();

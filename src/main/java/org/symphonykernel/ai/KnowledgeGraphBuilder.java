@@ -6,6 +6,7 @@ import org.json.JSONArray;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
@@ -17,10 +18,12 @@ import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.providers.SessionProvider;
 import org.symphonykernel.scheduling.DefaultIndexTrakingProvider;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
+import org.symphonykernel.steps.RESTStep;
 import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
 import org.symphonykernel.transformer.PlatformHelper;
@@ -59,7 +62,13 @@ public class KnowledgeGraphBuilder {
     Symphony symphony;
 
     @Autowired
+    @Qualifier("GraphQLStep")
     GraphQLStep graphQLHelper;
+    
+
+    @Autowired
+    @Qualifier("RESTStep")
+    RESTStep restHelper;
 
     @Autowired
     SqlStep sqlAssistant;
@@ -71,12 +80,16 @@ public class KnowledgeGraphBuilder {
     SessionProvider sessionManager;
     @Autowired
     VectorSearchHelper vector;
+    @Autowired
+    private FileContentProvider fileContentProvider;
 
-    @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchKnowledgePrompt.text') }")
-    private String matchKnowledgePrompt;
+    //@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchKnowledgePrompt.text') }")
+    //@Value("${fileContentProvider.matchKnowledgePrompt}")
+    //private String matchKnowledgePrompt;
 
-    @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/paramParserPrompt.text') }")
-    private String paramParserPrompt;
+    //@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/paramParserPrompt.text') }")
+    //@Value("${fileContentProvider.paramParserPrompt}")
+    //private String paramParserPrompt;
 
     private static final ThreadLocal<ExecutionContext> threadLocalContext = ThreadLocal.withInitial(ExecutionContext::new);
 
@@ -109,7 +122,7 @@ public class KnowledgeGraphBuilder {
         Knowledge knowledge=ctx.getKnowledge();
         if (knowledge != null && request != null && knowledge.getParams() != null &&
             (request.getPayload() == null || NONE.equals(request.getPayload()))) {
-            String params = openAI.evaluatePrompt(paramParserPrompt, knowledge.getParams(), request.getQuery());
+            String params = openAI.evaluatePrompt(fileContentProvider.paramParserPrompt, knowledge.getParams(), request.getQuery());
             request.setPayload(params);
             ctx.setRequest(request);
         }
@@ -150,13 +163,13 @@ public class KnowledgeGraphBuilder {
         try {
             // Fetch knowledge descriptions and convert to JSON string
 
-        	ArrayNode knowledgeDesc = vector.Search(DefaultIndexTrakingProvider.csKnowledgeIndex, question,null);// 
+        	//ArrayNode knowledgeDesc = vector.Search(DefaultIndexTrakingProvider.csKnowledgeIndex, question,null);// 
         	
-            //Map<String, String> knowledgeDesc = knowledgeBaserepo.getActiveKnowledgeDescriptions();
+            Map<String, String> knowledgeDesc = knowledgeBaserepo.getActiveKnowledgeDescriptions();
             String jsonString = objectMapper.writeValueAsString(knowledgeDesc);
 
             // Get response from OpenAI
-            String response = openAI.evaluatePrompt(matchKnowledgePrompt, jsonString, question);
+            String response = openAI.evaluatePrompt(fileContentProvider.matchKnowledgePrompt, jsonString, question);
 
             // Return knowledge if response is valid
             if (response != null) {
@@ -198,7 +211,7 @@ public class KnowledgeGraphBuilder {
                 return pluginStep;
             }
             case REST -> {
-                return null;
+                return restHelper;
             }
             case TEXT -> {
                 return null;

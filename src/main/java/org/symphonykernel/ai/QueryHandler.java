@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.steps.SqlStep;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -25,12 +26,14 @@ public class QueryHandler {
     @Autowired
     SqlStep sqlAssistant;
 
-    
-    @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchSelectQueryPrompt.text') }")
-    private String matchSelectQueryPrompt;
 
-    @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/getQueryPrompt.text') }")
-    private String getQueryPrompt;
+    @Autowired
+    private FileContentProvider fileContentProvider;
+    //@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchSelectQueryPrompt.text') }")
+    //private String matchSelectQueryPrompt;
+
+   // @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/getQueryPrompt.text') }")
+   // private String getQueryPrompt;
 
     public QueryHandler(IknowledgeBase knowledgeBaseRepo, ObjectMapper objectMapper, AzureOpenAIHelper openAIHelper) {
         this.knowledgeBaseRepo = knowledgeBaseRepo;
@@ -47,13 +50,13 @@ public class QueryHandler {
             String jsonString = objectMapper.writeValueAsString(knowledgeDesc);
           
             // Get response from OpenAI
-            String response = openAIHelper.evaluatePrompt(matchSelectQueryPrompt,jsonString,question);
+            String response = openAIHelper.evaluatePrompt(fileContentProvider.matchSelectQueryPrompt,jsonString,question);
 
             // Process the response if valid
             if (response != null ) {
                 String vDef = knowledgeBaseRepo.GetViewDefByName(response);
                 if (vDef != null) {
-                    return openAIHelper.evaluatePrompt(getQueryPrompt,vDef,question);
+                    return openAIHelper.evaluatePrompt(fileContentProvider.getQueryPrompt,vDef,question);
                 }
             }
         } catch (JsonProcessingException e) {

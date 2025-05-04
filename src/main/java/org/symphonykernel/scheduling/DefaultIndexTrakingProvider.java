@@ -62,6 +62,7 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 	{
 		knowledgeVector.createIndex(indexTrakerIndex, Index.class);
 		Indexer<KnowledgeDescription> indexer =new Indexer<KnowledgeDescription>(csKnowledgeIndex, KnowledgeDescription.class, this.knowledgeBaserepo);
+		
 		registerIndexer(indexer);		
     }
 
@@ -173,6 +174,7 @@ public class DefaultIndexTrakingProvider implements IIndexTraker,SchedulingConfi
 				knowledgeVector.indexDocument(indexTrakerIndex, idx);
 			};
 			registerSchedule(indexer);
+			executeIndexing(indexer);
 		}
 	}
 
