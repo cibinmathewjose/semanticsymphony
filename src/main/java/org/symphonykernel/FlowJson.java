@@ -11,6 +11,9 @@ import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+/**
+ * Represents a JSON structure for managing flow-related data.
+ */
 public class FlowJson {
 
     /**
@@ -31,18 +34,33 @@ public class FlowJson {
         this.Flow = flow;
     }
 
+    /**
+     * List of flow items.
+     */
     @JsonProperty("Flow")
     public List<FlowItem> Flow;
     
+    /**
+     * System prompt for the flow.
+     */
     @JsonProperty("SystemPrompt")
     public String SystemPrompt;    
     
+    /**
+     * User prompt for the flow.
+     */
     @JsonProperty("UserPrompt")
     public String UserPrompt;
     
+    /**
+     * Adaptive card prompt for the flow.
+     */
     @JsonProperty("AdaptiveCardPrompt")
     public String AdaptiveCardPrompt;
     
+    /**
+     * Result of the flow.
+     */
     @JsonProperty("Result")
     public String Result;
 }

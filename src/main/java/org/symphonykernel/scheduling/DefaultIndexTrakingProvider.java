@@ -38,6 +38,10 @@ import org.springframework.scheduling.support.CronTrigger;
  * @version 1.0
  * @since 1.0
  */
+/**
+ * Default implementation for index tracking and scheduling.
+ * Implements {@link IIndexTraker} and {@link SchedulingConfigurer}.
+ */
 public class DefaultIndexTrakingProvider implements IIndexTraker, SchedulingConfigurer {
 	
 	private static final Logger logger = LoggerFactory.getLogger(DefaultIndexTrakingProvider.class);

@@ -6,15 +6,32 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+/**
+ * TemplateResolver is a utility class for resolving placeholders in text templates.
+ * It provides methods to check for placeholders and replace them with values from a context map.
+ */
 public class TemplateResolver {
 
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{\\$(.*?)}}");
 
+    /**
+     * Checks if the given text contains placeholders.
+     *
+     * @param text the text to check for placeholders
+     * @return true if placeholders are found, false otherwise
+     */
     public static boolean hasPlaceholders(String text) {
         Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
         return matcher.find();
     }
 
+    /**
+     * Resolves placeholders in the given text using the provided context map.
+     *
+     * @param text the text containing placeholders
+     * @param context a map containing placeholder keys and their corresponding values
+     * @return the text with placeholders replaced by their corresponding values
+     */
     public static String resolvePlaceholders(String text, Map<String, JsonNode> context) {
         Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
         StringBuffer result = new StringBuffer();

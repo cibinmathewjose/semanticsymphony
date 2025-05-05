@@ -73,6 +73,13 @@ public class QueryHandler {
    // @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/getQueryPrompt.text') }")
    // private String getQueryPrompt;
 
+    /**
+     * Constructs a QueryHandler with the specified dependencies.
+     *
+     * @param knowledgeBaseRepo the knowledge base repository for fetching knowledge descriptions
+     * @param objectMapper the object mapper for JSON serialization and deserialization
+     * @param openAIHelper the Azure OpenAI helper for processing prompts and generating responses
+     */
     public QueryHandler(IknowledgeBase knowledgeBaseRepo, ObjectMapper objectMapper, AzureOpenAIHelper openAIHelper) {
         this.knowledgeBaseRepo = knowledgeBaseRepo;
         this.objectMapper = objectMapper;

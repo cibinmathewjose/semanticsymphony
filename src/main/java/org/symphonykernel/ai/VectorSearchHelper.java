@@ -1,4 +1,3 @@
-
 package org.symphonykernel.ai;
 
 import java.io.InputStream;
@@ -122,11 +121,23 @@ public class VectorSearchHelper {
     private final AzureAISearchConnectionProperties aisearchProps;
     ObjectMapper objectMapper ;
 
-    public VectorSearchHelper(AzureAISearchConnectionProperties connectionProperties,ObjectMapper objectMapper) {
+    /**
+     * Constructs a VectorSearchHelper with the specified connection properties and object mapper.
+     *
+     * @param connectionProperties the connection properties for Azure AI Search
+     * @param objectMapper the object mapper for JSON processing
+     */
+    public VectorSearchHelper(AzureAISearchConnectionProperties connectionProperties, ObjectMapper objectMapper) {
         this.aisearchProps = connectionProperties;
         this.objectMapper=objectMapper;
     }
     
+    /**
+     * Creates a search client for the specified index.
+     *
+     * @param indexName the name of the index
+     * @return the search client for the index
+     */
     public SearchClient createSearchClient(String indexName) {
     	 return new SearchClientBuilder()
                 .endpoint(aisearchProps.getEndpoint())
@@ -137,6 +148,13 @@ public class VectorSearchHelper {
     //public static List<Float> getEmbeddings(String text) {
         
    // }
+    /**
+     * Creates an index with the specified name and model class.
+     *
+     * @param <T> the type of the model class
+     * @param indexName the name of the index
+     * @param modelClass the class of the model
+     */
 	public <T> void createIndex(String indexName, Class<T> modelClass) {
 		SearchIndexClient searchIndexClient = new SearchIndexClientBuilder()
     	            .endpoint(aisearchProps.getEndpoint())
@@ -148,6 +166,15 @@ public class VectorSearchHelper {
     	searchIndexClient.createOrUpdateIndex(
     				 new SearchIndex(indexName, SearchIndexClient.buildSearchFields(modelClass, options)));
 	}
+
+    /**
+     * Creates an index with the specified name, model class, and initial data.
+     *
+     * @param <T> the type of the model class
+     * @param indexName the name of the index
+     * @param modelClass the class of the model
+     * @param data the initial data to index
+     */
     public <T> void createIndex(String indexName, Class<T> modelClass,List<T> data)
     {
     	createIndex(indexName, modelClass);     
@@ -155,12 +182,26 @@ public class VectorSearchHelper {
         indexDocuments(indexName, data);
     }
 
+    /**
+     * Indexes a single document in the specified index.
+     *
+     * @param <T> the type of the document
+     * @param indexName the name of the index
+     * @param data the document to index
+     */
     public <T> void indexDocument(String indexName, T data) {
 	    List<T> list =new ArrayList<T>();
 	    list.add(data);
 	    indexDocuments(indexName,list);
     }
 
+    /**
+     * Indexes multiple documents in the specified index.
+     *
+     * @param <T> the type of the documents
+     * @param indexName the name of the index
+     * @param data the list of documents to index
+     */
 	public <T> void indexDocuments(String indexName, List<T> data) {
 		if(data!=null)
         {
@@ -181,6 +222,16 @@ public class VectorSearchHelper {
         }        
         }
 	}
+
+    /**
+     * Retrieves a document from the specified index by its key.
+     *
+     * @param <T> the type of the document
+     * @param indexName the name of the index
+     * @param key the key of the document
+     * @param modelClass the class of the document
+     * @return the retrieved document
+     */
     @ServiceMethod(returns = ReturnType.SINGLE)
     public <T> T getDocument(String indexName,String key, Class<T> modelClass) 
     {    
@@ -196,6 +247,16 @@ public class VectorSearchHelper {
         return lookupResponse;
     }
     
+    /**
+     * Searches the specified index for documents matching the given text and options.
+     *
+     * @param <T> the type of the documents
+     * @param indexName the name of the index
+     * @param text the search text
+     * @param options the search options
+     * @param modelClass the class of the documents
+     * @return an iterator over the search results
+     */
     public <T> Iterator<T> search(String indexName, String text, SearchOptions options, Class<T> modelClass) {
         SearchClient searchClient = createSearchClient(indexName);
         SearchPagedIterable searchResults = searchClient.search(text, options, Context.NONE);
@@ -205,6 +266,14 @@ public class VectorSearchHelper {
                             .iterator();
     }
 
+    /**
+     * Searches the specified index for documents matching the given text and fields.
+     *
+     * @param indexName the name of the index
+     * @param text the search text
+     * @param fields the fields to search in
+     * @return an array node containing the search results
+     */
     public ArrayNode Search(String indexName,String text,String fields)
     {
     	SearchOptions options = new SearchOptions();

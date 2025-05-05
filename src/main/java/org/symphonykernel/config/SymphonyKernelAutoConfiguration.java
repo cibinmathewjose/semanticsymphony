@@ -25,6 +25,10 @@ import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.JedisClientConfig;
 import redis.clients.jedis.UnifiedJedis;
 
+/**
+ * SymphonyKernelAutoConfiguration is a configuration class that defines beans for various services
+ * such as OpenAIAsyncClient, Kernel, database connections, Redis, Azure AI Search, and task scheduling.
+ */
 @Component
 public class SymphonyKernelAutoConfiguration {
 
@@ -57,10 +61,10 @@ public class SymphonyKernelAutoConfiguration {
      * Creates a {@link Kernel} with a default
      * {@link com.microsoft.semantickernel.services.AIService} that uses the
      * {@link com.microsoft.semantickernel.aiservices.openai.chatcompletion.OpenAIChatCompletion} with the model id
-     * specified in the {@link AzureOpenAIConnectionProperties} as
-     * DeploymentName.
+     * specified in the {@link AzureOpenAIConnectionProperties} as DeploymentName.
      *
      * @param client the {@link OpenAIAsyncClient} to use
+     * @param connectionProperties the {@link AzureOpenAIConnectionProperties} containing configuration details
      * @return the {@link Kernel}
      */
     @Bean
@@ -75,6 +79,13 @@ public class SymphonyKernelAutoConfiguration {
                                 .build())
                 .build();
     }
+
+    /**
+     * Creates a database connection using the provided {@link DBConnectionProperties}.
+     *
+     * @param con the {@link DBConnectionProperties} containing database connection details
+     * @return the {@link Connection}
+     */
     @Bean
     @ConditionalOnClass(Connection.class)
     @ConditionalOnMissingBean
@@ -89,10 +100,18 @@ public class SymphonyKernelAutoConfiguration {
             throw new RuntimeException("Failed to load JDBC driver", e);
         }
     }
+
+    /**
+     * Creates a {@link UnifiedJedis} instance for Redis operations using the provided
+     * {@link RedisConnectionProperties}.
+     *
+     * @param connectionProperties the {@link RedisConnectionProperties} containing Redis connection details
+     * @return the {@link UnifiedJedis} instance
+     */
     @Bean
     @ConditionalOnClass(UnifiedJedis.class)
     @ConditionalOnMissingBean
-        public UnifiedJedis createUnifiedJedis(RedisConnectionProperties connectionProperties) {
+    public UnifiedJedis createUnifiedJedis(RedisConnectionProperties connectionProperties) {
        
         // Configure client with password and SSL
         JedisClientConfig clientConfig = DefaultJedisClientConfig.builder()
@@ -103,16 +122,30 @@ public class SymphonyKernelAutoConfiguration {
         // Wrap JedisCluster in UnifiedJedis
         return new UnifiedJedis(connectionProperties.getUrl(),clientConfig);
     }
+
+    /**
+     * Creates a {@link SearchIndexClient} for Azure AI Search using the provided
+     * {@link AzureAISearchConnectionProperties}.
+     *
+     * @param connectionProperties the {@link AzureAISearchConnectionProperties} containing search connection details
+     * @return the {@link SearchIndexClient}
+     */
     @Bean
     @ConditionalOnClass(SearchIndexClient.class)
     @ConditionalOnMissingBean
-        public SearchIndexClient createAiSearch(AzureAISearchConnectionProperties connectionProperties) {       
+    public SearchIndexClient createAiSearch(AzureAISearchConnectionProperties connectionProperties) {       
         return new SearchIndexClientBuilder()
         .endpoint(connectionProperties.getEndpoint())
         .credential( new AzureKeyCredential(connectionProperties.getKey()))
         .buildClient();
     }
-     @Bean
+
+    /**
+     * Creates a {@link ThreadPoolTaskScheduler} for scheduling tasks.
+     *
+     * @return the {@link ThreadPoolTaskScheduler}
+     */
+    @Bean
     public ThreadPoolTaskScheduler taskScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
         scheduler.setPoolSize(10); // Adjust pool size as needed

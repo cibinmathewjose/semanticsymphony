@@ -24,11 +24,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+/**
+ * RESTStep is a step implementation for executing REST API calls.
+ * It provides methods to create request headers, process API responses, and invoke APIs.
+ */
 @Service("RESTStep")
 public class RESTStep implements IStep {
 
     private static final Logger logger = LoggerFactory.getLogger(RESTStep.class);
 
+    /**
+     * ObjectMapper is used for JSON processing.
+     */
     @Autowired
     protected ObjectMapper objectMapper;
 
@@ -104,6 +111,13 @@ public class RESTStep implements IStep {
             }
         }
     }
+
+    /**
+     * Invokes the API based on the execution context.
+     *
+     * @param ctx the execution context containing the API details
+     * @return the JSON node representing the API response
+     */
     protected JsonNode invokeAPI(ExecutionContext ctx) {
 
         String url = ctx.getUrl();
@@ -132,7 +146,14 @@ public class RESTStep implements IStep {
         return root;
     }
 
-    protected JsonNode processResponse(ExecutionContext ctx,JsonNode root) {
+    /**
+     * Processes the response from the API based on the result selectors in the template.
+     *
+     * @param ctx  the execution context containing the template and variables
+     * @param root the root JSON node of the API response
+     * @return the processed JSON node based on the result selectors
+     */
+    protected JsonNode processResponse(ExecutionContext ctx, JsonNode root) {
         if (ctx.getTmplate().getResultSelectors() != null) {
             String selector= ctx.getTmplate().getResultSelectors();
                 JsonNode node = root.path(selector);
@@ -144,6 +165,12 @@ public class RESTStep implements IStep {
         return root;
     }
 
+    /**
+     * Creates the request headers for the API call.
+     *
+     * @param ctx the execution context containing the template and variables
+     * @return the HTTP headers for the API call
+     */
     protected HttpHeaders createRequestHeader(ExecutionContext ctx) {
         HttpHeaders headers = ctx.getHttpHeaderProvider() != null ? ctx.getHttpHeaderProvider().getHeader() : null;
         if (headers == null) {
@@ -153,6 +180,12 @@ public class RESTStep implements IStep {
         return headers;
     }
 
+    /**
+     * Creates the request body for the API call based on the template and variables.
+     *
+     * @param ctx the execution context containing the template and variables
+     * @return the JSON node representing the request body
+     */
     protected JsonNode createRequestBody(ExecutionContext ctx) {
 
         if (ctx.getTmplate().isIncludeRequestBody()) {
@@ -166,6 +199,13 @@ public class RESTStep implements IStep {
         }
     }
 
+    /**
+     * Retrieves the REST request template for the given execution context.
+     *
+     * @param ctx the execution context containing knowledge and variables
+     * @return the REST request template
+     * @throws JsonProcessingException if there is an error processing the JSON data
+     */
     protected RestRequestTemplate getTemplate(ExecutionContext ctx) throws JsonProcessingException {
         String data = ctx.getKnowledge().getData();
         RestRequestTemplate tmp = RestRequestTemplate.getDefault();

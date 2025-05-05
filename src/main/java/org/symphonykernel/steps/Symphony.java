@@ -26,6 +26,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+/**
+ * Symphony is a step implementation for handling various execution contexts.
+ * It integrates multiple helpers and provides methods for query execution and response generation.
+ */
 @Service
 public class Symphony implements IStep {
 
@@ -163,6 +167,12 @@ public class Symphony implements IStep {
 		return result;
 	}
 
+    /**
+     * Parses a JSON string into a JsonNode.
+     *
+     * @param jsonString the JSON string to parse
+     * @return the parsed JsonNode
+     */
     public JsonNode parseJson(String jsonString) {
         ObjectMapper objectMapper = new ObjectMapper();
         try {

@@ -21,10 +21,21 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 @Service
+/**
+ * PlatformHelper provides utility methods for transforming and processing JSON data.
+ * It includes methods for adaptive card generation, JSON comparison, and placeholder replacement.
+ */
 public class PlatformHelper {
 
     private static final Logger logger = LoggerFactory.getLogger(PlatformHelper.class);
 
+    /**
+     * Generates an adaptive card JSON based on the provided mapping template.
+     *
+     * @param jsonNode the input JSON data
+     * @param mappingTemplate the mapping template for adaptive card generation
+     * @return the generated adaptive card JSON as a string
+     */
     public String generateAdaptiveCardJson(JsonNode jsonNode, String mappingTemplate) {
 
         JsonNode data = null;
@@ -177,6 +188,14 @@ public class PlatformHelper {
         return resultNode;
     }
 
+    /**
+     * Compares a template JSON with a payload JSON and replaces values based on the template.
+     *
+     * @param templateJson the template JSON as a string
+     * @param payloadNode the payload JSON as a JsonNode
+     * @return a JsonNode with replaced values
+     * @throws IOException if an error occurs during JSON processing
+     */
     public JsonNode compareAndReplaceJson(String templateJson, JsonNode payloadNode) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
 

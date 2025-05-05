@@ -26,6 +26,10 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 @Service
+/**
+ * SqlStep is a step implementation for executing SQL queries.
+ * It provides methods to process SQL queries and retrieve results.
+ */
 public class SqlStep implements IStep {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlStep.class);
@@ -39,6 +43,12 @@ public class SqlStep implements IStep {
     @Autowired
     PlatformHelper platformHelper;
 
+    /**
+     * Executes an SQL query and returns the result as an ArrayNode.
+     *
+     * @param query the SQL query to execute
+     * @return the result of the query as an ArrayNode
+     */
     @Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
     public ArrayNode executeSqlQuery(String query) {
         ArrayNode data = null;
@@ -61,6 +71,15 @@ public class SqlStep implements IStep {
         return data;
     }
 
+    /**
+     * Executes a single-value SQL query with the provided parameters.
+     *
+     * @param query the SQL query to execute
+     * @param params the parameters for the query
+     * @param <T> the type of the result
+     * @return the result of the query
+     * @throws Exception if an error occurs during query execution
+     */
     public <T> T executeSingleValueQuery(String query, Object... params) throws Exception {
         PreparedStatement preparedStatement = null;
         ResultSet resultSet = null;
@@ -103,6 +122,13 @@ public class SqlStep implements IStep {
         }
     }
 
+    /**
+     * Converts a ResultSet into an ArrayNode.
+     *
+     * @param rs the ResultSet to convert
+     * @return the converted ArrayNode
+     * @throws SQLException if an error occurs during conversion
+     */
     public ArrayNode getJSON(ResultSet rs) throws SQLException {
         // Create an ObjectMapper for JSON conversion
         ObjectMapper mapper = new ObjectMapper();
@@ -134,6 +160,13 @@ public class SqlStep implements IStep {
         return jsonArray;
     }
 
+    /**
+     * Executes a query by name with dynamic mapping.
+     *
+     * @param name the name of the query
+     * @param params the parameters for the query
+     * @return the result of the query as a JsonNode
+     */
     public JsonNode executeQueryByNameWithDynamicMapping(String name, Object... params) {
 
         final ArrayNode[] array = new ArrayNode[1];

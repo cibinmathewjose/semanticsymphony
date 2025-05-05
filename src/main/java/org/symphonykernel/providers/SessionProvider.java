@@ -15,16 +15,31 @@ import org.symphonykernel.core.IUserSessionBase;
 import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
 @Component
+/**
+ * SessionProvider is responsible for managing user sessions and chat histories.
+ * It provides methods to create, retrieve, and update user sessions.
+ */
 public class SessionProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionProvider.class);
 
     private final IUserSessionBase userSessionsBase;
 
+    /**
+     * Constructs a SessionProvider with the specified user session base.
+     *
+     * @param userSessionsBase the base for managing user sessions
+     */
     public SessionProvider(IUserSessionBase userSessionsBase) {
         this.userSessionsBase = userSessionsBase;
     }
 
+    /**
+     * Creates a user session based on the provided chat request.
+     *
+     * @param request the chat request containing session details
+     * @return the created user session
+     */
     public UserSession createUserSession(ChatRequest request) {
         UserSession session = new UserSession();
         session.setSessionID(request.getSession());
@@ -36,7 +51,12 @@ public class SessionProvider {
         return userSessionsBase.save(session);
     }
 
-    
+    /**
+     * Retrieves the chat history for the given chat request.
+     *
+     * @param request the chat request for which history is to be retrieved
+     * @return the chat history
+     */
     public ChatHistory getChatHistory(ChatRequest request) {
         List<UserSession> sessions = userSessionsBase.getSession(request.getSession());
         ChatHistory chatHistory = new ChatHistory();
@@ -51,12 +71,23 @@ public class SessionProvider {
         chatHistory.addUserMessage(request.getQuery());
         return chatHistory;
     }
-    
 
+    /**
+     * Retrieves the session history for the specified session ID.
+     *
+     * @param sessionId the ID of the session
+     * @return a list of user sessions
+     */
     public List<UserSession> getSessionHistory(String sessionId) {
         return userSessionsBase.getSession(sessionId);
     }
 
+    /**
+     * Updates the user session with the provided response.
+     *
+     * @param session the user session to update
+     * @param response the chat response containing update details
+     */
     public void updateUserSession(UserSession session, ChatResponse response) {
 
         session.setBotResponse(response.getMessage());
