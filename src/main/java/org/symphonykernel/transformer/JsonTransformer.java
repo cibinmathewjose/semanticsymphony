@@ -24,6 +24,52 @@ public class JsonTransformer {
         return result;
     }
 
+    public Object getMatchingFieldValue(String fieldName, JsonNode templateNode, JsonNode payloadNode)  {
+        if (templateNode == null || payloadNode == null || !templateNode.has(fieldName)) {
+            return null;
+        }
+
+        JsonNode fieldTemplate = templateNode.get(fieldName);
+        if (!fieldTemplate.has("type")) {
+            return null;
+        }
+
+        String expectedType = fieldTemplate.get("type").asText();
+        JsonNode bestMatch = findBestMatch(fieldName, payloadNode);
+
+        if (bestMatch != null) {
+            switch (expectedType) {
+                case "number":
+                if (bestMatch.isNumber()) {
+                    return bestMatch.numberValue();
+                } else if (bestMatch.isTextual()) {
+                    try {
+                        String textValue = bestMatch.asText().trim();
+                        if( !textValue.contains(".") )
+                        	return Integer.parseInt(textValue);                        	 
+                        else
+                        	return Double.parseDouble(textValue);
+                    } catch (NumberFormatException e) {
+                        return null;
+                    }
+                }
+                return null;
+                case "boolean":
+                    return bestMatch.isBoolean() ? bestMatch.booleanValue() : null;
+                case "string":
+                    return bestMatch.isTextual() ? bestMatch.textValue() : null;
+                case "array":
+                    return bestMatch.isArray() ? bestMatch : null;
+                case "object":
+                    return bestMatch.isObject() ? bestMatch : null;
+                default:
+                    return null;
+            }
+        }
+
+        return null;
+    }
+
     public JsonNode processJson(String parentNode, JsonNode inputNode, JsonNode payloadNode, boolean IsInArray) {
         if (isTypedNode(inputNode)) {
             return processValueNode(parentNode, inputNode, payloadNode, IsInArray);

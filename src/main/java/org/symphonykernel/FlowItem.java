@@ -18,6 +18,8 @@ public class FlowItem {
     String name;
     @JsonProperty("Paylod")
     String paylod;
+    @JsonProperty("LoopKey")
+    String loop;
     @JsonProperty("Array")
     boolean array;
     
@@ -27,12 +29,6 @@ public class FlowItem {
     @JsonProperty("SystemPrompt")
     public String SystemPrompt;
     
-    /**
-     * User-level prompt for the flow item.
-     */
-    @JsonProperty("UserPrompt")
-    public String UserPrompt;
-
     /**
      * Gets the name of the flow item.
      * 
@@ -74,8 +70,16 @@ public class FlowItem {
      *
      * @return true if the flow item is an array, false otherwise
      */
-    public boolean isArray() {
+    public boolean IsArray() {
         return array;
+    }
+   
+    public void setArray(boolean a) {
+        this.array = a;
+    }
+  
+    public String getLoopKey() {
+        return loop;
     }
 
     /**
@@ -83,8 +87,8 @@ public class FlowItem {
      *
      * @param a true to set as array, false otherwise
      */
-    public void setArray(boolean a) {
-        this.array = a;
+    public void setLoopKey(String a) {
+        this.loop = a;
     }
 
     @Override

@@ -82,19 +82,19 @@ public class RESTStep implements IStep {
         } else {
             String inputString = ctx.getTmplate().getUrlParams();
             JsonNode jsonNode = ctx.getVariables();
-            StringBuilder output = new StringBuilder(ctx.getKnowledge().getUrl());
-            processPlaceholders(inputString, jsonNode, output);
-            return output.toString();
+            String output = replacePlaceholders(inputString, jsonNode);
+            return ctx.getKnowledge().getUrl() + output;
         }
     }
 
-    private void processPlaceholders(String inputString, JsonNode jsonNode, StringBuilder output) {
+    private String replacePlaceholders(String inputString, JsonNode jsonNode) {
+        StringBuilder output = new StringBuilder();
         int i = 0;
         while (i < inputString.length()) {
             if (inputString.charAt(i) == '{') {
                 int j = i + 1;
                 StringBuilder keyBuilder = new StringBuilder();
-                while (j < inputString.length() && inputString.charAt(j) != '}' && inputString.charAt(j) != '?' && inputString.charAt(j) != '&' && inputString.charAt(j) != '=') {
+                while (j < inputString.length() && inputString.charAt(j) != '}') {
                     keyBuilder.append(inputString.charAt(j));
                     j++;
                 }
@@ -103,13 +103,15 @@ public class RESTStep implements IStep {
                     output.append(jsonNode.get(key).asText());
                 } else {
                     output.append("{").append(key).append("}");
+                    logger.warn("Key not found in JSON: {}", key);
                 }
-                i = j;
+                i = j + 1; // Skip the closing '}'
             } else {
                 output.append(inputString.charAt(i));
                 i++;
             }
         }
+        return output.toString();
     }
 
     /**
@@ -142,7 +144,8 @@ public class RESTStep implements IStep {
         }
 
         JsonNode root = response.getBody();
-        logger.info("url: {} method: {} responseBody: {}", url, method, root);
+        
+        logger.debug("url: {} method: {} responseBody: {}", url, method, root!=null?root.toString():"null");
         return root;
     }
 

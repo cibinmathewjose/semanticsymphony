@@ -1,29 +1,49 @@
 package org.symphonykernel;
 
+import java.util.HashMap;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.symphonykernel.core.IHttpHeaderProvider;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 
 /**
  * Represents a chat request with user and session details.
- * 
- * <p>This class provides methods to set and retrieve chat-related properties.
- * 
+ *
+ * <p>
+ * This class provides methods to set and retrieve chat-related properties.
+ *
  * @version 1.0
  * @since 1.0
  * @author Cibin Jose
  */
 public class ChatRequest {
 
+    private static final Logger logger = LoggerFactory.getLogger(ChatRequest.class);
     private String key;
     private String query;
     private String user;
     private String session;
+    private String conversationId;
     private String payload;
+    private Map<String, String> contextInfo= new HashMap<>();
+
+    
+
+    /**
+     * The HTTP header provider for the chat request.
+     */
+    // This is used to set the HTTP headers for the request.
 
     private IHttpHeaderProvider httpHeaderProvider;
 
     /**
      * Sets the HTTP header provider.
-     * 
+     *
      * @param hp the HTTP header provider
      */
     public void setHeaderProvider(IHttpHeaderProvider hp) {
@@ -32,7 +52,7 @@ public class ChatRequest {
 
     /**
      * Gets the HTTP header provider.
-     * 
+     *
      * @return the HTTP header provider
      */
     public IHttpHeaderProvider getHeaderProvider() {
@@ -41,7 +61,7 @@ public class ChatRequest {
 
     /**
      * Gets the user associated with the chat request.
-     * 
+     *
      * @return the user
      */
     public String getUser() {
@@ -50,7 +70,7 @@ public class ChatRequest {
 
     /**
      * Sets the user for the chat request.
-     * 
+     *
      * @param user the user
      */
     public void setUser(String user) {
@@ -59,7 +79,7 @@ public class ChatRequest {
 
     /**
      * Gets the session associated with the chat request.
-     * 
+     *
      * @return the session
      */
     public String getSession() {
@@ -68,7 +88,7 @@ public class ChatRequest {
 
     /**
      * Sets the session for the chat request.
-     * 
+     *
      * @param session the session
      */
     public void setSession(String session) {
@@ -77,7 +97,7 @@ public class ChatRequest {
 
     /**
      * Sets the key for the chat request.
-     * 
+     *
      * @param key the key
      */
     public void setKey(String key) {
@@ -86,7 +106,7 @@ public class ChatRequest {
 
     /**
      * Gets the key associated with the chat request.
-     * 
+     *
      * @return the key
      */
     public String getKey() {
@@ -95,7 +115,7 @@ public class ChatRequest {
 
     /**
      * Gets the query associated with the chat request.
-     * 
+     *
      * @return the query
      */
     public String getQuery() {
@@ -104,7 +124,7 @@ public class ChatRequest {
 
     /**
      * Sets the query for the chat request.
-     * 
+     *
      * @param query the query
      */
     public void setQuery(String query) {
@@ -113,7 +133,7 @@ public class ChatRequest {
 
     /**
      * Gets the payload associated with the chat request.
-     * 
+     *
      * @return the payload
      */
     public String getPayload() {
@@ -122,21 +142,102 @@ public class ChatRequest {
 
     /**
      * Sets the payload for the chat request.
-     * 
+     *
      * @param payload the payload
      */
     public void setPayload(String payload) {
         this.payload = payload;
     }
 
+    public JsonNode getVariables() {
+        if (payload != null && !payload.isEmpty() && !"NONE".equals(payload)) {
+            try {
+                ObjectMapper objectMapper = new ObjectMapper();
+                JsonNode jsonNode = objectMapper.readTree(payload);
+                if (!contextInfo.isEmpty()) {
+                    if (jsonNode.isArray()) {
+                        ArrayNode resultArray = objectMapper.createArrayNode();
+                        for (JsonNode item : jsonNode) {
+                            if (item.isObject()) {
+                                ObjectMapper mapper = new ObjectMapper();
+                                Map<String, Object> combinedMap = mapper.convertValue(item, Map.class);
+                                contextInfo.forEach((contextKey, contextValue) -> {
+                                    boolean duplicateKey = combinedMap.keySet().stream()
+                                            .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
+                                    if (duplicateKey) {
+                                        combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
+                                        logger.warn("Potential duplicates found giving priority to explicitly set context values");
+                                    }
+                                    combinedMap.put(contextKey, contextValue);
+                                });
+                                resultArray.add(mapper.valueToTree(combinedMap));
+                            } else {
+                                resultArray.add(item);
+                            }
+                        }
+                        return resultArray;
+                    } else {
+                        ObjectMapper mapper = new ObjectMapper();
+                        Map<String, Object> combinedMap = mapper.convertValue(jsonNode, Map.class);
+                        contextInfo.forEach((contextKey, contextValue) -> {
+                            boolean duplicateKey = combinedMap.keySet().stream()
+                                    .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
+                            if (duplicateKey) {
+                                combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
+                                logger.warn("Potential duplicates found giving priority to explicitly set context values");
+                            }
+                            combinedMap.put(contextKey, contextValue);
+                        });
+                        return mapper.valueToTree(combinedMap);
+                    }
+                }
+                return jsonNode;
+            } catch (Exception e) {
+                logger.error("Error decoding payload: {}", e.getMessage());
+            }
+        } else if (!contextInfo.isEmpty()) {
+            ObjectMapper mapper = new ObjectMapper();
+            return mapper.valueToTree(contextInfo);
+        }
+        return null;
+    }
+
+    /**
+     * Adds a key-value pair to the context information map.
+     *
+     * @param key the key for the context information
+     * @param value the value for the context information
+     */
+    public void addContextInfo(String key, String value) {
+        if (key != null) {           
+            if (value == null || value.isEmpty()) {
+                if (contextInfo.containsKey(key)) {
+                    contextInfo.remove(key);
+                } 
+            } else {
+                contextInfo.put(key, value);
+            }
+        } else {
+            logger.warn("Key is null. Context info not added.");
+        }
+    }
+   
     /**
      * Returns a string representation of the chat request.
-     * 
+     *
      * @return a string representation of the chat request
      */
     @Override
     public String toString() {
         return "{name='" + query + "', paylod=" + payload + "}";
     }
+
+	public String getConversationId() {
+		return conversationId;
+	}
+
+	public void setConversationId(String conversationId) {
+		this.conversationId = conversationId;
+	}
 
 }

@@ -26,3 +26,9 @@ Example 5:
 Input: [{"formula_number":{"type":"string"}}]
 Question: Compare formula abc to xyz
 Output: [{"formula_number": "abc"},{"formula_number":"xyz"}]
+
+Example 5:
+Input: {"product_code":{"type":"string"}}
+Question: what is the price for the product
+Output: {"product_code": null}
+

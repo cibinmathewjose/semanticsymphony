@@ -13,9 +13,7 @@ public class Knowledge extends KnowledgeDescription  {
 	private String params;
 	
 	private String data;
-	
-	private String resolver;
-	
+		
 	private String card;
 	
 	private String url;
@@ -39,23 +37,7 @@ public class Knowledge extends KnowledgeDescription  {
 		this.url = desc;
 	}
 	
-	/**
-     * Gets the resolver associated with the knowledge.
-     *
-     * @return the resolver.
-     */
-	public String getResolver() {
-		return resolver;
-	}
 
-	/**
-     * Sets the resolver associated with the knowledge.
-     *
-     * @param resolver the resolver to set.
-     */
-	public void setResolver(String resolver) {
-		this.resolver = resolver;
-	}
 	
 	/**
      * Gets the card associated with the knowledge.

@@ -11,6 +11,7 @@ import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.steps.SqlStep;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
@@ -94,12 +95,12 @@ public class QueryHandler {
      * @param question the user question to process
      * @return the generated SQL query, or {@code null} if processing fails
      */
-    public String matchSelectQuery(String question) {
+    public String matchSelectQuery(String question,JsonNode params) {
         try {
             // Fetch knowledge descriptions and convert to JSON string
             Map<String, String> knowledgeDesc = knowledgeBaseRepo.getAllVewDescriptions();
-            String jsonString = objectMapper.writeValueAsString(knowledgeDesc);
-          
+            String jsonString = objectMapper.writeValueAsString(knowledgeDesc);          
+            
             // Get response from OpenAI
             String response = openAIHelper.evaluatePrompt(fileContentProvider.matchSelectQueryPrompt,jsonString,question);
 
@@ -107,6 +108,8 @@ public class QueryHandler {
             if (response != null ) {
                 String vDef = knowledgeBaseRepo.GetViewDefByName(response);
                 if (vDef != null) {
+                	if(params!=null)
+                    	question = "Consider the availabe variables "+params.toString()+question;
                     return openAIHelper.evaluatePrompt(fileContentProvider.getQueryPrompt,vDef,question);
                 }
             }

@@ -54,11 +54,12 @@ public class SqlStep implements IStep {
         ArrayNode data = null;
         if (query != null && !query.isEmpty()) {
             try {
+            	logger.debug("Executing Query : {}",query);
                 Statement statement = connection.createStatement();
                 PreparedStatement stm = connection.prepareStatement(query);
                 ResultSet resultSet = stm.executeQuery();
                 data = getJSON(resultSet);
-                logger.info("Data " + data);
+                logger.debug("Result : {}" , data!=null?data.toString():"null");
                 resultSet.close();
                 statement.close();
             } catch (Exception e) {
@@ -222,8 +223,12 @@ public class SqlStep implements IStep {
                     e.printStackTrace();
                 }
             }
+                else
+                {
+                	throw new RuntimeException("Could not execut SQL " + kb.getName() + " Parameters missing " + kb.getParams());
+                }
             } else {
-                logger.error("Could not execut SQL " + kb.getName() + " Parameters missing " + kb.getParams());
+                logger.info("SQL without params");
             }
         }
         ArrayNode node;

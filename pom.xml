@@ -9,7 +9,7 @@
     </parent>
     <groupId>org.symphonykernel</groupId>
     <artifactId>semantickernel-spring-symphony</artifactId>
-    <version>0.0.2-SNAPSHOT</version> 
+    <version>0.0.4-SNAPSHOT</version> 
     <packaging>jar</packaging>
     <name>Semantic Kernel Spring Symphony</name>
     <description>Defines a chat agentic framework with the Semantic Kernel and SpringBoot</description>
@@ -45,6 +45,47 @@
             <artifactId>azure-core</artifactId>
             <version>1.53.0</version>
         </dependency>
+        <dependency>
+			<groupId>com.microsoft.graph</groupId>
+			<artifactId>microsoft-graph</artifactId>
+			<version>5.77.0</version>
+			<exclusions>
+				<exclusion>
+					<groupId>com.azure</groupId>
+					<artifactId>azure-core</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+        <dependency>
+			<groupId>com.azure</groupId>
+			<artifactId>azure-identity</artifactId>
+			<version>1.11.1</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-api</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>com.microsoft.azure</groupId>
+					<artifactId>msal4j</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>com.microsoft.azure</groupId>
+			<artifactId>msal4j</artifactId>
+			<version>1.14.1</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-api</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>com.fasterxml.jackson.core</groupId>
+					<artifactId>jackson-databind</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

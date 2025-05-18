@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 public class TemplateResolver {
 
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{\\$(.*?)}}");
+    public  static final String NO_DATA_FOUND ="{NO_DATA_FOUND}";
 
     /**
      * Checks if the given text contains placeholders.
@@ -69,7 +70,7 @@ public class TemplateResolver {
         if (value != null && !value.isNull()) {
             return value.toString();
         } else {
-            return "{}";
+            return NO_DATA_FOUND;
         }
     }
 

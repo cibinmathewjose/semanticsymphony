@@ -16,6 +16,6 @@ public enum QueryType {
     GRAPHQL,
     /** Represents a plugin-based query. */
     PLUGIN,
-    /** Represents a text-based query. */
-    TEXT
+    /** Represents a text-based query for sharepoint */
+    SHAREPOINT
 }
