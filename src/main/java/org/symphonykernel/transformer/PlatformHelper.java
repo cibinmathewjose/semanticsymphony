@@ -236,8 +236,14 @@ public class PlatformHelper {
         // Parse parameter definitions
         JsonNode paramDefNode = objectMapper.readTree(paramDefJson);
         Map<String, String> paramTypes = new HashMap<>();
+       
         paramDefNode.fields().forEachRemaining(entry -> {
-            paramTypes.put(entry.getKey(), entry.getValue().get("type").asText());
+        	if(!entry.getValue().isArray())
+        		paramTypes.put(entry.getKey(), entry.getValue().get("type").asText());
+        	else
+        	{
+        		paramTypes.put(entry.getKey(), entry.getValue().get(0).get("type").asText());
+        	}
         });
 
         // Replace placeholders
@@ -250,16 +256,22 @@ public class PlatformHelper {
             String placeholder = matcher.group(1);
             if (userDataNode.has(placeholder)) {
                 JsonNode valueNode = userDataNode.get(placeholder);
-                String value;
-
-                if ("string".equals(paramTypes.get(placeholder))) {
-                    value = "'" + valueNode.asText() + "'";
-                } else if ("number".equals(paramTypes.get(placeholder))) {
-                    value = valueNode.asText();
-                } else {
-                    value = valueNode.asText(); // Default to string if type is unknown
+                if(!valueNode.isArray())
+                {
+	                String value = read(paramTypes, placeholder, valueNode);                
+	                matcher.appendReplacement(sb, value);
                 }
-                matcher.appendReplacement(sb, value);
+                else
+                {
+                	String value=null;
+                	   for (JsonNode val : valueNode) {
+                		   value = value!=null?value+","+ read(paramTypes, placeholder, val): read(paramTypes, placeholder, val);
+                	   }
+                	if(value!=null)
+                		matcher.appendReplacement(sb, value);
+                	else
+                		matcher.appendReplacement(sb, "");	
+                }
             } else {
                 matcher.appendReplacement(sb, "null"); // Or handle missing values differently
             }
@@ -268,6 +280,18 @@ public class PlatformHelper {
 
         return sb.toString();
     }
+
+	private String read(Map<String, String> paramTypes, String placeholder, JsonNode valueNode) {
+		String value;
+		if ("string".equals(paramTypes.get(placeholder))) {
+		    value = "'" + valueNode.asText() + "'";
+		} else if ("number".equals(paramTypes.get(placeholder))) {
+		    value = valueNode.asText();
+		} else {
+		    value = valueNode.asText(); // Default to string if type is unknown
+		}
+		return value;
+	}
 
     private static JsonNode findMatchingFieldv3(String templateFieldName, JsonNode payloadNode) {
        

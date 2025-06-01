@@ -4,6 +4,9 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
@@ -11,9 +14,13 @@ import com.fasterxml.jackson.databind.JsonNode;
  * It provides methods to check for placeholders and replace them with values from a context map.
  */
 public class TemplateResolver {
-
+    private static final Logger logger = LoggerFactory.getLogger(TemplateResolver.class);
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{\\$(.*?)}}");
-    public  static final String NO_DATA_FOUND ="{NO_DATA_FOUND}";
+    /**
+     * Constant used as a default value when no data is found for a placeholder.
+     */
+    public static final String NO_DATA_FOUND = "{NO_DATA_FOUND}";
+    public static final String JSON = "JSON:";
 
     /**
      * Checks if the given text contains placeholders.
@@ -39,7 +46,7 @@ public class TemplateResolver {
 
         while (matcher.find()) {
             String expression = matcher.group(1).trim(); 
-            String replacement = resolveExpression(expression, context);
+            String replacement = resolveExpression(expression, context);           
             matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(result);
@@ -67,11 +74,20 @@ public class TemplateResolver {
             // fallback if not a ternary expression
             value = getValueByPath(expression, context);
         }
-        if (value != null && !value.isNull()) {
-            return value.toString();
-        } else {
+        if (isJsonNodeNullorEmpty(value)) {         
             return NO_DATA_FOUND;
+        } else {
+            return JSON+value.toString();
         }
+    }
+    /**
+     * Checks if a JsonNode is null, an empty object, or an empty array.
+     *
+     * @param node the JsonNode to check
+     * @return true if the node is null, an empty object, or an empty array, false otherwise
+     */
+    public static boolean isJsonNodeNullorEmpty(JsonNode node) {
+        return node == null || node.isNull() || (node.isObject() && node.size() == 0) || (node.isArray() && node.size() == 0);
     }
 
     private static JsonNode getValueByPath(String path, Map<String, JsonNode> context) {

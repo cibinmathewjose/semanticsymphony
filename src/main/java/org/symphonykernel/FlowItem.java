@@ -16,12 +16,18 @@ public class FlowItem {
    
     @JsonProperty("Name")
     String name;
+    @JsonProperty("Key")
+    String key;
     @JsonProperty("Paylod")
     String paylod;
     @JsonProperty("LoopKey")
     String loop;
     @JsonProperty("Array")
     boolean array;
+
+    @JsonProperty("Required")
+    
+    boolean required;
     
     /**
      * System-level prompt for the flow item.
@@ -43,9 +49,22 @@ public class FlowItem {
      * 
      * @param name the name to set
      */
-    public void set(String name) {
+    public void setName(String name) {
         this.name = name;
     }
+    public String getKey() {
+        return (key==null||key.isEmpty())?name:key;
+    }
+
+    /**
+     * Sets the name of the flow item.
+     * 
+     * @param name the name to set
+     */
+    public void setKey(String key) {
+        this.key = key;
+    }
+    
 
     /**
      * Retrieves the payload of the flow item.
@@ -70,12 +89,20 @@ public class FlowItem {
      *
      * @return true if the flow item is an array, false otherwise
      */
-    public boolean IsArray() {
+    public boolean isArray() {
         return array;
     }
    
     public void setArray(boolean a) {
         this.array = a;
+    }
+
+    public boolean isRequired() {
+        return required;
+    }
+   
+    public void setRequired(boolean a) {
+        this.required = a;
     }
   
     public String getLoopKey() {

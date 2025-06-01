@@ -57,8 +57,9 @@ public class Agent {
             return new ChatResponse("Request is null");
         } 
         ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
+        logger.info("ExecutionContext created");    
         ctx = knowledgeGraphBuilder.identifyIntent(ctx);
-        ctx = knowledgeGraphBuilder.setParameters(ctx);       
+        ctx = knowledgeGraphBuilder.setParameters(ctx);          
         return knowledgeGraphBuilder.getResponse(ctx);
     }
 }

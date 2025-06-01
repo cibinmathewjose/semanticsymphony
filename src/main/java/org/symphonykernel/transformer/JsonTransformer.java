@@ -77,7 +77,10 @@ public class JsonTransformer {
             ObjectNode resultNode = mapper.createObjectNode();
             inputNode.fieldNames().forEachRemaining(fieldName -> {
                 JsonNode childNode = inputNode.get(fieldName);
-                resultNode.set(fieldName, processJson(fieldName, childNode, payloadNode, childNode.isArray()));
+                if (isTypedNode(childNode)) 
+                	resultNode.set(fieldName, processValueNode(parentNode, inputNode, payloadNode, IsInArray));
+                else
+                	resultNode.set(fieldName, processJson(fieldName, childNode, payloadNode, childNode.isArray()));
             });
             return resultNode;
         } else if (inputNode.isArray()) {
@@ -97,15 +100,20 @@ public class JsonTransformer {
 
     private JsonNode processValueNode(String parentNodeforArray, JsonNode valueNode, JsonNode payloadNode, boolean IsInArray) {
         if (isTypedNode(valueNode)) {
-            String expectedType = valueNode.elements().next().get("type").asText();
-            String fieldNameToMatch = IsInArray ? parentNodeforArray : valueNode.fieldNames().next();
-            JsonNode bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
-            if (bestMatch != null) {
-                bestMatch = castValue(bestMatch, expectedType);
-            }
-            ObjectNode objectNode = (ObjectNode) valueNode;
-            objectNode.set(fieldNameToMatch, bestMatch);
-            return objectNode;
+            ObjectNode resultNode = mapper.createObjectNode();
+            valueNode.fieldNames().forEachRemaining(fieldName -> {
+                JsonNode fieldTemplate = valueNode.get(fieldName);
+                if (fieldTemplate.has("type")) {
+                    String expectedType = fieldTemplate.get("type").asText();
+                    String fieldNameToMatch = IsInArray ? parentNodeforArray : fieldName;
+                    JsonNode bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
+                    if (bestMatch != null) {
+                        bestMatch = castValue(bestMatch, expectedType);
+                    }
+                    resultNode.set(fieldName, bestMatch);
+                }
+            });
+            return resultNode;
         }
 
         return valueNode; // Leave as is for non-processed types
@@ -164,13 +172,13 @@ public class JsonTransformer {
         JsonNode flattened = flattenPayload(payloadNode);
         JsonNode bestValue = null;
         int bestDistance = Integer.MAX_VALUE;
-
+        String t = templateFieldName!=null? templateFieldName.toLowerCase():"";;
         Iterator<Map.Entry<String, JsonNode>> fields = flattened.fields();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> entry = fields.next();
-            String key = entry.getKey();
-
-            int distance = levenshtein.apply(templateFieldName.toLowerCase(), key.toLowerCase());
+            String key = entry.getKey();           
+            String k=key.toLowerCase();
+            int distance = levenshtein.apply(t, k);
             if (distance < bestDistance) {
                 bestDistance = distance;
                 bestValue = entry.getValue();
@@ -195,16 +203,19 @@ public class JsonTransformer {
         return payloadNode;
     }
 
-   
-
     private boolean isTypedNode(JsonNode node) {
-        if (node.isObject() && node.size() == 1) {
-            JsonNode inner = node.elements().next();
-            return inner.isObject() && inner.has("type") && inner.size() == 1;
+        if (node.isObject()) {
+            Iterator<JsonNode> elements = node.elements();
+            while (elements.hasNext()) {
+                JsonNode inner = elements.next();
+                if (inner.isObject() && inner.has("type")) {
+                    return true;
+                }
+            }
         }
         return false;
     }
-
+    
     private boolean isTypedArray(JsonNode node) {
         if (node.isArray() && node.size() == 1) {
             JsonNode inner = node.get(0);

@@ -5,7 +5,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.sql.Statement;
+
+import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,15 +28,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 @Service
 /**
- * SqlStep is a step implementation for executing SQL queries.
- * It provides methods to process SQL queries and retrieve results.
+ * The SqlStep class implements the IStep interface and provides
+ * functionality for executing SQL queries and processing their results.
+ * It supports dynamic query execution, caching, and JSON transformation
+ * of query results for use within the Symphony kernel framework.
  */
 public class SqlStep implements IStep {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlStep.class);
 
+
     @Autowired
-    Connection connection;
+    private DataSource dataSource;
 
     @Autowired
     IknowledgeBase knowledgeBase;
@@ -43,34 +47,39 @@ public class SqlStep implements IStep {
     @Autowired
     PlatformHelper platformHelper;
 
-    /**
+     /**
      * Executes an SQL query and returns the result as an ArrayNode.
-     *
      * @param query the SQL query to execute
      * @return the result of the query as an ArrayNode
      */
     @Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
     public ArrayNode executeSqlQuery(String query) {
         ArrayNode data = null;
+    
         if (query != null && !query.isEmpty()) {
-            try {
-            	logger.debug("Executing Query : {}",query);
-                Statement statement = connection.createStatement();
-                PreparedStatement stm = connection.prepareStatement(query);
-                ResultSet resultSet = stm.executeQuery();
-                data = getJSON(resultSet);
-                logger.debug("Result : {}" , data!=null?data.toString():"null");
-                resultSet.close();
-                statement.close();
+            try (Connection connection = dataSource.getConnection(); // Obtain connection from DataSource
+                 PreparedStatement stm = connection.prepareStatement(query);
+                 ResultSet resultSet = stm.executeQuery()) {
+    
+                logger.info("Executing Query : {}", query);
+    
+                data = getJSON(resultSet); // Assuming getJson processes the resultSet
+                logger.info("Result: {}, data={}", (data != null ? "Success" : "Failure"), (data != null ? data.toString() : "null"));
+    
+            } catch (SQLException e) {
+                logger.error("Error executing SQL query: {}", query, e);               
             } catch (Exception e) {
-                e.printStackTrace();
-            } 
+                logger.error("An unexpected error occurred processing SQL query: {}", query, e);
+            }
         }
+    
         if (data == null) {
             data = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         }
+    
         return data;
     }
+
 
     /**
      * Executes a single-value SQL query with the provided parameters.
@@ -81,47 +90,25 @@ public class SqlStep implements IStep {
      * @return the result of the query
      * @throws Exception if an error occurs during query execution
      */
-    public <T> T executeSingleValueQuery(String query, Object... params) throws Exception {
-        PreparedStatement preparedStatement = null;
-        ResultSet resultSet = null;
+  public <T> T executeSingleValueQuery(String query, Object... params) throws Exception {
+    try (Connection connection = dataSource.getConnection(); // Obtain connection from DataSource
+         PreparedStatement preparedStatement = connection.prepareStatement(query)) {
 
-        try {
-            preparedStatement = connection.prepareStatement(query);
-
-            // Set parameters if any
-            if (params != null) {
-                for (int i = 0; i < params.length; i++) {
-                    preparedStatement.setObject(i + 1, params[i]);
-                }
+        if (params != null) {
+            for (int i = 0; i < params.length; i++) {
+                preparedStatement.setObject(i + 1, params[i]);
             }
+        }
 
-            resultSet = preparedStatement.executeQuery();
+        try (ResultSet resultSet = preparedStatement.executeQuery()) {
             if (resultSet.next()) {
-                // Return the first column's value as type T
                 return (T) resultSet.getObject(1);
             } else {
-                // No result found
                 return null;
-            }
-
-        } finally {
-            // Close resources in reverse order of creation
-            if (resultSet != null) {
-                try {
-                    resultSet.close();
-                } catch (SQLException e) {
-                    e.printStackTrace(); // Or log the exception
-                }
-            }
-            if (preparedStatement != null) {
-                try {
-                    preparedStatement.close();
-                } catch (SQLException e) {
-                    e.printStackTrace(); // Or log the exception
-                }
             }
         }
     }
+}
 
     /**
      * Converts a ResultSet into an ArrayNode.
@@ -171,7 +158,7 @@ public class SqlStep implements IStep {
     public JsonNode executeQueryByNameWithDynamicMapping(String name, Object... params) {
 
         final ArrayNode[] array = new ArrayNode[1];
-        Knowledge kb = knowledgeBase.GetByName(name);
+        Knowledge kb = knowledgeBase.GetByName(name.trim());
         if (kb != null) {
             JsonNode variables = platformHelper.replaceJsonValue(kb.getParams(), params);
             ExecutionContext ctx = new ExecutionContext();
@@ -179,6 +166,8 @@ public class SqlStep implements IStep {
             ctx.setKnowledge(kb);
             array[0] = getResponse(ctx).getData();
         }
+        else
+        	logger.warn("knowldge not found {}", name);
         return array[0];
     }
 
@@ -243,5 +232,4 @@ public class SqlStep implements IStep {
         a.setData(node);
         return a;
     }
-
 }

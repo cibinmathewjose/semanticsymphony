@@ -57,7 +57,7 @@ public class PluginStep implements IStep {
 
     @Override
     public ChatResponse getResponse(ExecutionContext context) {
-     
+    	logger.info("Executing Plugin " + context.getKnowledge().getName() + " with " + context.getVariables());
          ChatResponse a = new ChatResponse();           
         Kernel kernel = pluginLoader.load(chat,context.getKnowledge().getData());
         if (kernel != null) {

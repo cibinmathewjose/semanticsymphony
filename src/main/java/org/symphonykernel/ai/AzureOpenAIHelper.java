@@ -96,8 +96,8 @@ public class AzureOpenAIHelper {
                             InvocationContext.builder()
                                     .withPromptExecutionSettings(
                                             PromptExecutionSettings.builder()
-                                                    .withMaxTokens(2048)
-                                                    .withTemperature(0.5)
+                                                    .withMaxTokens(4096)
+                                                    .withTemperature(0.2)
                                                     .build())
                                     .build());
 

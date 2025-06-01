@@ -206,8 +206,14 @@ public class KnowledgeGraphBuilder {
             params = request.getVariables();
         }
         Knowledge knowledge = matchKnowledge(ctx.getUsersQuery(), params);
+        if(knowledge==null)
+        {
+        	throw new RuntimeException("No matching knowldge found");       
+        }
+        logger.info("Knowldge idetified as {}",knowledge.getName());
         ctx.setKnowledge(knowledge);
         return ctx;
+        
     }
 
     /**
@@ -229,6 +235,7 @@ public class KnowledgeGraphBuilder {
             } else {
                 String params = openAI.evaluatePrompt(fileContentProvider.paramParserPrompt, knowledge.getParams(), request.getQuery());
                 request.setPayload(params);
+                logger.info("payload identified as : " + params);
             }
         }
         ctx.setRequest(request);
@@ -237,7 +244,7 @@ public class KnowledgeGraphBuilder {
             node = mapMissingVariables(node, knowledge.getParams());
         }
         ctx.setVariables(node);
-        logger.info("Variables : " + node);
+        logger.info("Variables set as : " + node);
         return ctx;
     }
 
@@ -310,7 +317,7 @@ public class KnowledgeGraphBuilder {
         for (String key : mapFrom.keySet()) {
             if (!key.equalsIgnoreCase(fieldName)) {
                 String mapperKey = fieldName.toLowerCase() + "_from_" + key.toLowerCase();
-                JsonNode value = sqlAssistant.executeQueryByNameWithDynamicMapping(mapperKey, mapFrom.get(key));
+                JsonNode value = sqlAssistant.executeQueryByNameWithDynamicMapping(mapperKey.trim(), mapFrom.get(key));
                 if (value != null) {
                     JsonTransformer transformer = new JsonTransformer();
                     Object val = transformer.getMatchingFieldValue(fieldName, mapType, value);
@@ -321,6 +328,7 @@ public class KnowledgeGraphBuilder {
             	JsonTransformer transformer = new JsonTransformer();
             	JsonNode value = objectMapper.valueToTree(mapFrom);
             	 Object val = transformer.getMatchingFieldValue(fieldName, mapType, value);
+            	 if(val!=null)
                  return val;
             }
         }
@@ -397,6 +405,7 @@ public class KnowledgeGraphBuilder {
             logger.warn("Knowledge or its type is null");
             return null;
         }
+        logger.info("getting executter for "+knowledge.getType());
         switch (knowledge.getType()) {
             case SQL -> {
                 return sqlAssistant;

@@ -3,6 +3,7 @@ package org.symphonykernel.steps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -14,6 +15,7 @@ import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.RestRequestTemplate;
+import org.symphonykernel.config.Constants;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.JsonTransformer;
@@ -120,6 +122,7 @@ public class RESTStep implements IStep {
      * @param ctx the execution context containing the API details
      * @return the JSON node representing the API response
      */
+    @Cacheable(value = Constants.CACHE_NAME, key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#ctx.toString())")
     protected JsonNode invokeAPI(ExecutionContext ctx) {
 
         String url = ctx.getUrl();
@@ -127,10 +130,17 @@ public class RESTStep implements IStep {
             throw new IllegalArgumentException("URL cannot be null or empty");
         }
         String body = ctx.getBody() != null ? ctx.getBody().toString() : null;
-        final HttpEntity<String> requestEntity = new HttpEntity<>(body, ctx.getHeaders());
+        HttpHeaders headers = ctx.getHeaders();
+        HttpMethod method = ctx.getMethod();
+        JsonNode root = call(url, body, headers, method);
+        return root;
+    }
+    
+	private JsonNode call(String url, String body, HttpHeaders headers, HttpMethod method) {
+		final HttpEntity<String> requestEntity = new HttpEntity<>(body,headers );
         RestTemplate restTemplate = new RestTemplate();
         ResponseEntity<JsonNode> response;
-        HttpMethod method = ctx.getMethod();
+        ;
         if (method == HttpMethod.POST) {
             response = restTemplate.postForEntity(url, requestEntity, JsonNode.class);
         } else if (method == HttpMethod.GET) {
@@ -145,9 +155,9 @@ public class RESTStep implements IStep {
 
         JsonNode root = response.getBody();
         
-        logger.debug("url: {} method: {} responseBody: {}", url, method, root!=null?root.toString():"null");
-        return root;
-    }
+        logger.info("url: {} method: {} responseBody: {}", url, method, root!=null?root.toString():"null");
+		return root;
+	}
 
     /**
      * Processes the response from the API based on the result selectors in the template.

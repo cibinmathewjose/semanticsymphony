@@ -61,10 +61,11 @@ public class Symphony implements IStep {
 
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
+    	
         JsonNode input = ctx.getVariables();
         Knowledge _symphony = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
-
+        logger.info("Executing Symphony " + _symphony.getName() + " with " + input);
         Map<String, JsonNode> resolvedValues = new HashMap<>();
         resolvedValues.put("input", input);
         try {
@@ -103,36 +104,41 @@ public class Symphony implements IStep {
 	                                   
 	                                }
                                     JsonNode resultPairNode = objectMapper.valueToTree(resultPair);
-                                    resolvedValues.put(kb.getName().toLowerCase(), resultPairNode);
+                                    addResultMap(resolvedValues, item, resultPairNode);
                             	}
                             	else
                             	{
 	                            	result = getResults(ctx, kb, resolverPayload);	                                
-	                                resolvedValues.put(kb.getName().toLowerCase(), result);
+	                                addResultMap(resolvedValues, item, result);
 	                            }                            	
                             }
                             else
                             {
-                            	if(resolverPayload.isArray()&&!item.IsArray())
+                            	if(resolverPayload.isArray()&&!item.isArray())
                             	{
 	                                ArrayNode resultArray = objectMapper.createArrayNode();
 	                                for (JsonNode idNode : resolverPayload) {
 	                                    result = getResults(ctx, kb, idNode);	                                    
-	                                    if (result.isArray() && result.size() == 1) {
-	                                        resultArray.add(result.get(0));
+	                                    if (result.isArray()) {
+	                                    	if( result.size() == 1)
+	                                    		resultArray.add(result.get(0));
+	                                    	else
+	                                    		resultArray.add(result);	 
+	                                    		logger.warn("Review senario" + result);
 	                                    } else {
-	                                    	logger.error("Error Unhandled: senario" + result);
+	                                    	resultArray.add(result);
+	                                    	logger.warn("Review senario" + result);
 	                                    }
-	                                }
-	                                resolvedValues.put(kb.getName().toLowerCase(), resultArray);
+	                                }	                               
+                                    addResultMap(resolvedValues, item, resultArray);
                             	}
                             	else
                             	{
 	                            	result = getResults(ctx, kb, resolverPayload);	                                
-	                                resolvedValues.put(kb.getName().toLowerCase(), result);
+	                                addResultMap(resolvedValues, item, result);
 	                            }
                             }
-                            processPrompt(kb.getName().toLowerCase(),resolvedValues, item.SystemPrompt);
+                            processPrompt(item.getKey().toLowerCase(),resolvedValues, item.SystemPrompt);
                         }
                    
                 }
@@ -140,6 +146,7 @@ public class Symphony implements IStep {
             if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
 
                 String systemPrompt = TemplateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
+                
                 String userPrompt = parsed.UserPrompt;
                 if (parsed.AdaptiveCardPrompt != null && !parsed.AdaptiveCardPrompt.trim().isEmpty()) {
                     userPrompt = parsed.AdaptiveCardPrompt;
@@ -148,14 +155,20 @@ public class Symphony implements IStep {
                 } else if (TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
                     userPrompt = TemplateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
                 }               
-                if(systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0&&userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)
+                String result =null;
+                if((systemPrompt.indexOf(TemplateResolver.JSON)>=0||systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)&&
+                	userPrompt.indexOf(TemplateResolver.JSON)>=0||userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)
                 {                	
-                	String result = azureOpenAIHelper.execute(systemPrompt, userPrompt);    
-	                JsonNode resultNode = parseJson(result);                
-	                jsonArray.add(resultNode);
+                	result = azureOpenAIHelper.execute(systemPrompt, userPrompt);    
+	               
                 }
                 else
+                {
+                	result="Unable to process request, data not availabe";
                 	logger.warn("Missing Data, Avoid LLM Call, systemPrompt {} userPrompt {}",systemPrompt,userPrompt);
+                }
+                JsonNode resultNode = parseJson(result);                
+                jsonArray.add(resultNode);
             } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
 
                 JsonNode resultNode = resolvedValues.get(parsed.Result.toLowerCase());
@@ -177,6 +190,25 @@ public class Symphony implements IStep {
         ChatResponse a = new ChatResponse();
         a.setData(jsonArray);
         return a;
+    }
+
+    private void addResultMap(Map<String, JsonNode> resolvedValues, FlowItem item, JsonNode resultNode) {
+        if(TemplateResolver.isJsonNodeNullorEmpty(resultNode) )
+        {           
+            if(item.isRequired())
+            {                    
+                logger.error("No data found for step: " + item.getKey());
+                throw new RuntimeException("No data found for step: " + item.getKey());
+            }
+            else
+            {
+                resultNode= objectMapper.createObjectNode();
+                ((ObjectNode) resultNode).put(item.getKey(), "No data found" );
+                logger.warn("No data found for step: " + item.getKey());
+            }
+
+        }        
+        resolvedValues.put(item.getKey().toLowerCase(), resultNode);        
     }
 
 	private JsonNode getResults(ExecutionContext ctx, Knowledge kb, JsonNode idNode) {

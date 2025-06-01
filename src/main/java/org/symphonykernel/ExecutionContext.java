@@ -372,4 +372,13 @@ public class ExecutionContext {
     public void setHeader(IHttpHeaderProvider header) {
         this.header = header;
     }
+    @Override
+    public String toString()
+    {
+    	 String url = getUrl();         
+         String body = getBody() != null ? getBody().toString() : null;
+         HttpMethod method = getMethod();
+         return String.format("url:{},method:{},body:{}", url,method,body);
+    	
+    }
 }
