@@ -77,7 +77,8 @@ public class SessionProvider {
         List<UserSession> sessions = userSessionsBase.getSession(request.getSession());
         ChatHistory chatHistory = new ChatHistory();
         if (sessions != null && !sessions.isEmpty()) {
-            for (UserSession session : sessions) {
+            int start = Math.max(0, sessions.size() - maxHistory);
+            for (UserSession session : sessions.subList(start, sessions.size())) {
                 if (session.getUserInput() != null && session.getBotResponse() != null) {
                     chatHistory.addUserMessage(session.getUserInput());
                     chatHistory.addSystemMessage(session.getBotResponse());
