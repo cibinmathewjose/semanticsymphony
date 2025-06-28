@@ -93,9 +93,10 @@ public class QueryHandler {
      * view definitions to construct the SQL query.
      *
      * @param question the user question to process
+     * @param params additional parameters to consider while processing the question
      * @return the generated SQL query, or {@code null} if processing fails
      */
-    public String matchSelectQuery(String question,JsonNode params) {
+    public String matchSelectQuery(String question, JsonNode params) {
         try {
             // Fetch knowledge descriptions and convert to JSON string
             Map<String, String> knowledgeDesc = knowledgeBaseRepo.getAllVewDescriptions();

@@ -5,7 +5,7 @@ package org.symphonykernel;
  */
 public enum QueryType {
     /** Represents an unknown query type. */
-    UNKNOWN,
+    UNKNOWN ,
     /** Represents an SQL query. */
     SQL, 
     /** Represents a REST API query. */
@@ -15,7 +15,9 @@ public enum QueryType {
     /** Represents a GraphQL query. */
     GRAPHQL,
     /** Represents a plugin-based query. */
-    PLUGIN,
-    /** Represents a text-based query for sharepoint */
-    SHAREPOINT
+    PLUGIN,   
+    /** Represents a text-based query for file */
+    FILE,
+     /** Represents a text-based query for sharepoint */
+     SHAREPOINT
 }

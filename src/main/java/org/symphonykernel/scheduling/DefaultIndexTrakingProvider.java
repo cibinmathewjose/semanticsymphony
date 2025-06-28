@@ -39,8 +39,14 @@ import org.springframework.scheduling.support.CronTrigger;
  * @since 1.0
  */
 /**
- * Default implementation for index tracking and scheduling.
- * Implements {@link IIndexTraker} and {@link SchedulingConfigurer}.
+ * DefaultIndexTrakingProvider is responsible for managing index tracking and scheduling tasks.
+ * <p>
+ * This class implements {@link IIndexTraker} for tracking indexes and {@link SchedulingConfigurer}
+ * for configuring scheduled tasks in the application.
+ * </p>
+ * 
+ * @version 1.0
+ * @since 1.0
  */
 public class DefaultIndexTrakingProvider implements IIndexTraker, SchedulingConfigurer {
 	

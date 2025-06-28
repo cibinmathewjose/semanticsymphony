@@ -1,82 +1,36 @@
 package org.symphonykernel.ai;
 
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.symphonykernel.Knowledge;
 import org.symphonykernel.config.AzureAISearchConnectionProperties;
-import org.symphonykernel.config.SymphonyKernelAutoConfiguration;
 
 import com.azure.core.annotation.ReturnType;
 import com.azure.core.annotation.ServiceMethod;
 import com.azure.core.util.Context;
-import com.azure.core.util.serializer.JsonSerializer;
-import com.azure.core.util.serializer.TypeReference;
 import com.azure.search.documents.SearchClient;
 import com.azure.search.documents.SearchClientBuilder;
 import com.azure.search.documents.indexes.SearchIndexClient;
 import com.azure.search.documents.indexes.SearchIndexClientBuilder;
+import com.azure.search.documents.indexes.models.FieldBuilderOptions;
 import com.azure.search.documents.indexes.models.IndexDocumentsBatch;
 import com.azure.search.documents.indexes.models.SearchIndex;
-import com.azure.search.documents.indexes.models.SearchSuggester;
 import com.azure.search.documents.models.QueryAnswer;
 import com.azure.search.documents.models.QueryAnswerType;
 import com.azure.search.documents.models.QueryCaption;
 import com.azure.search.documents.models.QueryCaptionType;
 import com.azure.search.documents.models.SearchOptions;
-import com.azure.search.documents.models.SearchResult;
-import com.azure.search.documents.models.SemanticSearchOptions;
 import com.azure.search.documents.models.VectorQuery;
-import com.azure.search.documents.util.AutocompletePagedIterable;
+import com.azure.search.documents.models.VectorSearchOptions;
+import com.azure.search.documents.models.VectorizableTextQuery;
 import com.azure.search.documents.util.SearchPagedIterable;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-
-import reactor.core.publisher.Mono;
-
-import com.azure.search.documents.indexes.models.SearchField;
-import com.azure.search.documents.indexes.models.SearchFieldDataType;
-import com.azure.ai.openai.OpenAIClient;
-import com.azure.ai.openai.OpenAIClientBuilder;
-import com.azure.ai.openai.models.Embeddings;
-import com.azure.ai.openai.models.EmbeddingsOptions;
-import com.azure.core.credential.AzureKeyCredential;
-import com.azure.core.credential.KeyCredential;
-import com.azure.core.util.Configuration;
-import com.azure.core.util.Context;
-import com.azure.json.JsonReader;
-import com.azure.json.JsonSerializable;
-import com.azure.json.JsonToken;
-import com.azure.json.JsonWriter;
-import com.azure.search.documents.indexes.SearchIndexClient;
-import com.azure.search.documents.indexes.SearchIndexClientBuilder;
-import com.azure.search.documents.indexes.SearchableField;
-import com.azure.search.documents.indexes.SimpleField;
-import com.azure.search.documents.indexes.models.AzureOpenAIModelName;
-import com.azure.search.documents.indexes.models.AzureOpenAIVectorizer;
-import com.azure.search.documents.indexes.models.FieldBuilderOptions;
-import com.azure.search.documents.indexes.models.HnswAlgorithmConfiguration;
-import com.azure.search.documents.indexes.models.IndexDocumentsBatch;
-import com.azure.search.documents.indexes.models.SearchField;
-import com.azure.search.documents.indexes.models.SearchFieldDataType;
-import com.azure.search.documents.indexes.models.SearchIndex;
-import com.azure.search.documents.indexes.models.VectorSearch;
-import com.azure.search.documents.indexes.models.VectorSearchProfile;
-import com.azure.search.documents.models.SearchOptions;
-import com.azure.search.documents.models.SearchResult;
-import com.azure.search.documents.models.VectorSearchOptions;
-import com.azure.search.documents.models.VectorizableTextQuery;
-import com.azure.search.documents.util.SearchPagedIterable;
-import com.azure.search.documents.indexes.models.AzureOpenAIModelName;
 
 /**
  * Helper class for performing vector search operations using Azure AI Search.

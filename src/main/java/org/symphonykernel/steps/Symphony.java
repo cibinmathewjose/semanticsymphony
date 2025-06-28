@@ -150,9 +150,9 @@ public class Symphony implements IStep {
                 String userPrompt = parsed.UserPrompt;
                 if (parsed.AdaptiveCardPrompt != null && !parsed.AdaptiveCardPrompt.trim().isEmpty()) {
                     userPrompt = parsed.AdaptiveCardPrompt;
-                } else if (userPrompt == null || userPrompt.trim().isEmpty()) {
+                } else if (userPrompt == null) {
                     userPrompt = ctx.getUsersQuery();
-                } else if (TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
+                } else if (!userPrompt.trim().isEmpty()&&TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
                     userPrompt = TemplateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
                 }               
                 String result =null;

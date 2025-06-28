@@ -20,6 +20,9 @@ public class TemplateResolver {
      * Constant used as a default value when no data is found for a placeholder.
      */
     public static final String NO_DATA_FOUND = "{NO_DATA_FOUND}";
+    /**
+     * Prefix used to indicate that the resolved value is in JSON format.
+     */
     public static final String JSON = "JSON:";
 
     /**
@@ -77,7 +80,7 @@ public class TemplateResolver {
         if (isJsonNodeNullorEmpty(value)) {         
             return NO_DATA_FOUND;
         } else {
-            return JSON+value.toString();
+            return JSON+ JsonTransformer.getCleanedJsonNode(value).toString();
         }
     }
     /**

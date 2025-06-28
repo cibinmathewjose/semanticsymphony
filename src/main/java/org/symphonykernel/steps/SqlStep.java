@@ -32,6 +32,16 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * functionality for executing SQL queries and processing their results.
  * It supports dynamic query execution, caching, and JSON transformation
  * of query results for use within the Symphony kernel framework.
+ * <p>
+ * SqlStep is a service class that implements the {@link IStep} interface.
+ * <p>
+ * This class provides methods for executing SQL queries, processing their results,
+ * and transforming them into JSON format. It supports dynamic query execution,
+ * caching, and integration with the Symphony kernel framework.
+ * </p>
+ * 
+ * @version 1.0
+ * @since 1.0
  */
 public class SqlStep implements IStep {
 
@@ -227,7 +237,6 @@ public class SqlStep implements IStep {
         	node= com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         }
         node= executeSqlQuery(sqlQuery);
-        logger.info("Data " + node);
         ChatResponse a = new ChatResponse();
         a.setData(node);
         return a;

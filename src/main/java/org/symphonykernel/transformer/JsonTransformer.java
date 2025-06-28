@@ -14,16 +14,35 @@ import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 
+/**
+ * This class provides methods to transform and process JSON data based on templates.
+ */
 public class JsonTransformer {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
+    /**
+     * Compares a JSON template with a payload and replaces values in the template based on the payload.
+     *
+     * @param templateJson The JSON template as a string.
+     * @param payloadNode The payload JSON node.
+     * @return A transformed JSON node.
+     * @throws Exception If an error occurs during processing.
+     */
     public JsonNode compareAndReplaceJson(String templateJson, JsonNode payloadNode) throws Exception {
         JsonNode templateNode = mapper.readTree(templateJson);
         JsonNode result = processJson(null, templateNode, payloadNode, templateNode.isArray());
         return result;
     }
 
+    /**
+     * Finds the best matching field value in the payload based on the template field name and type.
+     *
+     * @param fieldName The name of the field to match.
+     * @param templateNode The template JSON node.
+     * @param payloadNode The payload JSON node.
+     * @return The matched field value or null if no match is found.
+     */
     public Object getMatchingFieldValue(String fieldName, JsonNode templateNode, JsonNode payloadNode)  {
         if (templateNode == null || payloadNode == null || !templateNode.has(fieldName)) {
             return null;
@@ -70,6 +89,15 @@ public class JsonTransformer {
         return null;
     }
 
+    /**
+     * Processes a JSON node recursively, transforming it based on the template and payload.
+     *
+     * @param parentNode The name of the parent node (if applicable).
+     * @param inputNode The input JSON node.
+     * @param payloadNode The payload JSON node.
+     * @param IsInArray Indicates if the node is part of an array.
+     * @return A transformed JSON node.
+     */
     public JsonNode processJson(String parentNode, JsonNode inputNode, JsonNode payloadNode, boolean IsInArray) {
         if (isTypedNode(inputNode)) {
             return processValueNode(parentNode, inputNode, payloadNode, IsInArray);
@@ -224,7 +252,35 @@ public class JsonTransformer {
         return false;
     }
 
-    
+    /**
+     * Cleans a JSON node by removing null values and empty strings.
+     *
+     * @param inputNode The input JSON node to clean.
+     * @return A cleaned JSON node.
+     */
+    public static JsonNode getCleanedJsonNode(JsonNode inputNode) {
+        ObjectMapper mapper = new ObjectMapper();
+        if (inputNode.isObject()) {
+            ObjectNode cleanedObject = mapper.createObjectNode();
+            inputNode.fields().forEachRemaining(entry -> {
+                JsonNode value = entry.getValue();
+                if (!value.isNull() && !(value.isTextual() && value.asText().trim().isEmpty())) {
+                    cleanedObject.set(entry.getKey(), getCleanedJsonNode(value));
+                }
+            });
+            return cleanedObject;
+        } else if (inputNode.isArray()) {
+            ArrayNode cleanedArray = mapper.createArrayNode();
+            for (JsonNode item : inputNode) {
+                JsonNode cleanedItem = getCleanedJsonNode(item);
+                if (!cleanedItem.isNull() && !(cleanedItem.isTextual() && cleanedItem.asText().trim().isEmpty())) {
+                    cleanedArray.add(cleanedItem);
+                }
+            }
+            return cleanedArray;
+        }
+        return inputNode;
+    }
 
   
 }

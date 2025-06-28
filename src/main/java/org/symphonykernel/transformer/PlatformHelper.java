@@ -22,8 +22,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 @Service
 /**
- * PlatformHelper provides utility methods for transforming and processing JSON data.
- * It includes methods for adaptive card generation, JSON comparison, and placeholder replacement.
+ * PlatformHelper is a service class that provides utility methods for transforming and processing JSON data.
+ * <p>
+ * This class includes methods for adaptive card generation, JSON comparison, placeholder replacement, 
+ * and resolving payloads based on resolver definitions.
+ * </p>
+ * 
+ * @version 1.0
+ * @since 1.0
  */
 public class PlatformHelper {
 
@@ -135,6 +141,14 @@ public class PlatformHelper {
         return cardTemplate.toString();
     }
 
+    /**
+     * Compares a template JSON with a payload JSON and replaces values based on the template.
+     *
+     * @param templateJson the template JSON as a string
+     * @param payloadNode the payload JSON as a JsonNode
+     * @return a JsonNode with replaced values
+     * @throws IOException if an error occurs during JSON processing
+     */
     public JsonNode compareAndReplaceJsonv2(String templateJson, JsonNode payloadNode) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
 
@@ -230,6 +244,15 @@ public class PlatformHelper {
         return resultNode;
     }
 
+    /**
+     * Replaces placeholders in a query string with values from user data based on parameter definitions.
+     *
+     * @param query the query string containing placeholders
+     * @param paramDefJson the JSON string defining parameter types
+     * @param userDataNode the JSON node containing user data
+     * @return the query string with placeholders replaced
+     * @throws IOException if an error occurs during JSON processing
+     */
     public String replacePlaceholders(String query, String paramDefJson, JsonNode userDataNode) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
 
@@ -389,6 +412,13 @@ public class PlatformHelper {
         return resultNode;
     }
 
+    /**
+     * Replaces values in a JSON node based on a resolver JSON definition and parameters.
+     *
+     * @param resolverJson the resolver JSON as a string
+     * @param params the parameters to replace in the JSON
+     * @return a resolved JSON node
+     */
     public JsonNode replaceJsonValue(String resolverJson, Object... params) {
         ObjectMapper objectMapper = new ObjectMapper();
 
@@ -435,6 +465,14 @@ public class PlatformHelper {
         return resultNode;
     }
 
+    /**
+     * Resolves a payload array by replacing values based on a resolver JSON definition.
+     *
+     * @param payloadArray the payload array as a JsonNode
+     * @param resolverJson the resolver JSON as a string
+     * @return a resolved JSON node
+     * @throws IOException if an error occurs during JSON processing
+     */
     public JsonNode resolvePayload(ArrayNode payloadArray, String resolverJson) throws IOException {
         ObjectMapper objectMapper = new ObjectMapper();
 

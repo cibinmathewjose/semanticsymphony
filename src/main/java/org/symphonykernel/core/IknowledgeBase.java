@@ -22,11 +22,32 @@ public interface IknowledgeBase extends IDelta<KnowledgeDescription> {
      */
     Knowledge GetByName(String name);    
 
+    /**
+     * Retrieves the view definition by its name.
+     *
+     * @param name the name of the view definition to retrieve
+     * @return the view definition as a string
+     */
     String GetViewDefByName(String name);
 
+    /**
+     * Retrieves all knowledge descriptions.
+     *
+     * @return a map of knowledge descriptions with their names as keys
+     */
     Map<String, String> getAllKnowledgeDescriptions();
-    
+
+    /**
+     * Retrieves active knowledge descriptions.
+     *
+     * @return a map of active knowledge descriptions with their names as keys
+     */
     Map<String, String> getActiveKnowledgeDescriptions();
 
+    /**
+     * Retrieves all view descriptions.
+     *
+     * @return a map of view descriptions with their names as keys
+     */
     Map<String, String> getAllVewDescriptions();
 }

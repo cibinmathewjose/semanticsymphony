@@ -149,6 +149,14 @@ public class ChatRequest {
         this.payload = payload;
     }
 
+    /**
+     * Gets the variables from the payload and context information.
+     * 
+     * <p>If the payload is valid JSON, it merges the context information into the payload.
+     * If the payload is empty, it returns the context information as JSON.
+     * 
+     * @return a JsonNode representing the variables
+     */
     public JsonNode getVariables() {
         if (payload != null && !payload.isEmpty() && !"NONE".equals(payload)) {
             try {
@@ -232,12 +240,22 @@ public class ChatRequest {
         return "{name='" + query + "', paylod=" + payload + "}";
     }
 
-	public String getConversationId() {
-		return conversationId;
-	}
+    /**
+     * Gets the conversation ID associated with the chat request.
+     * 
+     * @return the conversation ID
+     */
+    public String getConversationId() {
+        return conversationId;
+    }
 
-	public void setConversationId(String conversationId) {
-		this.conversationId = conversationId;
-	}
+    /**
+     * Sets the conversation ID for the chat request.
+     * 
+     * @param conversationId the conversation ID
+     */
+    public void setConversationId(String conversationId) {
+        this.conversationId = conversationId;
+    }
 
 }

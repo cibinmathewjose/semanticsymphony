@@ -52,19 +52,24 @@ public class FlowItem {
     public void setName(String name) {
         this.name = name;
     }
+    /**
+     * Gets the key of the flow item.
+     * If the key is null or empty, the name is returned instead.
+     *
+     * @return the key or name
+     */
     public String getKey() {
-        return (key==null||key.isEmpty())?name:key;
+        return (key == null || key.isEmpty()) ? name : key;
     }
 
     /**
-     * Sets the name of the flow item.
-     * 
-     * @param name the name to set
+     * Sets the key of the flow item.
+     *
+     * @param key the key to set
      */
     public void setKey(String key) {
         this.key = key;
     }
-    
 
     /**
      * Retrieves the payload of the flow item.
@@ -93,26 +98,46 @@ public class FlowItem {
         return array;
     }
    
+    /**
+     * Sets whether the flow item is an array.
+     *
+     * @param a true if the flow item is an array, false otherwise
+     */
     public void setArray(boolean a) {
         this.array = a;
     }
 
+    /**
+     * Checks if the flow item is required.
+     *
+     * @return true if required, false otherwise
+     */
     public boolean isRequired() {
         return required;
     }
    
+    /**
+     * Sets whether the flow item is required.
+     *
+     * @param a true if required, false otherwise
+     */
     public void setRequired(boolean a) {
         this.required = a;
     }
   
+    /**
+     * Gets the loop key of the flow item.
+     *
+     * @return the loop key
+     */
     public String getLoopKey() {
         return loop;
     }
 
     /**
-     * Sets the array status of the flow item.
+     * Sets the loop key of the flow item.
      *
-     * @param a true to set as array, false otherwise
+     * @param a the loop key to set
      */
     public void setLoopKey(String a) {
         this.loop = a;

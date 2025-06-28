@@ -18,6 +18,7 @@ import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.providers.SessionProvider;
+import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;
@@ -89,7 +90,7 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
  * using OpenAI prompt evaluation.</li>
  * <li>{@link #getResponse(ExecutionContext)} - Generates a response based on
  * the execution context.</li>
- * <li>{@link #matchKnowledge(String)} - Matches a query to a knowledge
+ * <li>{@link #matchKnowledge(String, JsonNode)} - Matches a query to a knowledge
  * description or SQL query.</li>
  * <li>{@link #getExecuter(Knowledge)} - Retrieves the appropriate execution
  * step based on the knowledge type.</li>
@@ -144,6 +145,9 @@ public class KnowledgeGraphBuilder {
 
     @Autowired
     SharePointSearchStep sharePointAssistant;
+    
+    @Autowired  
+    FileStep fileUrlHelper;
 
     @Autowired
     PluginStep pluginStep;
@@ -298,7 +302,7 @@ public class KnowledgeGraphBuilder {
                     }
                 }
             } catch (JsonProcessingException e) {
-                logger.error("Error processing JSON: " + e.getMessage(), e);
+                logger.warn("Invalid JSON, skiping parameter parsing");
             }
         }
         return availableVariables;
@@ -361,6 +365,13 @@ public class KnowledgeGraphBuilder {
         return response;
     }
 
+    /**
+     * Matches a query to a knowledge description or SQL query.
+     *
+     * @param question the user query to match
+     * @param params additional parameters for matching
+     * @return the matched {@link Knowledge} object, or {@code null} if no match is found
+     */
     private Knowledge matchKnowledge(String question, JsonNode params) {
         try {
             // Fetch knowledge descriptions and convert to JSON string
@@ -422,6 +433,9 @@ public class KnowledgeGraphBuilder {
             case REST -> {
                 return restHelper;
             }
+            case FILE -> {
+                return fileUrlHelper;
+            }            
             case SHAREPOINT -> {
                 return sharePointAssistant;
             }

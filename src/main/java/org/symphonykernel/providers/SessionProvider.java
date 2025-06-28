@@ -6,9 +6,13 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
+import org.symphonykernel.ExecutionContext;
+import org.symphonykernel.Knowledge;
+import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
 import org.symphonykernel.core.IUserSessionBase;
 
@@ -17,13 +21,25 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 @Component
 /**
  * SessionProvider is responsible for managing user sessions and chat histories.
- * It provides methods to create, retrieve, and update user sessions.
+ * <p>
+ * This class provides methods to create, retrieve, and update user sessions,
+ * as well as manage chat histories for user interactions.
+ * </p>
+ * 
+ * @version 1.0
+ * @since 1.0
  */
 public class SessionProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionProvider.class);
 
     private final IUserSessionBase userSessionsBase;
+    /**
+     * The maximum number of chat history entries to retain.
+     * This value can be configured via application properties.
+     */
+    @Value("${maxhistory:5}")
+    private int maxHistory;
 
     /**
      * Constructs a SessionProvider with the specified user session base.
