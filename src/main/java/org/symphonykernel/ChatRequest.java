@@ -258,4 +258,8 @@ public class ChatRequest {
         this.conversationId = conversationId;
     }
 
+    public Map<String, String> getContextInfo() {
+        return contextInfo;
+    }
+
 }

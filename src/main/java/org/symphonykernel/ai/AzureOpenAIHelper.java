@@ -7,6 +7,7 @@ import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -278,7 +279,7 @@ public class AzureOpenAIHelper {
      * @param question the question to ask
      * @return the response
      */
-    public String ask(String question) {
+    private String process(String question) {
         try {
         	logger.info("processing data with LLM {}",question);
             int len =question.length();
@@ -309,7 +310,70 @@ public class AzureOpenAIHelper {
             return  e.getMessage(); // Or throw the exception if appropriate
         }
     }
-    
+    public String ask(String question) 
+    {
+         if(question==null || question.trim().isEmpty())
+                return "Please provide a valid question. if multiple prompts in one go, please start with <!PromptHead!> and use <!SplitPromptHere!> to split each section";
+        String splitter="<!SplitPromptHere!>";
+        String head="<!PromptHead!>";
+        String finalFormating="<!FinalResultFormat!>";
+      if(question.indexOf(splitter)>0)
+      {
+          String[] parts=question.split(splitter);
+          StringBuilder finalResponse=new StringBuilder();
+          int i=0;          
+          String basePrompt="";
+          String finalFormatingPrompt="";
+          if(parts[0].indexOf(head)>=0)
+          {
+              i=1;
+              String header= parts[0];
+              if(parts[0].indexOf(finalFormating)>=0)
+                {
+                	  basePrompt = header.substring(header.indexOf(head)+head.length(),header.indexOf(finalFormating))+System.lineSeparator();
+                	  finalFormatingPrompt = header.substring(header.indexOf(finalFormating)+finalFormating.length())+System.lineSeparator();
+                }
+              else
+              basePrompt = parts[0].substring(parts[0].indexOf(head)+head.length())+System.lineSeparator();
+          }
+        
+          // Create a list to hold the futures
+          List<CompletableFuture<String>> futures = new ArrayList<>();
+          
+          // Process all parts in parallel
+          for(; i < parts.length; i++)
+          {
+              String part = basePrompt + parts[i];
+              // Submit each part for parallel processing
+              futures.add(CompletableFuture.supplyAsync(() -> process(part)));
+          }
+          
+          // Wait for all futures to complete
+          CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+          
+          // Collect all results in order
+          for(CompletableFuture<String> future : futures) {
+              try {
+                  String response = future.get();
+                  if(response != null) {
+                      finalResponse.append(response);
+                      finalResponse.append(System.lineSeparator());
+                  }
+              } catch (InterruptedException | ExecutionException e) {
+                  logger.error("Error processing part in parallel: {}", e.getMessage(), e);
+              }
+          }
+          if(finalFormatingPrompt!=null && !finalFormatingPrompt.isEmpty())
+          {
+            return process("Analyze the data ["+finalResponse.toString()+"] "+finalFormatingPrompt);
+          }
+          return finalResponse.toString();            
+      }
+      else    
+      {   
+        return process(question);
+      }
+    }
 
 
 /**

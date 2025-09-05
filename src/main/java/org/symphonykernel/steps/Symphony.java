@@ -2,6 +2,11 @@ package org.symphonykernel.steps;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +46,10 @@ public class Symphony implements IStep {
     @Autowired
     @Qualifier("GraphQLStep")
     GraphQLStep graphQLHelper;
-
+        
+    @Autowired
+    TemplateResolver templateResolver;
+    
     @Autowired
     @Qualifier("RESTStep")
     RESTStep restHelper;
@@ -67,85 +75,44 @@ public class Symphony implements IStep {
         ArrayNode jsonArray = objectMapper.createArrayNode();
         logger.info("Executing Symphony " + _symphony.getName() + " with " + input);
         Map<String, JsonNode> resolvedValues = new HashMap<>();
+        ctx.setResolvedValues(resolvedValues);
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
+            
+            // Group FlowItems by order
+            Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
             for (FlowItem item : parsed.Flow) {
-                Knowledge kb = knowledgeBase.GetByName(item.getName());
-                if (kb != null) {
-
-                	logger.info("Executing Symphony: " + item.getName() + " with Payload: " + item.getPaylod());
-                    JsonNode result = null;
-                    JsonNode resolverPayload = null;
-                    if (item.getPaylod() != null) {
-                        resolverPayload = resolvedValues.get(item.getPaylod().toLowerCase());
-                        //TO DO get nested object mapping
-                    }                    
-                        if (resolverPayload != null) {
-                        	String loopKey=item.getLoopKey();
-                            if (loopKey!=null&&!loopKey.isBlank()) {
-                            	
-                            	if(resolverPayload.isArray())
-                            	{	                         
-                                    Map<String, JsonNode> resultPair = new HashMap<>();      
-	                                for (JsonNode idNode : resolverPayload) {      
-	                                    result = getResults(ctx, kb, idNode);	  
-                                        if (result.isArray() && result.size() == 1) {
-	                                        result=result.get(0);                       
-                                        }
-                                        // cretae a key value pair with key as the value of loopKey in idNode and value as the result and add to resolvedValues
-                                        
-                                        String loopKeyValue = idNode.get(loopKey).asText(); 
-                                        if (loopKeyValue != null && !loopKeyValue.isEmpty()) {
-                                            resultPair.put(loopKeyValue, result);
-                                        } else {
-                                        	logger.error("Error Unhandled: senario loopKeyValue is empty for result {} idnode {}", result, idNode);
-                                        }
-	                                   
-	                                }
-                                    JsonNode resultPairNode = objectMapper.valueToTree(resultPair);
-                                    addResultMap(resolvedValues, item, resultPairNode);
-                            	}
-                            	else
-                            	{
-	                            	result = getResults(ctx, kb, resolverPayload);	                                
-	                                addResultMap(resolvedValues, item, result);
-	                            }                            	
-                            }
-                            else
-                            {
-                            	if(resolverPayload.isArray()&&!item.isArray())
-                            	{
-	                                ArrayNode resultArray = objectMapper.createArrayNode();
-	                                for (JsonNode idNode : resolverPayload) {
-	                                    result = getResults(ctx, kb, idNode);	                                    
-	                                    if (result.isArray()) {
-	                                    	if( result.size() == 1)
-	                                    		resultArray.add(result.get(0));
-	                                    	else
-	                                    		resultArray.add(result);	 
-	                                    		logger.warn("Review senario" + result);
-	                                    } else {
-	                                    	resultArray.add(result);
-	                                    	logger.warn("Review senario" + result);
-	                                    }
-	                                }	                               
-                                    addResultMap(resolvedValues, item, resultArray);
-                            	}
-                            	else
-                            	{
-	                            	result = getResults(ctx, kb, resolverPayload);	                                
-	                                addResultMap(resolvedValues, item, result);
-	                            }
-                            }
-                            processPrompt(item.getKey().toLowerCase(),resolvedValues, item.SystemPrompt);
-                        }
-                   
+                Integer order = item.getOrder() != null ? item.getOrder() : 0;
+                flowItemsByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(item);
+            }
+            
+            // Process items in order
+            for (Map.Entry<Integer, List<FlowItem>> entry : flowItemsByOrder.entrySet()) {
+                Integer order = entry.getKey();
+                List<FlowItem> items = entry.getValue();
+                
+                if (order == 0 || items.size() == 1) {
+                    // Process sequentially for order 0 or single items
+                    for (FlowItem item : items) {
+                        processFlowItem(item, ctx, resolvedValues);
+                    }
+                } else {
+                    // Process in parallel for same order > 0
+                    List<CompletableFuture<Void>> futures = items.stream()
+                        .map(item -> CompletableFuture.runAsync(() -> 
+                            processFlowItem(item, ctx, resolvedValues)))
+                        .collect(Collectors.toList());
+                    
+                    // Wait for all parallel executions to complete
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
                 }
-            }            
+            }
+            
+            // Process final response
             if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
 
-                String systemPrompt = TemplateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
+                String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
                 
                 String userPrompt = parsed.UserPrompt;
                 if (parsed.AdaptiveCardPrompt != null && !parsed.AdaptiveCardPrompt.trim().isEmpty()) {
@@ -153,7 +120,7 @@ public class Symphony implements IStep {
                 } else if (userPrompt == null) {
                     userPrompt = ctx.getUsersQuery();
                 } else if (!userPrompt.trim().isEmpty()&&TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
-                    userPrompt = TemplateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
+                    userPrompt = templateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
                 }               
                 String result =null;
                 if((systemPrompt.indexOf(TemplateResolver.JSON)>=0||systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)&&
@@ -191,6 +158,70 @@ public class Symphony implements IStep {
         a.setData(jsonArray);
         return a;
     }
+    
+    /**
+     * Process a single flow item
+     */
+    private synchronized void processFlowItem(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+        Knowledge kb = knowledgeBase.GetByName(item.getName());
+        if (kb != null) {
+            logger.info("Executing Symphony: " + item.getName() + " with Payload: " + item.getPaylod());
+            JsonNode result = null;
+            JsonNode resolverPayload = null;
+            ctx.setCurrentFlowItem(item);
+            if (item.getPaylod() != null) {
+                resolverPayload = resolvedValues.get(item.getPaylod().toLowerCase());
+            }                    
+            if (resolverPayload != null) {
+                String loopKey = item.getLoopKey();
+                if (loopKey != null && !loopKey.isBlank()) {
+                    if (resolverPayload.isArray()) {
+                        Map<String, JsonNode> resultPair = new HashMap<>();      
+                        for (JsonNode idNode : resolverPayload) {      
+                            result = getResults(ctx, kb, idNode);	  
+                            if (result.isArray() && result.size() == 1) {
+                                result = result.get(0);                       
+                            }
+                            // create a key value pair with key as the value of loopKey in idNode and value as the result and add to resolvedValues                                        
+                            String loopKeyValue = idNode.get(loopKey).asText(); 
+                            if (loopKeyValue != null && !loopKeyValue.isEmpty()) {
+                                resultPair.put(loopKeyValue, result);
+                            } else {
+                                logger.error("Error Unhandled: senario loopKeyValue is empty for result {} idnode {}", result, idNode);
+                            }	                                   
+                        }
+                        JsonNode resultPairNode = objectMapper.valueToTree(resultPair);
+                        addResultMap(resolvedValues, item, resultPairNode);
+                    } else {
+                        result = getResults(ctx, kb, resolverPayload);	                                
+                        addResultMap(resolvedValues, item, result);
+                    }                            	
+                } else {
+                    if (resolverPayload.isArray() && !item.isArray()) {
+                        ArrayNode resultArray = objectMapper.createArrayNode();
+                        for (JsonNode idNode : resolverPayload) {
+                            result = getResults(ctx, kb, idNode);	                                    
+                            if (result.isArray()) {
+                                if (result.size() == 1)
+                                    resultArray.add(result.get(0));
+                                else
+                                    resultArray.add(result);	 
+                                    logger.warn("Review senario" + result);
+                            } else {
+                                resultArray.add(result);
+                                logger.warn("Review senario" + result);
+                            }
+                        }	                               
+                        addResultMap(resolvedValues, item, resultArray);
+                    } else {
+                        result = getResults(ctx, kb, resolverPayload);	                                
+                        addResultMap(resolvedValues, item, result);
+                    }
+                }
+                processPrompt(item.getKey().toLowerCase(), resolvedValues, item.SystemPrompt);
+            }
+        }
+    }
 
     private void addResultMap(Map<String, JsonNode> resolvedValues, FlowItem item, JsonNode resultNode) {
         if(TemplateResolver.isJsonNodeNullorEmpty(resultNode) )
@@ -218,6 +249,9 @@ public class Symphony implements IStep {
 		newCtx.setVariables(idNode);
 		newCtx.setHttpHeaderProvider(ctx.getHttpHeaderProvider());
 		newCtx.setUsersQuery(ctx.getUsersQuery());
+        newCtx.setChatHistory(ctx.getChatHistory());
+        newCtx.setResolvedValues(ctx.getResolvedValues());
+        newCtx.setCurrentFlowItem(ctx.getCurrentFlowItem());
 		newCtx.setConvert(true);
 		result = getResult(kb, newCtx);
 		return result;
@@ -227,7 +261,7 @@ public class Symphony implements IStep {
 		
 		if(prompt!=null&&!prompt.isEmpty())
 		{   
-			String systemPrompt = TemplateResolver.resolvePlaceholders(prompt, resolvedValues);
+			String systemPrompt = templateResolver.resolvePlaceholders(prompt, resolvedValues);
 			String result = azureOpenAIHelper.ask(systemPrompt);    
 			JsonNode resultNode = parseJson(result);    
 			resolvedValues.replace(key, resultNode);

@@ -2,11 +2,17 @@ package org.symphonykernel.ai;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
@@ -113,6 +119,27 @@ public class KnowledgeGraphBuilder {
 
     private static final String NONE = "NONE";
     private static final String STATUS_SUCCESS = "SUCCESS";
+    private static final String STATUS_FAILED = "FAILED";
+    private static final String STATUS_PROCESSING = "PROCESSING";
+
+    @Value("${symphony.threadpool.size:25}")
+    private int threadPoolSize;
+
+    private ExecutorService executorService;
+
+    @PostConstruct
+    public void init() {
+        executorService = Executors.newFixedThreadPool(threadPoolSize);
+        logger.info("Initialized thread pool with size: {}", threadPoolSize);
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        if (executorService != null) {
+            executorService.shutdown();
+            logger.info("Thread pool shutdown initiated");
+        }
+    }
 
     @Autowired
     IknowledgeBase knowledgeBaserepo;
@@ -159,7 +186,7 @@ public class KnowledgeGraphBuilder {
     @Autowired
     private FileContentProvider fileContentProvider;
 
-    //@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchKnowledgePrompt.text') }")
+//@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchKnowledgePrompt.text') }")
     //@Value("${fileContentProvider.matchKnowledgePrompt}")
     //private String matchKnowledgePrompt;
     //@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/paramParserPrompt.text') }")
@@ -191,7 +218,17 @@ public class KnowledgeGraphBuilder {
         ctx.setHttpHeaderProvider(request.getHeaderProvider());
         ChatHistory chatHistory = sessionManager.getChatHistory(request);
         ctx.setChatHistory(chatHistory);
-        UserSession info = sessionManager.createUserSession(request);
+        UserSession info = null;
+        info = sessionManager.createUserSession(request);
+        ctx.setUserSession(info);
+        return ctx;
+    }
+    public ExecutionContext getAsyncRequestContext(String requestId) {
+        ExecutionContext ctx = new ExecutionContext();
+        ChatRequest req= new ChatRequest();
+        req.setConversationId(requestId);
+        req.setKey("ASYNC_RESULT");
+        UserSession info  =  sessionManager.getRequestDetails(requestId);
         ctx.setUserSession(info);
         return ctx;
     }
@@ -347,15 +384,112 @@ public class KnowledgeGraphBuilder {
      * @return a {@link ChatResponse} generated from the execution context.
      */
     public ChatResponse getResponse(ExecutionContext ctx) {
+        ChatResponse response;
         Knowledge knowledge = ctx.getKnowledge();
         IStep step = getExecuter(knowledge);
-        ChatResponse response ;
+
         if (step == null) {
-        	response= new ChatResponse();
-            response.setMessage("No knowledge found for the query");
+            response = invalidRequestHandler(ctx);
+        } else if (ctx.isIsAsync()) {
+            response = getAsyncResponse(ctx, knowledge, step);
+        } else {
+            response = processRequest(ctx, knowledge, step);
         }
-        else
-        	 response =  step.getResponse(ctx);
+
+        return response;
+    }
+
+    private ChatResponse invalidRequestHandler(ExecutionContext ctx) {
+        ChatResponse response;
+        response= new ChatResponse();
+        response.setMessage("No knowledge found for the query");
+        response.setRequestId(ctx.getRequestId());
+        response.setStatusCode(STATUS_FAILED);
+        sessionManager.updateUserSession(ctx.getUserSession(), response);
+        return response;
+    }
+
+    private ChatResponse getAsyncResponse(ExecutionContext ctx, Knowledge knowledge, IStep step) {
+        ChatResponse response;
+        response = new ChatResponse();
+        response.setMessage("Processing request");
+        response.setRequestId(ctx.getRequestId());
+        response.setStatusCode(STATUS_PROCESSING);
+        
+        executorService.submit(() -> {
+            try {
+                ChatResponse asyncResponse = processRequest(ctx, knowledge, step);
+                logger.info("Async request completed for requestId: {}", ctx.getRequestId());
+            } catch (Exception e) {
+                logger.error("Error processing async request for requestId: {}", ctx.getRequestId(), e);
+                UserSession session = ctx.getUserSession();
+                if (session != null) {
+                    session.setBotResponse("An error occurred while processing your request: " + e.getMessage());
+                    session.setStatus(STATUS_FAILED);
+                    sessionManager.updateUserSession(session, null);
+                }
+            }
+        });
+        return response;
+    }
+
+    public ChatResponse getReqDetails(ExecutionContext ctx) {
+        ChatResponse response = new ChatResponse();
+        
+        // Maximum wait time in milliseconds (20 seconds)
+        final long maxWaitTime = 20000;
+        // Polling interval in milliseconds (2 seconds)
+        final long pollingInterval = 2000;
+        // Start time
+        long startTime = System.currentTimeMillis();
+        
+        while (System.currentTimeMillis() - startTime < maxWaitTime) {
+            UserSession reqDetails = sessionManager.getRequestDetails(ctx.getRequestId());
+            
+            if (reqDetails == null) {
+                response.setMessage("Invalid request id");
+                response.setRequestId(ctx.getRequestId());
+                response.setStatusCode(STATUS_FAILED);
+                return response;
+            }
+            
+            if (STATUS_SUCCESS.equals(reqDetails.getStatus()) || STATUS_FAILED.equals(reqDetails.getStatus())) {
+                response.setMessage(reqDetails.getBotResponse());
+                if (reqDetails.getData() != null) {
+                    try {
+                        response.setData(objectMapper.readValue(reqDetails.getData(), ArrayNode.class));
+                    } catch (Exception e) {
+                        logger.error("Failed to parse data into ArrayNode", e);
+                        response.setData(null);
+                    }
+                }
+                response.setRequestId(ctx.getRequestId());
+                response.setStatusCode(reqDetails.getStatus());
+                return response;
+            }
+            
+            // Wait for polling interval before checking again
+            try {
+                Thread.sleep(pollingInterval);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.warn("Thread interrupted while waiting for request completion", e);
+                break;
+            }
+        }
+        
+        // If we get here, we've timed out
+        UserSession reqDetails = sessionManager.getRequestDetails(ctx.getRequestId());
+        String createTime = reqDetails != null ? reqDetails.getCreateDt().toString() : "unknown time";
+        response.setMessage("Request is still processing. Started at " + createTime);
+        response.setRequestId(ctx.getRequestId());
+        response.setStatusCode(STATUS_PROCESSING);
+        return response;
+    }
+
+    private ChatResponse processRequest(ExecutionContext ctx, Knowledge knowledge, IStep step) {
+        ChatResponse response;
+        response =  step.getResponse(ctx);        
         if (knowledge != null && knowledge.getCard() != null && response.getData() != null && !response.getData().isEmpty()) {
             response.setMessage(platformHelper.generateAdaptiveCardJson(response.getData().get(0), knowledge.getCard()));
         }

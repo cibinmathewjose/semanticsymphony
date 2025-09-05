@@ -8,12 +8,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
+import org.symphonykernel.FlowItem;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.QueryType;
 import org.symphonykernel.ai.AzureOpenAIHelper;
 import org.symphonykernel.config.AzureOpenAIConnectionProperties;
 import org.symphonykernel.core.IPluginLoader;
 import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.transformer.TemplateResolver;
 
 import com.azure.ai.openai.OpenAIAsyncClient;
 import com.azure.ai.openai.OpenAIClientBuilder;
@@ -50,6 +52,12 @@ public class PluginStep implements IStep {
     @Autowired
     ObjectMapper objectMapper;
 
+    @Autowired
+    TemplateResolver templateResolver;
+    
+    @Autowired
+    IknowledgeBase knowledgeBase;
+
     ChatCompletionService chat;
 
     /**
@@ -81,20 +89,38 @@ public class PluginStep implements IStep {
 
     @Override
     public ChatResponse getResponse(ExecutionContext context) {
-    	logger.info("Executing Plugin " + context.getKnowledge().getName() );
+    	
          ChatResponse a = new ChatResponse();           
         
-        ChatHistory chatHistory = context.getChatHistory();
+       
         Knowledge kb= context.getKnowledge();
+        if( kb == null&&context.getName()!=null) {
+            kb = knowledgeBase.GetByName(context.getName());
+            context.setKnowledge(kb);
+        }
+        logger.info("Executing Plugin " + context.getKnowledge().getName() );
         JsonNode paramNode = getParamNode( context.getKnowledge().getData());
         String plugin = paramNode.get("Plugin").asText();
-        String systemPrompt = paramNode.get("SystemPrompt").asText();
-        logger.info("Parsed Plugin: " + plugin );
+      
+        String systemPrompt =null;
+        if (paramNode.has("SystemPrompt")) {
+            systemPrompt = paramNode.get("SystemPrompt").asText();          
+        }
+        FlowItem item =context.getCurrentFlowItem();
+        if(item!=null && item.SystemPrompt!=null) {
+        	systemPrompt = item.SystemPrompt;
+        }
+        
        
+        logger.info("Parsed Plugin: " + plugin );
+        ChatHistory chatHistory = context.getChatHistory();
         if (chatHistory!=null && kb != null) {          
             String params="consider context parameters: "+context.getVariables();
             if( systemPrompt != null)
+            {
+                systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, context.getResolvedValues());
                  params += ", SystemPrompt:" + systemPrompt;
+            }
              logger.info(params);
             chatHistory.addUserMessage(params);
         }      
@@ -137,7 +163,11 @@ public class PluginStep implements IStep {
 
     @Override
     public JsonNode executeQueryByName(ExecutionContext context) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'executeQueryByName'");
+      
+        ChatResponse a = getResponse(context);
+        if (a != null && a.getMessage() != null) {            
+              return new com.fasterxml.jackson.databind.node.TextNode(a.getMessage());            
+        }
+        return   com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.nullNode();
     }
 }

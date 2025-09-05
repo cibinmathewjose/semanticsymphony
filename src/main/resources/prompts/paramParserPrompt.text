@@ -1,6 +1,6 @@
 Analyze the JSON {{$DATA_SET}} and the user's question {{$QUESTION}}. 
 Create a JSON by mapping the values from the user's question to the correct field names, strictly following the field names in the provided JSON. 
-Only include the exact JSON text in the response and do not explain.
+Only include the exact JSON text in the response and do not explain. Do not include ```json or any formatting in the response
 
 Example 1:
 Input: {"frm_id": {"type":"number"}}

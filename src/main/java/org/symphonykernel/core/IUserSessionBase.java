@@ -27,4 +27,6 @@ public interface IUserSessionBase {
      * @return the saved UserSession object
      */
     UserSession save(UserSession session);
+
+    UserSession findById(String id);
 }

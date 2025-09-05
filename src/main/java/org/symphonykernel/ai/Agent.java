@@ -57,9 +57,13 @@ public class Agent {
             return new ChatResponse("Request is null");
         } 
         ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
-        logger.info("ExecutionContext created");    
+        logger.info("ExecutionContext created");   
         ctx = knowledgeGraphBuilder.identifyIntent(ctx);
-        ctx = knowledgeGraphBuilder.setParameters(ctx);          
+        ctx = knowledgeGraphBuilder.setParameters(ctx); 
         return knowledgeGraphBuilder.getResponse(ctx);
+    }
+    public ChatResponse getAsyncResults(String requestId) {   
+        ExecutionContext ctx = knowledgeGraphBuilder.getAsyncRequestContext(requestId);          
+        return knowledgeGraphBuilder.getReqDetails(ctx);
     }
 }

@@ -137,6 +137,8 @@ public class SqlStep implements IStep {
         int columnCount = metaData.getColumnCount();
         int c = 50;
         // Iterate through the ResultSet and create JSON objects
+        try
+        {
         while (rs.next() || --c <= 0) {
             ObjectNode jsonObject = mapper.createObjectNode();
 
@@ -152,6 +154,11 @@ public class SqlStep implements IStep {
             }
 
             jsonArray.add(jsonObject);
+        }
+        }
+        catch (SQLException e)
+        {
+        	logger.warn("Error processing ResultSet: {}", e.getMessage());
         }
 
         // Print the generated JSON data

@@ -2,6 +2,7 @@ package org.symphonykernel.providers;
 
 import java.util.Calendar;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -10,12 +11,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
-import org.symphonykernel.ExecutionContext;
-import org.symphonykernel.Knowledge;
-import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
 import org.symphonykernel.core.IUserSessionBase;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
 @Component
@@ -40,6 +39,7 @@ public class SessionProvider {
      */
     @Value("${maxhistory:5}")
     private int maxHistory;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * Constructs a SessionProvider with the specified user session base.
@@ -61,7 +61,17 @@ public class SessionProvider {
         session.setSessionID(request.getSession());
         session.setUserId(request.getUser());
         session.setRequestId(UUID.randomUUID().toString());
-        session.setUserInput(request.getQuery());
+ 		try {
+            session.setUserInput(objectMapper.writeValueAsString(new Object() {
+                public String key = request.getKey();
+                public String query = request.getQuery();
+                public String payload = request.getPayload();
+                public Map<String, String> context = request.getContextInfo();
+            }));
+        } catch (Exception e) {
+            logger.error("Failed to convert ChatRequest to JSON", e);
+            session.setUserInput("{}");
+        }
         session.setCreateDt(Calendar.getInstance().getTime());
         session.setStatus("RECEIVED");
         return userSessionsBase.save(session);
@@ -97,6 +107,11 @@ public class SessionProvider {
      */
     public List<UserSession> getSessionHistory(String sessionId) {
         return userSessionsBase.getSession(sessionId);
+    }
+    public UserSession getRequestDetails(String requestId) {
+        if(requestId==null)
+            return null;
+        return userSessionsBase.findById(requestId);
     }
 
     /**

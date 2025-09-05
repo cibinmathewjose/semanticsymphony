@@ -24,7 +24,8 @@ public class FlowItem {
     String loop;
     @JsonProperty("Array")
     boolean array;
-
+    @JsonProperty("Order")
+    Integer order;
     @JsonProperty("Required")
     
     boolean required;
@@ -146,5 +147,13 @@ public class FlowItem {
     @Override
     public String toString() {
         return "FlowItem{" + "Name='" + name + '\'' + ", Paylod='" + paylod + '\'' + '}';
+    }
+
+    public Integer getOrder() {
+        return order;
+    }
+
+    public void setOrder(Integer order) {
+        this.order = order;
     }
 }

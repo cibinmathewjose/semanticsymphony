@@ -8,6 +8,8 @@
  */
 package org.symphonykernel;
 
+import java.util.Map;
+
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.symphonykernel.core.IHttpHeaderProvider;
@@ -63,6 +65,34 @@ public class ExecutionContext {
 
     /** The URL associated with the execution context. */
     String url;
+
+    Map<String, JsonNode> resolvedValues;
+
+    FlowItem currentFlowItem;
+
+    /**
+     * Returns the current flow item associated with the execution context.
+     * 
+     * @return the current flow item
+     */
+    public FlowItem getCurrentFlowItem() {
+        return currentFlowItem;
+    }
+
+    /**
+     * Sets the current flow item for the execution context.
+     * 
+     * @param currentFlowItem the current flow item to set
+     * @return the updated execution context
+     */
+    public ExecutionContext setCurrentFlowItem(FlowItem currentFlowItem) {
+        this.currentFlowItem = currentFlowItem;
+        return this;
+    }
+
+    public void setResolvedValues(Map<String, JsonNode> resolvedValues) {
+        this.resolvedValues = resolvedValues;
+    }
 
     /**
      * Returns the URL associated with the execution context.
@@ -380,5 +410,16 @@ public class ExecutionContext {
          HttpMethod method = getMethod();
          return String.format("url:{},method:{},body:{}", url,method,body);
     	
+    }
+
+    public Map<String, JsonNode> getResolvedValues() {
+        return resolvedValues;
+    }
+
+    public boolean isIsAsync() {
+        return request != null && "ASYNC_CHAT".equals(request.getKey());
+    }
+    public boolean isIsAsyncResult() {
+        return request != null && "ASYNC_RESULT".equals(request.getKey());
     }
 }
