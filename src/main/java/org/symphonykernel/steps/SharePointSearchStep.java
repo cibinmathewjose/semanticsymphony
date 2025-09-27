@@ -48,7 +48,7 @@ import okhttp3.Request;
  */
 
 @Service
-public class SharePointSearchStep implements IStep {
+public class SharePointSearchStep extends BaseStep {
 
     // Define the scope for Microsoft Graph API
     private String scopes = "https://graph.microsoft.com/.default";
@@ -204,12 +204,6 @@ public class SharePointSearchStep implements IStep {
         if (config == null)
             config = sharepointConfig;
         return config;
-    }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-        // Method not implemented
-        throw new UnsupportedOperationException("Unimplemented method 'executeQueryByName'");
     }
 
     /**

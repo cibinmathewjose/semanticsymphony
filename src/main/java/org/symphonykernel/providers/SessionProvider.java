@@ -28,6 +28,10 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
  * @version 1.0
  * @since 1.0
  */
+/**
+ * Provides methods to manage user sessions and chat histories.
+ * This includes creating, retrieving, and updating user sessions.
+ */
 public class SessionProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionProvider.class);
@@ -60,8 +64,9 @@ public class SessionProvider {
         UserSession session = new UserSession();
         session.setSessionID(request.getSession());
         session.setUserId(request.getUser());
-        session.setRequestId(UUID.randomUUID().toString());
- 		try {
+        
+        session.setRequestId(request.getConversationId() != null ? request.getConversationId() : UUID.randomUUID().toString());       
+        try {
             session.setUserInput(objectMapper.writeValueAsString(new Object() {
                 public String key = request.getKey();
                 public String query = request.getQuery();
@@ -81,7 +86,7 @@ public class SessionProvider {
      * Retrieves the chat history for the given chat request.
      *
      * @param request the chat request for which history is to be retrieved
-     * @return the chat history
+     * @return the chat history containing user and system messages
      */
     public ChatHistory getChatHistory(ChatRequest request) {
         List<UserSession> sessions = userSessionsBase.getSession(request.getSession());
@@ -108,8 +113,15 @@ public class SessionProvider {
     public List<UserSession> getSessionHistory(String sessionId) {
         return userSessionsBase.getSession(sessionId);
     }
+
+    /**
+     * Retrieves the details of a user session based on the request ID.
+     *
+     * @param requestId the ID of the request
+     * @return the user session details, or null if the request ID is null
+     */
     public UserSession getRequestDetails(String requestId) {
-        if(requestId==null)
+        if(requestId == null)
             return null;
         return userSessionsBase.findById(requestId);
     }

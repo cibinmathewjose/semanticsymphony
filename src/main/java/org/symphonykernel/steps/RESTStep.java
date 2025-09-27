@@ -31,7 +31,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * It provides methods to create request headers, process API responses, and invoke APIs.
  */
 @Service("RESTStep")
-public class RESTStep implements IStep {
+public class RESTStep extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(RESTStep.class);
 
@@ -237,27 +237,4 @@ public class RESTStep implements IStep {
         }
         return tmp;
     }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-        final ArrayNode[] array = new ArrayNode[1];
-        Knowledge kb = knowledgeBase.GetByName(context.getName());
-        if (kb != null && kb.getUrl() != null && !kb.getUrl().isEmpty()) {
-
-            try {
-                JsonNode var = context.getVariables();
-                if (context.getConvert()) {
-                    JsonTransformer transformer = new JsonTransformer();
-                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                    context.setVariables(var);
-                    context.setKnowledge(kb);
-                }
-                array[0] = getResponse(context).getData();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-        return array[0];
-    }
-
 }

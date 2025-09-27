@@ -43,7 +43,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * @version 1.0
  * @since 1.0
  */
-public class SqlStep implements IStep {
+public class SqlStep extends  BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlStep.class);
 
@@ -185,29 +185,6 @@ public class SqlStep implements IStep {
         }
         else
         	logger.warn("knowldge not found {}", name);
-        return array[0];
-    }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-        final ArrayNode[] array = new ArrayNode[1];
-        Knowledge kb = knowledgeBase.GetByName(context.getName());
-        if (kb != null) {
-            JsonNode var = context.getVariables();
-            if (context.getConvert()) {
-                try {
-                    JsonTransformer transformer = new JsonTransformer();
-                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                    context.setVariables(var);
-                    context.setKnowledge(kb);
-                    //var=platformHelper.compareAndReplaceJson(kb.getParams(), variables);           		  
-                } catch (Exception e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
-                }
-            }
-            array[0] = getResponse(context).getData();
-        }
         return array[0];
     }
 

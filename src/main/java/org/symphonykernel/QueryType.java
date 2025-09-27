@@ -17,6 +17,8 @@ public enum QueryType {
     /** Represents a plugin-based query. */
     PLUGIN,   
     /** Represents a text-based query for file */
+    TOOL,   
+    /** Represents a text-based query for file */
     FILE,
      /** Represents a text-based query for sharepoint */
      SHAREPOINT

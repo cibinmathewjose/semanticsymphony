@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.BooleanNode;
+import com.fasterxml.jackson.databind.node.DoubleNode;
 import com.fasterxml.jackson.databind.node.LongNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -177,7 +178,11 @@ public class JsonTransformer {
             JsonNode match;
             switch (type) {
                 case "number":
-                    match = new LongNode(Long.parseLong(value.asText().trim()));
+                     String val=value.asText().trim();
+                    if( !val.contains(".") )
+                        match = new LongNode(Long.parseLong(value.asText().trim()));
+                     else
+                        match = new DoubleNode(Double.valueOf(value.asText().trim()));                
                     break;
                 case "boolean":
                     match = BooleanNode.valueOf(Boolean.parseBoolean(value.asText().trim()));

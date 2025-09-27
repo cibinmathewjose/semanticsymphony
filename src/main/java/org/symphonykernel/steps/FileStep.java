@@ -44,7 +44,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * such as DOCX, Excel, and PDF. It integrates with the Symphony Kernel for file-based operations.
  */
 @Service("FileStep")
-public class FileStep implements IStep {
+public class FileStep extends  BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(FileStep.class);
 
@@ -146,26 +146,6 @@ public class FileStep implements IStep {
 		return jsonObject;
 		 
 	}
-
-	@Override
-	public JsonNode executeQueryByName(ExecutionContext context) {
-		  ArrayNode array=null;
-		  Knowledge kb = knowledgeBase.GetByName(context.getName());
-		  try {
-              JsonNode var = context.getVariables();
-              if (context.getConvert()) {
-                  JsonTransformer transformer = new JsonTransformer();
-                  var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                  context.setVariables(var);
-                  context.setKnowledge(kb);
-              }
-              array = getData(context);
-          } catch (Exception e) {
-              e.printStackTrace();
-          }
-		return array;
-	}
-
     private String getImagebase64Text(PDDocument document, int fromPage, int toPage) {
         try {
             PDFRenderer pdfRenderer = new PDFRenderer(document);

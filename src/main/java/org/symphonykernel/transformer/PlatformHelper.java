@@ -380,8 +380,14 @@ public class PlatformHelper {
         return bestValue;
     }
 
-    
-
+    /**
+     * Resolves a payload by replacing values based on a resolver JSON definition.
+     *
+     * @param key the key to resolve
+     * @param value the value to resolve
+     * @param resolverNode the resolver JSON node
+     * @return a resolved JSON node
+     */
     public JsonNode resolvePayload(String key, Object value, JsonNode resolverNode) {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode resultNode = objectMapper.createObjectNode();

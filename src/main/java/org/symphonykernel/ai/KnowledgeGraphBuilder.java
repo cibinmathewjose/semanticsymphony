@@ -10,6 +10,7 @@ import javax.annotation.PreDestroy;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,6 +21,7 @@ import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
+import org.symphonykernel.config.Constants;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
@@ -31,6 +33,7 @@ import org.symphonykernel.steps.RESTStep;
 import org.symphonykernel.steps.SharePointSearchStep;
 import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
+import org.symphonykernel.steps.ToolStep;
 import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
 
@@ -121,18 +124,25 @@ public class KnowledgeGraphBuilder {
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_PROCESSING = "PROCESSING";
-
     @Value("${symphony.threadpool.size:25}")
     private int threadPoolSize;
 
     private ExecutorService executorService;
 
+    /**
+     * Initializes the thread pool with the configured size.
+     * This method is called after the bean is constructed.
+     */
     @PostConstruct
     public void init() {
         executorService = Executors.newFixedThreadPool(threadPoolSize);
         logger.info("Initialized thread pool with size: {}", threadPoolSize);
     }
 
+    /**
+     * Cleans up resources by shutting down the thread pool.
+     * This method is called before the bean is destroyed.
+     */
     @PreDestroy
     public void cleanup() {
         if (executorService != null) {
@@ -178,6 +188,9 @@ public class KnowledgeGraphBuilder {
 
     @Autowired
     PluginStep pluginStep;
+    
+    @Autowired
+    ToolStep toolStep;
 
     @Autowired
     SessionProvider sessionManager;
@@ -223,11 +236,19 @@ public class KnowledgeGraphBuilder {
         ctx.setUserSession(info);
         return ctx;
     }
+
+    /**
+     * Creates an asynchronous execution context for a given request ID.
+     *
+     * @param requestId the unique identifier for the request.
+     * @return a new {@link ExecutionContext} initialized with the request details.
+     */
     public ExecutionContext getAsyncRequestContext(String requestId) {
         ExecutionContext ctx = new ExecutionContext();
         ChatRequest req= new ChatRequest();
         req.setConversationId(requestId);
         req.setKey("ASYNC_RESULT");
+        ctx.setRequest(req);
         UserSession info  =  sessionManager.getRequestDetails(requestId);
         ctx.setUserSession(info);
         return ctx;
@@ -235,7 +256,7 @@ public class KnowledgeGraphBuilder {
 
     /**
      * Identifies the intent of the user's query by matching it with knowledge
-     * descriptions.
+     * descriptions. Throws a RuntimeException if no matching knowledge is found.
      *
      * @param ctx the {@link ExecutionContext} containing the user's query.
      * @return the updated {@link ExecutionContext} with identified knowledge.
@@ -258,11 +279,12 @@ public class KnowledgeGraphBuilder {
     }
 
     /**
-     * Sets parameters for the query using OpenAI prompt evaluation.
+     * Sets parameters for the query using OpenAI prompt evaluation. Updates the
+     * request payload and variables in the execution context.
      *
-     * @param ctx the {@link ExecutionContext} containing the query and
-     * knowledge.
+     * @param ctx the {@link ExecutionContext} containing the query and knowledge.
      * @return the updated {@link ExecutionContext} with parameters set.
+     * @throws RuntimeException if the request object is not set in the context.
      */
     public ExecutionContext setParameters(ExecutionContext ctx) {
         ChatRequest request = ctx.getRequest();
@@ -289,6 +311,14 @@ public class KnowledgeGraphBuilder {
         return ctx;
     }
 
+    /**
+     * Maps missing variables from the available variables using the provided parameters.
+     * If the parameters are invalid JSON, the method skips parameter parsing.
+     *
+     * @param availableVariables the existing variables to be updated.
+     * @param params the JSON string containing the parameters to map.
+     * @return a {@link JsonNode} with the updated variables.
+     */
     JsonNode mapMissingVariables(JsonNode availableVariables, String params) {
         if (params != null && !params.isEmpty()) {
             try {
@@ -384,20 +414,15 @@ public class KnowledgeGraphBuilder {
      * @return a {@link ChatResponse} generated from the execution context.
      */
     public ChatResponse getResponse(ExecutionContext ctx) {
-        ChatResponse response;
-        Knowledge knowledge = ctx.getKnowledge();
-        IStep step = getExecuter(knowledge);
-
-        if (step == null) {
-            response = invalidRequestHandler(ctx);
-        } else if (ctx.isIsAsync()) {
-            response = getAsyncResponse(ctx, knowledge, step);
+        ChatResponse response =null;
+        if (ctx.isIsAsync()) {
+            response = getAsyncResponse(ctx);
         } else {
-            response = processRequest(ctx, knowledge, step);
+            response = process(ctx);
         }
-
         return response;
     }
+    
 
     private ChatResponse invalidRequestHandler(ExecutionContext ctx) {
         ChatResponse response;
@@ -409,30 +434,55 @@ public class KnowledgeGraphBuilder {
         return response;
     }
 
-    private ChatResponse getAsyncResponse(ExecutionContext ctx, Knowledge knowledge, IStep step) {
+    private ChatResponse getAsyncResponse(ExecutionContext ctx) {
         ChatResponse response;
         response = new ChatResponse();
         response.setMessage("Processing request");
         response.setRequestId(ctx.getRequestId());
         response.setStatusCode(STATUS_PROCESSING);
-        
         executorService.submit(() -> {
-            try {
-                ChatResponse asyncResponse = processRequest(ctx, knowledge, step);
-                logger.info("Async request completed for requestId: {}", ctx.getRequestId());
-            } catch (Exception e) {
-                logger.error("Error processing async request for requestId: {}", ctx.getRequestId(), e);
-                UserSession session = ctx.getUserSession();
-                if (session != null) {
-                    session.setBotResponse("An error occurred while processing your request: " + e.getMessage());
-                    session.setStatus(STATUS_FAILED);
-                    sessionManager.updateUserSession(session, null);
-                }
-            }
+            process(ctx);
         });
         return response;
     }
+    private ChatResponse process(ExecutionContext ctx) {
+        MDC.put(Constants.LOGGER_TRACE_ID, ctx.getRequestId());
+        logger.info("Processing request for requestId: {}", ctx.getRequestId());
+        Knowledge knowledge = ctx.getKnowledge();
+        IStep step = getExecuter(knowledge);
+        ChatResponse response = null;
+        if (step == null) {
+            response = invalidRequestHandler(ctx);
+        }
+        else
+        {  
+        try {      
+            response = processRequest(ctx, knowledge, step);            
+            logger.info("Response {}",response.getMessage());
+        } catch (Exception e) {
+            logger.error("Error processing request for requestId: {}", ctx.getRequestId(), e);
+            UserSession session = ctx.getUserSession();
+            if (session != null) {
+                session.setBotResponse("An error occurred while processing your request: " + e.getMessage());
+                session.setStatus(STATUS_FAILED);
+                sessionManager.updateUserSession(session, null);
+            }
+        }finally {           
+            logger.info("request processing completed for requestId: {}", ctx.getRequestId());
+        	MDC.clear();       
+        }
+       
+    }
+    return response;
+  }
+   
 
+    /**
+     * Retrieves the details of a request based on the execution context.
+     *
+     * @param ctx the {@link ExecutionContext} containing the request ID.
+     * @return a {@link ChatResponse} with the request details or status.
+     */
     public ChatResponse getReqDetails(ExecutionContext ctx) {
         ChatResponse response = new ChatResponse();
         
@@ -563,6 +613,9 @@ public class KnowledgeGraphBuilder {
             }
             case PLUGIN -> {
                 return pluginStep;
+            }
+            case TOOL -> {
+                return toolStep;
             }
             case REST -> {
                 return restHelper;

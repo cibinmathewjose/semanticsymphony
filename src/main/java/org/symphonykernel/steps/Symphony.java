@@ -1,15 +1,16 @@
 package org.symphonykernel.steps;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,7 @@ import org.symphonykernel.FlowJson;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.QueryType;
 import org.symphonykernel.ai.AzureOpenAIHelper;
+import org.symphonykernel.config.Constants;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.PlatformHelper;
@@ -30,16 +32,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.jayway.jsonpath.JsonPath;
 
 /**
  * Symphony is a step implementation for handling various execution contexts.
  * It integrates multiple helpers and provides methods for query execution and response generation.
  */
 @Service
-public class Symphony implements IStep {
+public class Symphony extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(Symphony.class);
-
     @Autowired
     IknowledgeBase knowledgeBase;
     
@@ -63,6 +65,8 @@ public class Symphony implements IStep {
     @Autowired
     PluginStep pluginStep;
     @Autowired
+    ToolStep toolStep;
+    @Autowired
     AzureOpenAIHelper azureOpenAIHelper;
     @Autowired
     private ObjectMapper objectMapper;
@@ -74,8 +78,7 @@ public class Symphony implements IStep {
         Knowledge _symphony = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
         logger.info("Executing Symphony " + _symphony.getName() + " with " + input);
-        Map<String, JsonNode> resolvedValues = new HashMap<>();
-        ctx.setResolvedValues(resolvedValues);
+        Map<String, JsonNode> resolvedValues =   ctx.getResolvedValues();     
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
@@ -98,11 +101,20 @@ public class Symphony implements IStep {
                         processFlowItem(item, ctx, resolvedValues);
                     }
                 } else {
-                    // Process in parallel for same order > 0
-                    List<CompletableFuture<Void>> futures = items.stream()
-                        .map(item -> CompletableFuture.runAsync(() -> 
-                            processFlowItem(item, ctx, resolvedValues)))
-                        .collect(Collectors.toList());
+
+                    // Process in parallel for same order > 0            
+
+                        String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
+                        logger.info("Processing order {} of {} items in parallel with traceId {}", order,items.size(), traceId);
+                        List<CompletableFuture<Void>> futures = items.stream()
+                            .map(item -> CompletableFuture.runAsync(() -> {
+                                try {
+                                    MDC.put(Constants.LOGGER_TRACE_ID, traceId+"-"+item.getKey());
+                                    processFlowItem(item, ctx, resolvedValues);
+                                } finally {
+                                    MDC.clear();
+                                }
+                            })).collect(Collectors.toList());
                     
                     // Wait for all parallel executions to complete
                     CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -111,6 +123,8 @@ public class Symphony implements IStep {
             
             // Process final response
             if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
+                
+                logger.info("Processing final response");
 
                 String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
                 
@@ -162,7 +176,17 @@ public class Symphony implements IStep {
     /**
      * Process a single flow item
      */
-    private synchronized void processFlowItem(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+    private void processFlowItem(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+       
+        if(item.getCondition()!=null)
+        {
+        	JsonNode conditionNode = resolvedValues.get(item.getCondition().toLowerCase());
+        	if(conditionNode!=null && conditionNode.toString().toLowerCase().contains("true"))
+        	{
+        		logger.info("Skipping step {} as condition {} not met", item.getKey(), item.getCondition());
+        		return;
+        	}
+        }
         Knowledge kb = knowledgeBase.GetByName(item.getName());
         if (kb != null) {
             logger.info("Executing Symphony: " + item.getName() + " with Payload: " + item.getPaylod());
@@ -170,6 +194,24 @@ public class Symphony implements IStep {
             JsonNode resolverPayload = null;
             ctx.setCurrentFlowItem(item);
             if (item.getPaylod() != null) {
+                if(item.getPaylod().toLowerCase().indexOf(",")>0) // comma separated values
+                {
+                	String[] keys = item.getPaylod().toLowerCase().split(",");
+                	ObjectNode combinedNode = objectMapper.createObjectNode();
+                	for(String key: keys)
+                	{
+                		key=key.trim();
+                		if(resolvedValues.containsKey(key))
+                		{
+                            if(resolvedValues.get(key).isObject())
+                			    combinedNode.setAll((ObjectNode) resolvedValues.get(key));
+                            else
+                                combinedNode.set(key, resolvedValues.get(key));                                            	
+                        }
+                	}
+                	resolverPayload = combinedNode;
+                }
+                else
                 resolverPayload = resolvedValues.get(item.getPaylod().toLowerCase());
             }                    
             if (resolverPayload != null) {
@@ -236,29 +278,36 @@ public class Symphony implements IStep {
                 resultNode= objectMapper.createObjectNode();
                 ((ObjectNode) resultNode).put(item.getKey(), "No data found" );
                 logger.warn("No data found for step: " + item.getKey());
-            }
-
+            }          
         }        
+        else if(item.getJsonPath()!=null&&!item.getJsonPath().isEmpty())
+        {
+            logger.info("Evaluating expression {} on {} " , item.getJsonPath(),resultNode);
+            try {
+            resultNode = objectMapper.readTree(JsonPath.read(resultNode.toString(), item.getJsonPath()).toString());            
+            logger.info("Expression result : {} " ,resultNode);
+            } catch (Exception e) {
+            	logger.error("Error evaluating {}",e.getMessage());
+               }
+        }
         resolvedValues.put(item.getKey().toLowerCase(), resultNode);        
     }
 
 	private JsonNode getResults(ExecutionContext ctx, Knowledge kb, JsonNode idNode) {
+        long startTime = System.currentTimeMillis(); // Start time logging
+       
 		JsonNode result;
-		ExecutionContext newCtx = new ExecutionContext();	                                    
+		ExecutionContext newCtx = new ExecutionContext(ctx);	                                    
 		newCtx.setName(kb.getName());	 
-		newCtx.setVariables(idNode);
-		newCtx.setHttpHeaderProvider(ctx.getHttpHeaderProvider());
-		newCtx.setUsersQuery(ctx.getUsersQuery());
-        newCtx.setChatHistory(ctx.getChatHistory());
-        newCtx.setResolvedValues(ctx.getResolvedValues());
-        newCtx.setCurrentFlowItem(ctx.getCurrentFlowItem());
+		newCtx.setVariables(idNode);		
 		newCtx.setConvert(true);
 		result = getResult(kb, newCtx);
+        long endTime = System.currentTimeMillis(); // End time logging       
+        logger.info("Processing time for "+kb.getName() + " = " + (endTime - startTime) + " ms");
 		return result;
 	}
 
 	private void processPrompt(String key,Map<String, JsonNode> resolvedValues, String prompt) {
-		
 		if(prompt!=null&&!prompt.isEmpty())
 		{   
 			String systemPrompt = templateResolver.resolvePlaceholders(prompt, resolvedValues);
@@ -282,49 +331,11 @@ public class Symphony implements IStep {
 		}
 		else if (kb.getType() == QueryType.PLUGIN) {
 		    result = pluginStep.executeQueryByName(newCtx);
+		}else if (kb.getType() == QueryType.TOOL) {
+		    result = toolStep.executeQueryByName(newCtx);
 		}
 		return result;
 	}
 
-    /**
-     * Parses a JSON string into a JsonNode.
-     *
-     * @param jsonString the JSON string to parse
-     * @return the parsed JsonNode
-     */
-    public JsonNode parseJson(String jsonString) {
-        ObjectMapper objectMapper = new ObjectMapper();
-        try {
-            if (jsonString != null) {
-                if (jsonString.startsWith("```json")) {
-                    jsonString = jsonString.replace("```json", "").replace("```", "");
-                }
-
-            } else {
-                jsonString = "";
-            }
-            if (jsonString.startsWith("[") || jsonString.startsWith("{")) {
-                return objectMapper.readTree(jsonString);
-            } else {
-                return createTextNode(jsonString, objectMapper);
-            }
-
-        } catch (Exception e) {
-
-            return createTextNode(jsonString, objectMapper);
-        }
-    }
-
-    private JsonNode createTextNode(String jsonString, ObjectMapper objectMapper) {
-        ObjectNode objectNode = objectMapper.createObjectNode();
-        objectNode.put("TextOutput", jsonString);
-        return objectNode;
-    }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
+  
 }

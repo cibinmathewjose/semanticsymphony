@@ -26,6 +26,12 @@ public class FlowItem {
     boolean array;
     @JsonProperty("Order")
     Integer order;
+    @JsonProperty("Condition")
+    String condition;
+    @JsonProperty("JSONPath")
+    String jsonPath;
+   
+    
     @JsonProperty("Required")
     
     boolean required;
@@ -149,11 +155,44 @@ public class FlowItem {
         return "FlowItem{" + "Name='" + name + '\'' + ", Paylod='" + paylod + '\'' + '}';
     }
 
+    /**
+     * Retrieves the order of the flow item.
+     *
+     * @return the order as an Integer
+     */
     public Integer getOrder() {
         return order;
     }
 
+    /**
+     * Sets the order of the flow item.
+     *
+     * @param order the order to set
+     */
     public void setOrder(Integer order) {
         this.order = order;
     }
+
+    /**
+     * Retrieves the condition of the flow item.
+     *
+     * @return the condition as a String
+     */
+    public String getCondition() {
+        return condition;
+    }
+
+    /**
+     * Sets the condition of the flow item.
+     *
+     * @param condition the condition to set
+     */
+    public void setCondition(String condition) {
+        this.condition = condition;
+    }
+
+    public String getJsonPath() {
+        return jsonPath;
+    }
+    
 }

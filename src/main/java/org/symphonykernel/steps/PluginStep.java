@@ -1,5 +1,6 @@
 package org.symphonykernel.steps;
 
+import java.time.Duration;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -25,6 +26,7 @@ import com.azure.core.http.policy.RetryOptions;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.microsoft.semantickernel.Kernel;
 import com.microsoft.semantickernel.aiservices.openai.chatcompletion.OpenAIChatCompletion;
 import com.microsoft.semantickernel.implementation.CollectionUtil;
@@ -39,7 +41,7 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatMessageContent;
  * It integrates with the Symphony Kernel to process chat responses and queries.
  */
 @Component
-public class PluginStep implements IStep {
+public class PluginStep extends BaseStep{
 
     private static final Logger logger = LoggerFactory.getLogger(PluginStep.class);
 
@@ -92,7 +94,7 @@ public class PluginStep implements IStep {
     	
          ChatResponse a = new ChatResponse();           
         
-       
+        
         Knowledge kb= context.getKnowledge();
         if( kb == null&&context.getName()!=null) {
             kb = knowledgeBase.GetByName(context.getName());
@@ -113,13 +115,13 @@ public class PluginStep implements IStep {
         
        
         logger.info("Parsed Plugin: " + plugin );
-        ChatHistory chatHistory = context.getChatHistory();
+        ChatHistory chatHistory =new ChatHistory();// context.getChatHistory(); not setting history to avoid inconsistent results
         if (chatHistory!=null && kb != null) {          
-            String params="consider context parameters: "+context.getVariables();
+            String params="consider context parameters of first priority as "+context.getVariables() +" and second priority as "+context.getResolvedValues();
             if( systemPrompt != null)
             {
                 systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, context.getResolvedValues());
-                 params += ", SystemPrompt:" + systemPrompt;
+                params += ", SystemPrompt: " + systemPrompt;
             }
              logger.info(params);
             chatHistory.addUserMessage(params);
@@ -134,40 +136,34 @@ public class PluginStep implements IStep {
 
             List<ChatMessageContent<?>> messages = chat
                     .getChatMessageContentsAsync(chatHistory, kernel, invocationContext)
-                    .block();
+                    .block(Duration.ofMinutes(5)); // Increase the timeout to 5 minutes
 
             ChatMessageContent<?> result = CollectionUtil.getLastOrNull(messages);
 
             String msg= result.getContent();
-            a.setMessage(msg);
+            try {
+                JsonNode jsonNode = objectMapper.readTree(msg);
+                
+                ArrayNode jsonArray;
+                if (!jsonNode.isArray()) {
+                    jsonArray = objectMapper.createArrayNode();
+                    
+                    jsonArray.add(jsonNode);
+                   
+                } else {
+                    jsonArray =(ArrayNode) jsonNode;
+                }
+                a.setData(jsonArray);                
+               
+            } catch (JsonProcessingException e) {
+                logger.info("Message is not a valid JSON, treating as plain text.");
+                a.setMessage(msg);
+            }
+            
             a.setStatusCode(PROMPT);
         } else {
             return null;
         }
         return a;
-    }
-
-
-
-
-    private JsonNode getParamNode(String plugindef) {
-        JsonNode paramNode;
-        try {
-            paramNode = objectMapper.readTree(plugindef);
-        } catch (JsonProcessingException e) {
-            logger.error("Error parsing plugin definition JSON", e);
-            throw new IllegalArgumentException("Invalid plugin definition JSON", e);
-        }
-        return paramNode;
-    }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-      
-        ChatResponse a = getResponse(context);
-        if (a != null && a.getMessage() != null) {            
-              return new com.fasterxml.jackson.databind.node.TextNode(a.getMessage());            
-        }
-        return   com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.nullNode();
     }
 }

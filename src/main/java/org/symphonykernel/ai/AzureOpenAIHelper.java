@@ -11,9 +11,11 @@ import java.util.concurrent.ExecutionException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.config.AzureOpenAIConnectionProperties;
+import org.symphonykernel.config.Constants;
 
 import com.azure.ai.openai.OpenAIClient;
 import com.azure.ai.openai.OpenAIClientBuilder;
@@ -49,7 +51,6 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 import com.microsoft.semantickernel.services.chatcompletion.ChatMessageContent;
 import com.microsoft.semantickernel.services.chatcompletion.message.ChatMessageImageContent;
 
-import io.netty.handler.timeout.TimeoutException;
 import reactor.core.publisher.Mono;
 /**
  * AzureOpenAIHelper is a service class that interacts with the Azure OpenAI API
@@ -106,7 +107,6 @@ public class AzureOpenAIHelper {
      int maxtokens;
      double temperature;
      int maxInputLength;
-    private static int asyncProcessingStart=30000;
     String name;
     private static final String DATA_SET = "{{$DATA_SET}}";
     private static final String QUESTION = "{{$QUESTION}}";
@@ -115,12 +115,14 @@ public class AzureOpenAIHelper {
     private static  String endpoint = "";
     private AssistantsClient client;
     OpenAIClient opnAIClient;
-    private final String deploymentOrModelId = "gpt-4o";
+    private String deploymentOrModelId = "gpt-4o";
+    String defaultsystemPrompt="You are a helpful AI assistant that helps people find prepare well formatted response strictly based on the provided data and the context information as the user prompt. strictly answer the question based on the provided context including any json data provided. Never skip any data available in the context or json data provided. If the context does not contain the information needed to answer the question, respond with \"I do not have enough information to process this request.\"";
+    
     /**
      * Constructs an AzureOpenAIHelper instance with the specified kernel and connection properties.
-     * 
-     * @param kernel the kernel instance
-     * @param connectionProperties the Azure OpenAI connection properties
+     *
+     * @param kernel               the kernel instance used for Semantic Kernel operations
+     * @param connectionProperties the Azure OpenAI connection properties, including API key, endpoint, and other settings
      */
     public AzureOpenAIHelper(Kernel kernel, AzureOpenAIConnectionProperties connectionProperties) {
         this.kernel = kernel;
@@ -128,10 +130,13 @@ public class AzureOpenAIHelper {
         temperature=connectionProperties.getTemperature();
         maxInputLength=connectionProperties.getMaxInputLength();
         name=connectionProperties.getName();//"Assistant394"
+        if(connectionProperties.getDeploymentName()!=null && !connectionProperties.getDeploymentName().isEmpty())
+        deploymentOrModelId=connectionProperties.getDeploymentName();//"gpt-4o"
+
         if(maxtokens<160||maxtokens>16000)
         	maxtokens=1000;
         if(temperature<0||temperature >2)
-        	temperature=0.2; 
+        	temperature=0.0; 
             key=connectionProperties.getKey();
             endpoint=connectionProperties.getEndpoint();
         client = new AssistantsClientBuilder()
@@ -143,16 +148,15 @@ public class AzureOpenAIHelper {
                  .endpoint(connectionProperties.getEndpoint())
                  .credential(new AzureKeyCredential(connectionProperties.getKey()))
                  .buildClient();
+        
     }
 
-    private void autoAdjestasyncProcessingStart()
-    {
-    	if(asyncProcessingStart>9000)
-    		asyncProcessingStart-=5000;
-    	
-    	if(asyncProcessingStart<1000)
-    		asyncProcessingStart=1000;
-    }
+    /**
+     * Asks a question and retrieves a response from the OpenAI service.
+     *
+     * @param question the question to ask
+     * @return a Mono containing a list of ChatMessageContent objects representing the response
+     */
     private Mono<List<ChatMessageContent<?>>> askQuestion(String question ) {
 
         ChatHistory chathistory = new ChatHistory();
@@ -177,6 +181,13 @@ public class AzureOpenAIHelper {
         
     }
     
+    /**
+     * Calls the OpenAI API with a prompt and an optional base64-encoded image.
+     *
+     * @param prompt      the text prompt to send to the OpenAI API
+     * @param base64Image the base64-encoded image to include in the request (optional)
+     * @return the response from the OpenAI API as a string
+     */
     public String callOpenAIAPI(String prompt, String base64Image) {
         try {
             // Define the API endpoint
@@ -241,6 +252,13 @@ public class AzureOpenAIHelper {
         }
     }
 
+    /**
+     * Processes an image along with a prompt using the OpenAI API.
+     *
+     * @param prompt      the text prompt to send to the OpenAI API
+     * @param base64Image the base64-encoded image to include in the request
+     * @return the response from the OpenAI API as a string
+     */
     public String processImage(String prompt, String base64Image) {
          // Retrieve endpoint and API key from environment variables
         
@@ -258,7 +276,7 @@ public class AzureOpenAIHelper {
  
         ChatCompletionsOptions options = new ChatCompletionsOptions(prompts)
         .setMaxTokens(800)
-        .setTemperature(0.7)
+        .setTemperature(temperature)
         .setTopP(0.95)
         .setFrequencyPenalty((double)0)
         .setPresencePenalty((double)0)
@@ -269,7 +287,7 @@ public class AzureOpenAIHelper {
         ChatCompletions chatCompletions = opnAIClient.getChatCompletions(deploymentName, options);
         return chatCompletions.toJsonString();
       }  catch (Exception e) {
-        System.out.println("Error: " + e.getMessage());
+        logger.error("Error: " + e.getMessage());
       }
     return null;
     }
@@ -279,30 +297,19 @@ public class AzureOpenAIHelper {
      * @param question the question to ask
      * @return the response
      */
-    private String process(String question) {
+    private String processPrompt(String systemPrompt,String userPrompt) {
+        Assistant assistant = getAssistant(systemPrompt);
+        logger.info("Assistant created : "+assistant.getName());
         try {
-        	logger.info("processing data with LLM {}",question);
-            int len =question.length();
-            if(maxInputLength>4000 && len>maxInputLength)
-            {
-            	throw new RuntimeException("Data length execeeded "+maxInputLength+" chars limit",new Throwable(question));            	 
+            // Emulating user request
+            ThreadRun threadAndRun = createThreadAndRun(assistant.getId(),userPrompt);
+            try {
+                waitOnRun(threadAndRun, threadAndRun.getThreadId());
+            } catch (InterruptedException e) {
+                logger.warn("InterruptedException", e);
             }
-            if(len>asyncProcessingStart)
-        	{
-        		return run(question);
-        	}
-            List<ChatMessageContent<?>> responses = askQuestion(question).block(java.time.Duration.ofSeconds(60));
-            if (responses != null && !responses.isEmpty()) {
-                ChatMessageContent<?> lastResponse = responses.get(responses.size() - 1);
-                return lastResponse != null ? lastResponse.getContent() : null; // Handle potential null content
-            } else {
-                return null; // Or handle the empty response case as needed
-            }
-        }catch(IllegalStateException | TimeoutException ex)
-        {
-        	logger.warn("Error occurred while executing {} fallback to polling", ex.getMessage());
-        	autoAdjestasyncProcessingStart();
-        	return run(question);
+            return getJsonArrayString(assistant, threadAndRun);
+           
         }
         catch (Exception e) {
             // Handle any exceptions that occurred during the Mono execution        	
@@ -310,97 +317,97 @@ public class AzureOpenAIHelper {
             return  e.getMessage(); // Or throw the exception if appropriate
         }
     }
+    private String process(String systemPrompt,String userPrompt) {
+        
+        int len =systemPrompt.length();
+        int len2 =userPrompt.length();
+      
+        if(maxInputLength>4000 && (len>maxInputLength || len2>maxInputLength))
+            {
+            	return ("Data length execeeded "+maxInputLength+" chars limit");            	 
+            }        
+        logger.info("Processing data with LLM <!PromptHead!>\r\n {} \r\n  <!SplitPromptHere!> {}\r\n",systemPrompt,userPrompt);
+     
+        return processPrompt(systemPrompt,userPrompt);
+    }
     public String ask(String question) 
     {
-         if(question==null || question.trim().isEmpty())
-                return "Please provide a valid question. if multiple prompts in one go, please start with <!PromptHead!> and use <!SplitPromptHere!> to split each section";
-        String splitter="<!SplitPromptHere!>";
-        String head="<!PromptHead!>";
-        String finalFormating="<!FinalResultFormat!>";
-      if(question.indexOf(splitter)>0)
-      {
-          String[] parts=question.split(splitter);
-          StringBuilder finalResponse=new StringBuilder();
-          int i=0;          
-          String basePrompt="";
-          String finalFormatingPrompt="";
-          if(parts[0].indexOf(head)>=0)
-          {
-              i=1;
-              String header= parts[0];
-              if(parts[0].indexOf(finalFormating)>=0)
-                {
-                	  basePrompt = header.substring(header.indexOf(head)+head.length(),header.indexOf(finalFormating))+System.lineSeparator();
-                	  finalFormatingPrompt = header.substring(header.indexOf(finalFormating)+finalFormating.length())+System.lineSeparator();
-                }
-              else
-              basePrompt = parts[0].substring(parts[0].indexOf(head)+head.length())+System.lineSeparator();
-          }
-        
-          // Create a list to hold the futures
-          List<CompletableFuture<String>> futures = new ArrayList<>();
-          
-          // Process all parts in parallel
-          for(; i < parts.length; i++)
-          {
-              String part = basePrompt + parts[i];
-              // Submit each part for parallel processing
-              futures.add(CompletableFuture.supplyAsync(() -> process(part)));
-          }
-          
-          // Wait for all futures to complete
-          CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-          
-          // Collect all results in order
-          for(CompletableFuture<String> future : futures) {
-              try {
-                  String response = future.get();
-                  if(response != null) {
-                      finalResponse.append(response);
-                      finalResponse.append(System.lineSeparator());
-                  }
-              } catch (InterruptedException | ExecutionException e) {
-                  logger.error("Error processing part in parallel: {}", e.getMessage(), e);
-              }
-          }
-          if(finalFormatingPrompt!=null && !finalFormatingPrompt.isEmpty())
-          {
-            return process("Analyze the data ["+finalResponse.toString()+"] "+finalFormatingPrompt);
-          }
-          return finalResponse.toString();            
-      }
-      else    
-      {   
-        return process(question);
-      }
+       return execute("",question);
     }
 
 
-/**
- * Overloaded ask method to process a question and a base64 image using the LLM.
- * 
- * @param question the question to ask
- * @param base64Image the base64 image to process
- * @return the response from the LLM
- */
-public String ask(String question, String base64Image) {
-    
 
-        // Prepare the prompt with the question and image data
-        String prompt = question + "\nImage Data (Base64): " + base64Image;
-
-        // Use the existing ask method to process the prompt
-        return ask(prompt);
-}
     /**
      * Executes a system prompt and user prompt.
-     * 
-     * @param systemPrompt the system prompt
-     * @param userPrompt the user prompt
-     * @return the execution result
+     *
+     * @param systemPrompt the system prompt to provide context for the assistant
+     * @param question     the user prompt containing the question or task
+     * @return the execution result as a string
      */
-    public String execute(String systemPrompt, String userPrompt) {
-        return ask(systemPrompt + " " + userPrompt);
+    public String execute(String systemPrompt, String question) {
+        if (question == null || question.trim().isEmpty())
+            return "Please provide a valid question. if multiple prompts in one go, please start with <!PromptHead!> and use <!SplitPromptHere!> to split each section";
+        String splitter = "<!SplitPromptHere!>";
+        String head = "<!PromptHead!>";
+        String finalFormating = "<!FinalResultFormat!>";
+        if (question.indexOf(splitter) > 0) {
+            String[] parts = question.split(splitter);
+            StringBuilder finalResponse = new StringBuilder();
+            int i = 0;
+            final String basePrompt;
+            String finalFormatingPrompt = "";
+            if (parts[0].indexOf(head) >= 0) {
+                i = 1;
+                String header = parts[0];
+                if (parts[0].indexOf(finalFormating) >= 0) {
+                    basePrompt = header.substring(header.indexOf(head) + head.length(), header.indexOf(finalFormating)) + System.lineSeparator();
+                    finalFormatingPrompt = header.substring(header.indexOf(finalFormating) + finalFormating.length()) + System.lineSeparator();
+                } else
+                    basePrompt = parts[0].substring(header.indexOf(head) + head.length()) + System.lineSeparator();
+            } else
+                basePrompt = systemPrompt;
+
+            // Create a list to hold the futures
+            List<CompletableFuture<String>> futures = new ArrayList<>();
+            String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
+            logger.info("Processing {} prompts in parallel with traceId {}", parts.length, traceId);
+
+            // Process all parts in parallel
+            for (; i < parts.length; i++) {
+                String part = parts[i];
+                // Submit each part for parallel processing
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    MDC.put(Constants.LOGGER_TRACE_ID, traceId);
+                    try {
+                        return process(basePrompt, part);
+                    } finally {
+                        MDC.clear();
+                    }
+                }));
+            }
+
+            // Wait for all futures to complete
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+            // Collect all results in order
+            for (CompletableFuture<String> future : futures) {
+                try {
+                    String response = future.get();
+                    if (response != null) {
+                        finalResponse.append(response);
+                        finalResponse.append(System.lineSeparator());
+                    }
+                } catch (InterruptedException | ExecutionException e) {
+                    logger.error("Error processing part in parallel: {}", e.getMessage(), e);
+                }
+            }
+            if (finalFormatingPrompt != null && !finalFormatingPrompt.isEmpty()) {
+                return process(finalFormatingPrompt, finalResponse.toString());
+            }
+            return finalResponse.toString();
+        } else {
+            return process(systemPrompt, question);
+        }
     }
 
     /**
@@ -411,7 +418,15 @@ public String ask(String question, String base64Image) {
      */
     @Async
     public CompletableFuture<String> askAsync(String question) {
-        return CompletableFuture.supplyAsync(() -> ask(question));
+        String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
+        return CompletableFuture.supplyAsync(() -> {
+            MDC.put(Constants.LOGGER_TRACE_ID, traceId);
+            try {
+            return ask(question);
+            } finally {
+            MDC.clear();
+            }
+        });
     }
 
     /**
@@ -424,7 +439,15 @@ public String ask(String question, String base64Image) {
      */
     @Async
     public CompletableFuture<String> evaluatePromptAsync(String prompt, String jsonString, String question) {
-        return CompletableFuture.supplyAsync(() -> evaluatePrompt(prompt, jsonString, question));
+        String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
+        return CompletableFuture.supplyAsync(() -> {
+            MDC.put(Constants.LOGGER_TRACE_ID, traceId);
+            try {
+            return evaluatePrompt(prompt, jsonString, question);
+            } finally {
+            MDC.clear();
+            }
+        });
     }
 
     /**
@@ -443,7 +466,8 @@ public String ask(String question, String base64Image) {
                     .replace(QUESTION, question);
 
             // Get response from OpenAI
-            String response = ask(prompt);
+
+            String response = processPrompt(null,prompt);
 
             // Return the response if valid
             if (response != null && !NONE.equalsIgnoreCase(response.trim())) {
@@ -456,49 +480,9 @@ public String ask(String question, String base64Image) {
         return null;
     }
    
-   /**
-     * Runs the prompt using Azure OpenAI and retrieves the response.
-     * 
-     * @param prompt the prompt to execute
-     * @return the response from Azure OpenAI
-     */
-    public String run(String prompt,String imageBase64)
-    {
-    	
-    	Assistant assistant = getAssistant();
-
-         // Emulating user request
-         ThreadRun threadAndRun = createThreadAndRun(assistant.getId(),prompt,imageBase64);
-         try {
-             waitOnRun(threadAndRun, threadAndRun.getThreadId());
-         } catch (InterruptedException e) {
-             // TODO Auto-generated catch block
-             e.printStackTrace();
-         }
-         return getJsonArrayString(assistant, threadAndRun);
-    }
+   
     
-    /**
-     * Runs the prompt using Azure OpenAI and retrieves the response.
-     * 
-     * @param prompt the prompt to execute
-     * @return the response from Azure OpenAI
-     */
-    public String run(String prompt)
-    {
-    	
-    	Assistant assistant = getAssistant();
-
-         // Emulating user request
-         ThreadRun threadAndRun = createThreadAndRun(assistant.getId(),prompt);
-         try {
-             waitOnRun(threadAndRun, threadAndRun.getThreadId());
-         } catch (InterruptedException e) {
-             // TODO Auto-generated catch block
-             e.printStackTrace();
-         }
-         return getJsonArrayString(assistant, threadAndRun);
-    }
+    
 
     private String getJsonArrayString(Assistant assistant, ThreadRun threadAndRun) {
         StringBuilder stringBuilder = new StringBuilder();
@@ -511,16 +495,14 @@ public String ask(String question, String base64Image) {
              {
              for (MessageContent messageContent : dataMessage.getContent()) {
                  MessageTextContent messageTextContent = (MessageTextContent) messageContent;
-
-                 String jsonArrayString = messageTextContent.getText().getValue();
-                 System.out.println(i + ": Role = " + role + ", content = " + messageTextContent.getText().getValue());                
+                 logger.info(i + ": Role = " + role + ", content = " + messageTextContent.getText().getValue());                
                  stringBuilder.append(messageTextContent.getText().getValue());
                  stringBuilder.append(System.lineSeparator());
              }
              }
              else
              {
-            	 System.out.println(i + ": Role = " + role + ", content = " +dataMessage.getContent());   
+            	logger.info(i + ": Role = " + role + ", content = " +dataMessage.getContent());   
              }
              stringBuilder.append(System.lineSeparator());
          }
@@ -530,11 +512,17 @@ public String ask(String question, String base64Image) {
          return stringBuilder.toString();
     }
 
-    private Assistant getAssistant() {
+    private Assistant getAssistant(String systemPrompt) {
+        if(systemPrompt==null || systemPrompt.trim().isEmpty())
+           return createAssistant(defaultsystemPrompt);;    
+       return createAssistant(systemPrompt);
+    }
+
+    private Assistant createAssistant(String systemPrompt) {
         AssistantCreationOptions assistantCreationOptions = new AssistantCreationOptions(deploymentOrModelId)
                  .setName(name)
                  .setToolResources(null)
-                 //.setInstructions(systemPrompt)
+                 .setInstructions(systemPrompt) 
                  .setTemperature(temperature)
                  .setTopP(0.1);
 
@@ -556,7 +544,7 @@ public String ask(String question, String base64Image) {
             String runId = run.getId();
             run = client.getRun(threadId, runId);
            
-            System.out.println("Run Sec : "+sec++ +"  ID: " + runId + ", Status: " + run.getStatus());
+            logger.info("Run Sec : "+sec++ +"  ID: " + runId + ", Status: " + run.getStatus());
             Thread.sleep(1000); // Sleep for 1 second before polling again
         }
         return run;
@@ -566,31 +554,17 @@ public String ask(String question, String base64Image) {
         // Add the Message to the thread
         ThreadMessage threadMessage = client.createMessage(threadId,
                 new ThreadMessageOptions(MessageRole.USER, userMessage));
-        
-        System.out.printf("Thread Message ID = \"%s\" is created at %s.%n", threadMessage.getId(),
-                threadMessage.getCreatedAt());
-        System.out.println(
-                "Message Content: " + ((MessageTextContent) threadMessage.getContent().get(0)).getText().getValue());
-
         // Create a Run. You must specify both the Assistant and the Thread.
         return client.createRun(threadId, new CreateRunOptions(assistantId));
     }
+
     private ThreadRun submitImageMessage(String assistantId, String threadId, String userMessage, String imageBase64) {
         // Add the Message to the thread
         ThreadMessage threadMessage = client.createMessage(threadId,
                 new ThreadMessageOptions(MessageRole.USER, userMessage));
-
-        System.out.printf("Thread Message ID = \"%s\" is created at %s.%n", threadMessage.getId(),
-                threadMessage.getCreatedAt());
-        System.out.println(
-                "Message Content: " + ((MessageTextContent) threadMessage.getContent().get(0)).getText().getValue());
-
         // Process the image data
         ThreadMessage imageMessage = client.createMessage(threadId,
                 new ThreadMessageOptions(MessageRole.USER, "Image Data (Base64): " + imageBase64));
-        System.out.printf("Image Message ID = \"%s\" is created at %s.%n", imageMessage.getId(),
-                imageMessage.getCreatedAt());
-
         // Create a Run. You must specify both the Assistant and the Thread.
         return client.createRun(threadId, new CreateRunOptions(assistantId));
     }
