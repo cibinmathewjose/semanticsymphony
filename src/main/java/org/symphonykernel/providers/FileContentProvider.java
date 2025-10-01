@@ -8,6 +8,7 @@ import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.symphonykernel.ai.KnowledgeGraphBuilder;
 
 import jakarta.annotation.PostConstruct;
 
@@ -16,6 +17,27 @@ import jakarta.annotation.PostConstruct;
  */
 @Component
 public class FileContentProvider {
+
+	/**
+     * Placeholder for dataset in prompts.
+     */
+    public static final String DATA_SET = "{{$DATA_SET}}";
+    /**
+     * Placeholder for context variables in prompts.
+     */
+
+    public static final String CTX_VAR= "{{$CTX_VAR}}";
+
+    /**
+     * Placeholder for question in prompts.
+     */
+    public static final String QUESTION = "{{$QUESTION}}";
+
+    /**
+     * Placeholder for parameter definitions in prompts.
+     */
+    public static final String PARAM_DEF = "{{$PARAM_DEF}}";
+
 	private static final Logger logger = LoggerFactory.getLogger(FileContentProvider.class);
 
 	
@@ -27,6 +49,7 @@ public class FileContentProvider {
    // @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/getQueryPrompt.text') }")
     private String getQueryPromptPath="prompts/getQueryPrompt.text";
 	
+    private String matchParamsPath = "prompts/matchParams.text";
 	/**
 	 * Represents a provider for file content.
 	 * 
@@ -50,6 +73,12 @@ public class FileContentProvider {
 	public String getQueryPrompt;
 	
 	/**
+	 * Prompt for matching parameters.
+	 */
+
+	public String matchParamsPrompt;
+	
+	/**
      * Initializes the file content provider by loading necessary resources.
      *
      * @throws IOException if an error occurs while loading resources.
@@ -60,6 +89,8 @@ public class FileContentProvider {
 	    this.paramParserPrompt= loadFileContent(paramParserPromptPath);
 	    this.matchSelectQueryPrompt = loadFileContent(matchSelectQueryPromptPath);
 	    this.getQueryPrompt= loadFileContent(getQueryPromptPath);
+	    this.getQueryPrompt= loadFileContent(getQueryPromptPath);
+		this.matchParamsPrompt= loadFileContent(matchParamsPath);
 	}
 	
 	/**
@@ -87,4 +118,29 @@ public class FileContentProvider {
              }
          }
     }
+	public String prepareMatchParamsPrompt(String paramDef,String dataset,String question) {
+		return matchParamsPrompt.replace(PARAM_DEF, paramDef)
+                            .replace(DATA_SET,dataset)
+                            .replace(QUESTION, question);
+	}
+	public String prepareMatchKnowledgePrompt(String jsonString,String question) {
+		return matchKnowledgePrompt.replace(DATA_SET, jsonString)
+            .replace(QUESTION, question);
+	}
+	
+	public String prepareParamParserPrompt(String jsonString,String question) {
+		return paramParserPrompt
+                .replace(DATA_SET, jsonString)
+                 .replace(QUESTION, question);
+	}
+	public String prepareMatchSelectQueryPrompt(String jsonString,String question) {
+		return matchSelectQueryPrompt
+		.replace(DATA_SET, jsonString)
+		 .replace(QUESTION, question);
+	}
+	public String prepareQueryPrompt(String jsonString,String question) {
+		return getQueryPrompt
+		.replace(DATA_SET, jsonString)
+		 .replace(QUESTION, question);
+	}
 }

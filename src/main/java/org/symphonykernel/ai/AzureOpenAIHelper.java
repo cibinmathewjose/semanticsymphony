@@ -108,8 +108,6 @@ public class AzureOpenAIHelper {
      double temperature;
      int maxInputLength;
     String name;
-    private static final String DATA_SET = "{{$DATA_SET}}";
-    private static final String QUESTION = "{{$QUESTION}}";
     private static final String NONE = "NONE";
     private static  String key = "";
     private static  String endpoint = "";
@@ -292,10 +290,11 @@ public class AzureOpenAIHelper {
     return null;
     }
     /**
-     * Asks a question and gets a response.
+     * Processes a system prompt and user prompt.
      * 
-     * @param question the question to ask
-     * @return the response
+     * @param systemPrompt the system prompt to provide context for the assistant
+     * @param userPrompt   the user prompt containing the question or task
+     * @return the response from the assistant
      */
     private String processPrompt(String systemPrompt,String userPrompt) {
         Assistant assistant = getAssistant(systemPrompt);
@@ -330,6 +329,12 @@ public class AzureOpenAIHelper {
      
         return processPrompt(systemPrompt,userPrompt);
     }
+    /**
+     * Asks a question and gets a response.
+     * 
+     * @param question the question to ask
+     * @return the response
+     */
     public String ask(String question) 
     {
        return execute("",question);
@@ -433,17 +438,15 @@ public class AzureOpenAIHelper {
      * Asynchronously evaluates a prompt with the given dataset and question.
      * 
      * @param prompt the prompt to evaluate
-     * @param jsonString the dataset in JSON format
-     * @param question the question to ask
      * @return a CompletableFuture with the evaluation result
      */
     @Async
-    public CompletableFuture<String> evaluatePromptAsync(String prompt, String jsonString, String question) {
+    public CompletableFuture<String> evaluatePromptAsync(String prompt) {
         String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
         return CompletableFuture.supplyAsync(() -> {
             MDC.put(Constants.LOGGER_TRACE_ID, traceId);
             try {
-            return evaluatePrompt(prompt, jsonString, question);
+            return evaluatePrompt(prompt);
             } finally {
             MDC.clear();
             }
@@ -453,18 +456,12 @@ public class AzureOpenAIHelper {
     /**
      * Evaluates a prompt with the given dataset and question.
      * 
-     * @param promptToEval the prompt to evaluate
-     * @param dataSet the dataset to use
-     * @param question the question to ask
+     * @param prompt the prompt to evaluate
      * @return the evaluation result
      */
-    public String evaluatePrompt(String promptToEval,String dataSet, String question) {
+    public String evaluatePrompt(String prompt) {
         try {
-            // Prepare the prompt by replacing placeholders
-            String prompt = promptToEval
-                    .replace(DATA_SET, dataSet)
-                    .replace(QUESTION, question);
-
+           
             // Get response from OpenAI
 
             String response = processPrompt(null,prompt);

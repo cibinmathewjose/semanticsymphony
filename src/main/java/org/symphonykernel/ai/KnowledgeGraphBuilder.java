@@ -296,7 +296,8 @@ public class KnowledgeGraphBuilder {
             if (request.getPayload() != null && !NONE.equals(request.getPayload())) {
                 logger.warn("Ignore paylod : " + request.getPayload());
             } else {
-                String params = openAI.evaluatePrompt(fileContentProvider.paramParserPrompt, knowledge.getParams(), request.getQuery());
+                String prompt = fileContentProvider.prepareParamParserPrompt( knowledge.getParams(), request.getQuery());                
+                String params = openAI.evaluatePrompt(prompt);
                 request.setPayload(params);
                 logger.info("payload identified as : " + params);
             }
@@ -565,10 +566,33 @@ public class KnowledgeGraphBuilder {
             String jsonString = objectMapper.writeValueAsString(knowledgeDesc);
 
             // Get response from OpenAI
-            String response = openAI.evaluatePrompt(fileContentProvider.matchKnowledgePrompt, jsonString, question);
+            String prompt = fileContentProvider.prepareMatchKnowledgePrompt(jsonString, question);
+            String response = openAI.evaluatePrompt(prompt);
 
             // Return knowledge if response is valid
-            if (response != null) {
+            if (response != null&& !response.isEmpty() && !NONE.equalsIgnoreCase(response.trim())) {
+                Knowledge knowledge=null;
+                if(response.indexOf(',')>0)
+                {
+                    String[] matches= response.trim().split(",");
+                    for(String match:matches)
+                    {
+                        knowledge= knowledgeBaserepo.GetByName(match.trim());
+                        if(knowledge!=null&& knowledge.getParams()!=null)
+                        {
+                            prompt = fileContentProvider.prepareMatchParamsPrompt( knowledge.getParams(),params.toString(), question);
+                            
+                            String isMatch = openAI.evaluatePrompt(prompt);
+                            if("YES".equalsIgnoreCase(isMatch))
+                            {
+                                return knowledge;
+                            }
+                        }
+                    }
+                    logger.info("No matching knowldge found for the query based on parameters returning one match");
+                    return knowledge;
+                }
+                else
                 return knowledgeBaserepo.GetByName(response.trim());
             } else {
                 String query = queryHandler.matchSelectQuery(question, params);

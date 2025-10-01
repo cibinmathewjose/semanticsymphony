@@ -103,7 +103,8 @@ public class QueryHandler {
             String jsonString = objectMapper.writeValueAsString(knowledgeDesc);          
             
             // Get response from OpenAI
-            String response = openAIHelper.evaluatePrompt(fileContentProvider.matchSelectQueryPrompt,jsonString,question);
+            String prompt = fileContentProvider.prepareMatchSelectQueryPrompt(jsonString, question);
+            String response = openAIHelper.evaluatePrompt(prompt);
 
             // Process the response if valid
             if (response != null ) {
@@ -111,7 +112,8 @@ public class QueryHandler {
                 if (vDef != null) {
                 	if(params!=null)
                     	question = "Consider the availabe variables "+params.toString()+question;
-                    return openAIHelper.evaluatePrompt(fileContentProvider.getQueryPrompt,vDef,question);
+                        prompt = fileContentProvider.prepareQueryPrompt(vDef, question);
+                    return openAIHelper.evaluatePrompt(prompt);
                 }
             }
         } catch (JsonProcessingException e) {

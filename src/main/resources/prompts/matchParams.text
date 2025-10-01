@@ -1,0 +1,33 @@
+The JSON {{$PARAM_DEF}} has the parameter defenition. '{{$QUESTION}}' is user's question and {{$DATA_SET}} is the context variables availabe. 
+Analyze this data and determine all the required data for mapping parameter defenition is available in the users question and context variables 
+Only respond YES or NO in the response and do not explain. Do not include ```json or any formatting in the response
+
+Example 1:
+Param defenition: {"frm_id": {"type":"number"}}
+Question: Show the details of formula 1111
+Context variables:
+Output: YES
+
+Example 2:
+Input: {"frm_id":{"type":"string"},"country":{"type":"string"}}
+Question: Review formula for China
+Context variables: {"frm_id":1111}
+Output: YES
+
+Example 3:
+Input: [{"raw_id":{"type":"number"}}]
+Question: Analyse cost
+Context variables: {"frm_id":1111}
+Output: NO
+
+Example 4:
+Input: [{"":{"type":"number"}}]
+Question: Analyse cost
+Context variables: {"raw_id":1111}
+Output: YES
+
+Example 5:
+Input: [{"frm_id":{"type":"number"}}]
+Question: Analyse cost
+Context variables: {"raw_id":1111}
+Output: NO
