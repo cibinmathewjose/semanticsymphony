@@ -24,6 +24,8 @@ public class AzureOpenAIConnectionProperties {
     private int maxTokens;
     private int maxInputLength;
     private double temperature;
+    private int maxParallel;
+    private int maxProcessingTime=300;
     /**
      * Azure OpenAI API endpoint.From the Azure AI OpenAI at 'Resource
      * Management' select `Keys and Endpoint` and find it on the right side.
@@ -166,6 +168,32 @@ public class AzureOpenAIConnectionProperties {
      */
     public void setName(String name) {
         this.name = name;
+    }
+
+    /**
+     * Gets the maximum number of parallel connections allowed.
+     * 
+     * @return the maximum number of parallel connections
+     */
+    public int getMaxParallel() {
+        return maxParallel;
+    }
+
+    /**
+     * Sets the maximum number of parallel connections allowed.
+     * 
+     * @param maxParallel the maximum number of parallel connections
+     */
+    public void setMaxParallel(int maxParallel) {
+        this.maxParallel = maxParallel;
+    }
+
+    public void setMaxProcessingTime(int maxProcessingTime) {
+        this.maxProcessingTime = maxProcessingTime;
+    }
+
+    public int getMaxProcessingTime() {
+        return maxProcessingTime;
     }
     
 }

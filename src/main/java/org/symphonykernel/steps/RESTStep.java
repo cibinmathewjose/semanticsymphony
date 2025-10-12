@@ -61,6 +61,7 @@ public class RESTStep extends BaseStep {
                     JsonNode root = invokeAPI(ctx);
                     JsonNode res = processResponse(ctx, root);
                     jsonArray.add(res);
+                    saveStepData(ctx, jsonArray);
                 } catch (Exception e) {
                     ObjectNode err = objectMapper.createObjectNode();
                     err.put("errors", e.getMessage());

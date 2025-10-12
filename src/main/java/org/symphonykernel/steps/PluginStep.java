@@ -153,6 +153,7 @@ public class PluginStep extends BaseStep{
                 } else {
                     jsonArray =(ArrayNode) jsonNode;
                 }
+                saveStepData(context, jsonArray);
                 a.setData(jsonArray);                
                
             } catch (JsonProcessingException e) {

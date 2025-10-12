@@ -98,6 +98,7 @@ public class ExecutionContext {
         setChatHistory(ctx.getChatHistory());
         resolvedValues=ctx.getResolvedValues();
         setCurrentFlowItem(ctx.getCurrentFlowItem());
+        setUserSession(ctx.getUserSession());
     }
 
     /**

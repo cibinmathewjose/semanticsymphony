@@ -170,6 +170,7 @@ public class Symphony extends BaseStep {
         logger.info("Data " + jsonArray);
         ChatResponse a = new ChatResponse();
         a.setData(jsonArray);
+        saveStepData(ctx, jsonArray);
         return a;
     }
     

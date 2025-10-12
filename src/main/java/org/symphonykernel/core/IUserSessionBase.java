@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.stereotype.Component;
 import org.symphonykernel.UserSession;
+import org.symphonykernel.UserSessionStepDetails;
 
 /**
  * IUserSessionBase defines the contract for managing user sessions.
@@ -29,4 +30,10 @@ public interface IUserSessionBase {
     UserSession save(UserSession session);
 
     UserSession findById(String id);
+
+    String getLastRequestId(String sessionId);
+    List<UserSessionStepDetails> getRequestDetails(String id);
+    UserSessionStepDetails getRequestDetails(String id,String stepName);
+    void saveRequestDetails(String id,String stepName,String data);
+    UserSessionStepDetails getFollowUpDetails(String id);
 }

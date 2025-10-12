@@ -17,6 +17,8 @@ public class UserSession {
 
     private String botResponse;
 
+    private String knowldgeName;    
+
     private String data;
 
     private Date createDt;
@@ -187,4 +189,21 @@ public class UserSession {
         this.modifyDt = modifyDt;
     }
 
+    /**
+     * Gets the knowledge name.
+     *
+     * @return the knowledge name.
+     */
+    public String getKnowldgeName() {
+        return knowldgeName;
+    }
+
+    /**
+     * Sets the knowledge name.
+     *
+     * @param knowldgeName the knowledge name to set.
+     */
+    public void setKnowldgeName(String knowldgeName) {
+        this.knowldgeName = knowldgeName;
+    }
 }

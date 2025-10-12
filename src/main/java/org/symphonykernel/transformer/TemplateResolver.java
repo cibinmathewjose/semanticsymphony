@@ -42,7 +42,10 @@ public class TemplateResolver {
         Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
         return matcher.find();
     }
-
+    public String resolvePlaceholders(String text)
+    {
+        return  resolvePlaceholders(text, null);
+    }
     /**
      * Resolves placeholders in the given text using the provided context map.
      *
@@ -67,8 +70,11 @@ public class TemplateResolver {
             }
             else
             {
-            String replacement = resolveExpression(expression, context);           
-            matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                if(context!=null)
+                {
+                    String replacement = resolveExpression(expression, context);           
+                    matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                }
             }
         }
         matcher.appendTail(result);

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.UserSession;
+import org.symphonykernel.UserSessionStepDetails;
 import org.symphonykernel.core.IUserSessionBase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -120,10 +121,26 @@ public class SessionProvider {
      * @param requestId the ID of the request
      * @return the user session details, or null if the request ID is null
      */
-    public UserSession getRequestDetails(String requestId) {
+    public UserSession getRequest(String requestId) {
         if(requestId == null)
             return null;
         return userSessionsBase.findById(requestId);
+    }
+
+    public List<UserSessionStepDetails> getRequestDetails(String requestId) {
+        if(requestId == null)
+            return null;
+        return userSessionsBase.getRequestDetails(requestId);
+    }
+    public UserSessionStepDetails getFollowUpDetails(String requestId) {
+        if(requestId == null)
+            return null;
+        return userSessionsBase.getFollowUpDetails(requestId);
+    }
+    public String getLastRequestId(String sessionId) {
+        if(sessionId == null)
+            return null;
+        return userSessionsBase.getLastRequestId(sessionId);
     }
 
     /**
@@ -141,4 +158,18 @@ public class SessionProvider {
         session.setStatus(response.getStatusCode());
         userSessionsBase.save(session);
     }
+    /**
+     * Updates the user session with the provided response.
+     *
+     * @param session the user session to update
+     */
+    public void updateUserSession(UserSession session) {
+        session.setModifyDt(Calendar.getInstance().getTime());
+        userSessionsBase.save(session);
+    }
+    public void saveRequestDetails(String id,String stepName,String data) {
+		if(stepName==null || id==null|| data==null)
+			return;
+		userSessionsBase.saveRequestDetails(id, stepName, data);
+	}
 }

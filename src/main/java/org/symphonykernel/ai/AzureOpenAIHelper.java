@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -116,6 +118,13 @@ public class AzureOpenAIHelper {
     private String deploymentOrModelId = "gpt-4o";
     String defaultsystemPrompt="You are a helpful AI assistant that helps people find prepare well formatted response strictly based on the provided data and the context information as the user prompt. strictly answer the question based on the provided context including any json data provided. Never skip any data available in the context or json data provided. If the context does not contain the information needed to answer the question, respond with \"I do not have enough information to process this request.\"";
     
+    private static final String SPLITTER = "<!SplitPromptHere!>";
+    private static final String HEAD = "<!PromptHead!>";
+    private static final String FINAL_FORMATTING = "<!FinalResultFormat!>";
+    private static int MAX_PARALLEL_EXECUTIONS = 5; // Configurable limit for parallel executions
+    private int maxProcessingTime=300;
+    private final ExecutorService executorService; // Class-level field for ExecutorService
+
     /**
      * Constructs an AzureOpenAIHelper instance with the specified kernel and connection properties.
      *
@@ -128,6 +137,12 @@ public class AzureOpenAIHelper {
         temperature=connectionProperties.getTemperature();
         maxInputLength=connectionProperties.getMaxInputLength();
         name=connectionProperties.getName();//"Assistant394"
+        maxProcessingTime=connectionProperties.getMaxProcessingTime();
+        if(maxProcessingTime<20)
+        	maxProcessingTime=20;
+        if(connectionProperties.getMaxParallel()>0)
+        	MAX_PARALLEL_EXECUTIONS=connectionProperties.getMaxParallel();
+
         if(connectionProperties.getDeploymentName()!=null && !connectionProperties.getDeploymentName().isEmpty())
         deploymentOrModelId=connectionProperties.getDeploymentName();//"gpt-4o"
 
@@ -147,6 +162,7 @@ public class AzureOpenAIHelper {
                  .credential(new AzureKeyCredential(connectionProperties.getKey()))
                  .buildClient();
         
+        executorService = Executors.newFixedThreadPool(MAX_PARALLEL_EXECUTIONS);
     }
 
     /**
@@ -350,64 +366,68 @@ public class AzureOpenAIHelper {
      * @return the execution result as a string
      */
     public String execute(String systemPrompt, String question) {
-        if (question == null || question.trim().isEmpty())
-            return "Please provide a valid question. if multiple prompts in one go, please start with <!PromptHead!> and use <!SplitPromptHere!> to split each section";
-        String splitter = "<!SplitPromptHere!>";
-        String head = "<!PromptHead!>";
-        String finalFormating = "<!FinalResultFormat!>";
-        if (question.indexOf(splitter) > 0) {
-            String[] parts = question.split(splitter);
+        if ((question == null || question.trim().isEmpty()) && (systemPrompt != null && !systemPrompt.trim().isEmpty())) {
+            question = systemPrompt;
+        }
+        if (question == null || question.trim().isEmpty()) {
+            return "Please provide a valid question. If multiple prompts in one go, please start with "+HEAD+" and use "+SPLITTER+" to split each section. Use "+FINAL_FORMATTING+" in header to provide final formatting instructions.";
+        }
+
+        if (question.contains(SPLITTER)) {
+            String[] parts = question.split(SPLITTER);
             StringBuilder finalResponse = new StringBuilder();
             int i = 0;
             final String basePrompt;
-            String finalFormatingPrompt = "";
-            if (parts[0].indexOf(head) >= 0) {
+            String finalFormattingPrompt = "";
+
+            if (parts[0].contains(HEAD)) {
                 i = 1;
                 String header = parts[0];
-                if (parts[0].indexOf(finalFormating) >= 0) {
-                    basePrompt = header.substring(header.indexOf(head) + head.length(), header.indexOf(finalFormating)) + System.lineSeparator();
-                    finalFormatingPrompt = header.substring(header.indexOf(finalFormating) + finalFormating.length()) + System.lineSeparator();
-                } else
-                    basePrompt = parts[0].substring(header.indexOf(head) + head.length()) + System.lineSeparator();
-            } else
+                if (parts[0].contains(FINAL_FORMATTING)) {
+                    basePrompt = header.substring(header.indexOf(HEAD) + HEAD.length(), header.indexOf(FINAL_FORMATTING)).trim();
+                    finalFormattingPrompt = header.substring(header.indexOf(FINAL_FORMATTING) + FINAL_FORMATTING.length()).trim();
+                } else {
+                    basePrompt = parts[0].substring(header.indexOf(HEAD) + HEAD.length()).trim();
+                }
+            } else {
                 basePrompt = systemPrompt;
+            }
 
-            // Create a list to hold the futures
+            // Create a thread pool with a fixed number of threads
             List<CompletableFuture<String>> futures = new ArrayList<>();
             String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
             logger.info("Processing {} prompts in parallel with traceId {}", parts.length, traceId);
 
-            // Process all parts in parallel
             for (; i < parts.length; i++) {
                 String part = parts[i];
-                // Submit each part for parallel processing
                 futures.add(CompletableFuture.supplyAsync(() -> {
                     MDC.put(Constants.LOGGER_TRACE_ID, traceId);
                     try {
                         return process(basePrompt, part);
+                    } catch (Exception e) {
+                        logger.error("Error processing part in parallel: {}", e.getMessage(), e);
+                        return "Error processing part: " + e.getMessage();
                     } finally {
                         MDC.clear();
                     }
-                }));
+                }, executorService));
             }
 
-            // Wait for all futures to complete
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
-            // Collect all results in order
             for (CompletableFuture<String> future : futures) {
                 try {
                     String response = future.get();
                     if (response != null) {
-                        finalResponse.append(response);
-                        finalResponse.append(System.lineSeparator());
+                        finalResponse.append(response).append(System.lineSeparator());
                     }
                 } catch (InterruptedException | ExecutionException e) {
                     logger.error("Error processing part in parallel: {}", e.getMessage(), e);
                 }
             }
-            if (finalFormatingPrompt != null && !finalFormatingPrompt.isEmpty()) {
-                return process(finalFormatingPrompt, finalResponse.toString());
+
+            if (!finalFormattingPrompt.isEmpty()) {
+                return process(finalFormattingPrompt, finalResponse.toString());
             }
             return finalResponse.toString();
         } else {
@@ -540,9 +560,13 @@ public class AzureOpenAIHelper {
         while (run.getStatus() == RunStatus.QUEUED || run.getStatus() == RunStatus.IN_PROGRESS) {
             String runId = run.getId();
             run = client.getRun(threadId, runId);
-           
-            logger.info("Run Sec : "+sec++ +"  ID: " + runId + ", Status: " + run.getStatus());
-            Thread.sleep(1000); // Sleep for 1 second before polling again
+           if(sec>maxProcessingTime)
+           {
+             logger.warn("Max processing time exceeded. Exiting wait loop.");   
+             break;
+          }
+         logger.info("Run Sec : "+sec++ +"  ID: " + runId + ", Status: " + run.getStatus());
+         Thread.sleep(1000); // Sleep for 1 second before polling again
         }
         return run;
     }

@@ -31,6 +31,7 @@ import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IUserSessionBase;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.JsonTransformer;
 
@@ -53,6 +54,9 @@ public abstract class BaseStep  implements IStep {
 
     @Autowired
     IknowledgeBase knowledgeBase;
+       
+    @Autowired
+    IUserSessionBase sessionBase;
        
     @Override
     public JsonNode executeQueryByName(ExecutionContext context) {
@@ -80,6 +84,14 @@ public abstract class BaseStep  implements IStep {
             }
         }
         return array[0];
+    }
+    public void saveStepData(ExecutionContext context,JsonNode data)
+    {
+        try {
+        	sessionBase.saveRequestDetails(context.getRequestId(), context.getName(),data.toString());
+            } catch (Exception e) {
+                logger.error("Error saving step data", e);
+            }
     }
 
      protected JsonNode getParamNode(String plugindef) {

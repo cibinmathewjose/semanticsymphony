@@ -58,6 +58,7 @@ public class FileStep extends  BaseStep {
 	@Override
     public ChatResponse getResponse(ExecutionContext ctx) {
         ArrayNode node = getData(ctx);
+        saveStepData(ctx, node);
         ChatResponse a = new ChatResponse();
         a.setData(node);
         return a;

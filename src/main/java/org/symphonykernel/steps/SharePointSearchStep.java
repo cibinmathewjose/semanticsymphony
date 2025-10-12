@@ -168,6 +168,7 @@ public class SharePointSearchStep extends BaseStep {
                         jsonResponse = mapper.readTree(responseBody);
                         JsonNode d = jsonResponse.path("d\\query\\PrimarySearchResults");
                         resultsArray.add(d);
+                        saveStepData(context, resultsArray);
                     } catch (Exception e) {
                         e.printStackTrace();
                     }

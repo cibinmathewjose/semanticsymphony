@@ -70,6 +70,8 @@ public class ToolStep extends BaseStep {
                 logger.error("Plugin not found: " + plugin);
                 throw new IllegalArgumentException("Plugin not found: " + plugin);
             }
-            return step.getResponse(context);
+            a= step.getResponse(context);
+            saveStepData(context, a.getData());
+        return a;
     }
 }

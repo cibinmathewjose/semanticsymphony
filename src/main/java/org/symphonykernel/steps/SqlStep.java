@@ -221,6 +221,7 @@ public class SqlStep extends  BaseStep {
         	node= com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         }
         node= executeSqlQuery(sqlQuery);
+        saveStepData(ctx, node);
         ChatResponse a = new ChatResponse();
         a.setData(node);
         return a;

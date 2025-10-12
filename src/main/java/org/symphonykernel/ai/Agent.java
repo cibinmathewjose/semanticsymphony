@@ -58,12 +58,25 @@ public class Agent {
         } 
         ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
         logger.info("ExecutionContext created");   
+      
+        try
+        {
         ctx = knowledgeGraphBuilder.identifyIntent(ctx);
         ctx = knowledgeGraphBuilder.setParameters(ctx); 
+        }
+        catch(Exception ex)
+        {
+        	logger.warn("Error setting parameters, try to process as followup Question");        	
+            return knowledgeGraphBuilder.getFollowupResponse(request);
+        }
         return knowledgeGraphBuilder.getResponse(ctx);
     }
     public ChatResponse getAsyncResults(String requestId) {   
-        ExecutionContext ctx = knowledgeGraphBuilder.getAsyncRequestContext(requestId);          
-        return knowledgeGraphBuilder.getReqDetails(ctx);
+                
+        return knowledgeGraphBuilder.getAsyncResponse(requestId);
+    }
+    public ChatResponse processFollowUp(String requestId, String query)
+    {       
+        return knowledgeGraphBuilder.getFollowupResponse(requestId,query);       
     }
 }
