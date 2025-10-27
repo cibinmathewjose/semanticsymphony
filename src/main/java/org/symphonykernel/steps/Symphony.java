@@ -22,7 +22,6 @@ import org.symphonykernel.Knowledge;
 import org.symphonykernel.QueryType;
 import org.symphonykernel.ai.AzureOpenAIHelper;
 import org.symphonykernel.config.Constants;
-import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.PlatformHelper;
 import org.symphonykernel.transformer.TemplateResolver;
@@ -66,6 +65,8 @@ public class Symphony extends BaseStep {
     PluginStep pluginStep;
     @Autowired
     ToolStep toolStep;
+    @Autowired
+    VelocityStep velocityTemplateEngine;
     @Autowired
     AzureOpenAIHelper azureOpenAIHelper;
     @Autowired
@@ -182,7 +183,7 @@ public class Symphony extends BaseStep {
         if(item.getCondition()!=null)
         {
         	JsonNode conditionNode = resolvedValues.get(item.getCondition().toLowerCase());
-        	if(conditionNode!=null && conditionNode.toString().toLowerCase().contains("true"))
+        	if(conditionNode!=null && conditionNode.toString().toLowerCase().contains("false"))
         	{
         		logger.info("Skipping step {} as condition {} not met", item.getKey(), item.getCondition());
         		return;
@@ -334,6 +335,9 @@ public class Symphony extends BaseStep {
 		    result = pluginStep.executeQueryByName(newCtx);
 		}else if (kb.getType() == QueryType.TOOL) {
 		    result = toolStep.executeQueryByName(newCtx);
+		}
+        else if (kb.getType() == QueryType.VELOCITY) {
+		    result = velocityTemplateEngine.executeQueryByName(newCtx);
 		}
 		return result;
 	}

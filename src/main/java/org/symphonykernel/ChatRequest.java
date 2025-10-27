@@ -167,36 +167,14 @@ public class ChatRequest {
                         ArrayNode resultArray = objectMapper.createArrayNode();
                         for (JsonNode item : jsonNode) {
                             if (item.isObject()) {
-                                ObjectMapper mapper = new ObjectMapper();
-                                Map<String, Object> combinedMap = mapper.convertValue(item, Map.class);
-                                contextInfo.forEach((contextKey, contextValue) -> {
-                                    boolean duplicateKey = combinedMap.keySet().stream()
-                                            .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
-                                    if (duplicateKey) {
-                                        combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
-                                        logger.warn("Potential duplicates found giving priority to explicitly set context values");
-                                    }
-                                    combinedMap.put(contextKey, contextValue);
-                                });
-                                resultArray.add(mapper.valueToTree(combinedMap));
+                                resultArray.add(mapParams( item));
                             } else {
                                 resultArray.add(item);
                             }
                         }
                         return resultArray;
                     } else {
-                        ObjectMapper mapper = new ObjectMapper();
-                        Map<String, Object> combinedMap = mapper.convertValue(jsonNode, Map.class);
-                        contextInfo.forEach((contextKey, contextValue) -> {
-                            boolean duplicateKey = combinedMap.keySet().stream()
-                                    .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
-                            if (duplicateKey) {
-                                combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
-                                logger.warn("Potential duplicates found giving priority to explicitly set context values");
-                            }
-                            combinedMap.put(contextKey, contextValue);
-                        });
-                        return mapper.valueToTree(combinedMap);
+                        return mapParams(jsonNode);
                     }
                 }
                 return jsonNode;
@@ -208,6 +186,29 @@ public class ChatRequest {
             return mapper.valueToTree(contextInfo);
         }
         return null;
+    }
+
+
+
+    private JsonNode mapParams( JsonNode jsonNode) throws IllegalArgumentException {
+        ObjectMapper objectMapper = new ObjectMapper();
+        Map<String, Object> combinedMap = objectMapper.convertValue(jsonNode, Map.class);
+        contextInfo.forEach((contextKey, contextValue) -> {
+            boolean duplicateKey = combinedMap.keySet().stream()
+                    .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
+            if (duplicateKey ) {
+               // combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
+               if(combinedMap.get(contextKey)==null)
+                   combinedMap.put(contextKey, contextValue);
+                else
+                 logger.warn("Potential duplicates found for {} giving priority to explicitly specified value {} and ignoring context value {}", contextKey, combinedMap.get(contextKey), contextValue);
+            }
+            else
+            {
+                combinedMap.put(contextKey, contextValue);
+            }
+        });
+        return objectMapper.valueToTree(combinedMap);
     }
 
     /**

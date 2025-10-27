@@ -66,7 +66,7 @@ public class Agent {
         }
         catch(Exception ex)
         {
-        	logger.warn("Error setting parameters, try to process as followup Question");        	
+        	logger.warn("Error setting parameters, try to process as followup Question",ex);        	
             return knowledgeGraphBuilder.getFollowupResponse(request);
         }
         return knowledgeGraphBuilder.getResponse(ctx);

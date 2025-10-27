@@ -1,5 +1,6 @@
 package org.symphonykernel.ai;
 
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,7 @@ import org.symphonykernel.steps.SharePointSearchStep;
 import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
 import org.symphonykernel.steps.ToolStep;
+import org.symphonykernel.steps.VelocityStep;
 import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
 import org.symphonykernel.transformer.TemplateResolver;
@@ -128,6 +130,8 @@ public class KnowledgeGraphBuilder {
     private static final String STATUS_FAILED = "FAILED";
     private static final String FOLLOWUP = "FOLLOWUP";
     private static final String STATUS_PROCESSING = "PROCESSING";
+    private static Map<String, String> parameterTranslationMap = new HashMap<>();
+
     @Value("${symphony.threadpool.size:25}")
     private int threadPoolSize;
 
@@ -197,6 +201,9 @@ public class KnowledgeGraphBuilder {
 
     @Autowired
     ToolStep toolStep;
+    
+    @Autowired
+    VelocityStep velocityTemplateEngine;
 
     @Autowired
     SessionProvider sessionManager;
@@ -241,6 +248,10 @@ public class KnowledgeGraphBuilder {
         info = sessionManager.createUserSession(request);
         ctx.setUserSession(info);
         return ctx;
+    }
+
+    public static void registerParameterTranslation(String priorityParamName, String translateFromParamName) {
+        parameterTranslationMap.put(priorityParamName, translateFromParamName);
     }
 
     public ExecutionContext loadContext(String requestId, String key) {
@@ -313,7 +324,7 @@ public class KnowledgeGraphBuilder {
         JsonNode node = request.getVariables();
         if (knowledge != null) {
             node = mapMissingVariables(node, knowledge.getParams());
-        }
+        }        
         ctx.setVariables(node);
         logger.info("Variables set as : " + node);
         return ctx;
@@ -358,7 +369,7 @@ public class KnowledgeGraphBuilder {
                             updatedArray.add(item);
                         }
                     }
-                    return updatedArray;
+                    return resolveValueConflictsByPriority(updatedArray,paramNode);
                 } else {
                     Map<String, Object> variables = objectMapper.convertValue(availableVariables, Map.class);
                     Iterator<String> fieldNames = paramNode.fieldNames();
@@ -375,12 +386,53 @@ public class KnowledgeGraphBuilder {
                         changed = true;
                     }
                     if (changed) {
-                        return objectMapper.valueToTree(variables);
+                        return resolveValueConflictsByPriority(objectMapper.valueToTree(variables),paramNode);
                     }
                 }
             } catch (JsonProcessingException e) {
                 logger.warn("Invalid JSON, skiping parameter parsing");
             }
+        }
+        return resolveValueConflictsByPriority(availableVariables,null);
+    }
+
+    private JsonNode resolveValueConflictsByPriority(JsonNode availableVariables, JsonNode paramNode) {
+        if (parameterTranslationMap.isEmpty() || availableVariables == null || availableVariables.isEmpty()) {
+            return availableVariables;
+        }
+        if (availableVariables.isArray() && availableVariables.size() > 1) {
+            ArrayNode resultArray = objectMapper.createArrayNode();
+            for (JsonNode item : availableVariables) {
+                resultArray.add(resolveValueConflictsByPriorityForItem(item, paramNode));
+            }
+            return resultArray;
+        } else {
+            return resolveValueConflictsByPriorityForItem(availableVariables, paramNode);
+        }
+    }
+
+    private JsonNode resolveValueConflictsByPriorityForItem(JsonNode availableVariables, JsonNode paramNode) throws IllegalArgumentException {
+        Map<String, Object> variables = objectMapper.convertValue(availableVariables, Map.class);
+        boolean changed = false;
+        for (String fieldName : parameterTranslationMap.keySet()) {
+            String translateFromParamName = parameterTranslationMap.get(fieldName);
+            boolean hasKey = variables.keySet().stream()
+                    .anyMatch(existingKey -> existingKey.equalsIgnoreCase(fieldName));           
+            if (hasKey) {
+                String mapperKey = fieldName.toLowerCase().trim() + "_from_" + translateFromParamName.toLowerCase().trim();
+                JsonNode value = sqlAssistant.executeQueryByNameWithDynamicMapping(mapperKey, variables.get(translateFromParamName));
+                if (value != null) {
+                    JsonTransformer transformer = new JsonTransformer();
+                    Object val = transformer.getMatchingFieldValue(fieldName, paramNode, value);
+                    logger.info("Updated value for {} from {} to {} based on translation {}", fieldName, variables.get(fieldName), val, translateFromParamName);
+                    variables.put(fieldName, val);
+                    //variables.keySet().removeIf(existingKey -> existingKey.equalsIgnoreCase(mapperKey));
+                    changed = true;
+                }
+            }           
+        }
+        if (changed) {
+            return objectMapper.valueToTree(variables);
         }
         return availableVariables;
     }
@@ -601,7 +653,7 @@ public class KnowledgeGraphBuilder {
         while (System.currentTimeMillis() - startTime < maxWaitTime) {
 
             UserSession reqDetails;
-            if (followupreqDetails==null) {
+            if (followupreqDetails == null) {
                 reqDetails = sessionManager.getRequest(ctx.getRequestId());
 
                 if (reqDetails == null) {
@@ -610,9 +662,9 @@ public class KnowledgeGraphBuilder {
                     response.setStatusCode(STATUS_FAILED);
                     return response;
                 }
+            } else {
+                reqDetails = followupreqDetails;
             }
-            else
-                reqDetails= followupreqDetails;
 
             if (STATUS_SUCCESS.equals(reqDetails.getStatus()) || STATUS_FAILED.equals(reqDetails.getStatus())) {
 
@@ -624,7 +676,7 @@ public class KnowledgeGraphBuilder {
                         response.setStatusCode(STATUS_SUCCESS);
                         return response;
                     } else {
-                        followupreqDetails=reqDetails ;
+                        followupreqDetails = reqDetails;
                     }
                 } else {
                     response.setMessage(reqDetails.getBotResponse());
@@ -763,6 +815,9 @@ public class KnowledgeGraphBuilder {
             }
             case TOOL -> {
                 return toolStep;
+            }  
+            case VELOCITY -> {
+                return velocityTemplateEngine;
             }
             case REST -> {
                 return restHelper;

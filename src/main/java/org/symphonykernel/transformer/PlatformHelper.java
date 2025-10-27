@@ -457,7 +457,7 @@ public class PlatformHelper {
                         } else if ("string".equals(type) && paramValue instanceof String) {
                             resultNode.put(resultKey, (String) paramValue);
                         } else {
-                            resultNode.put(resultKey, paramValue.toString()); // Default case, fallback to string
+                            resultNode.put(resultKey, paramValue!=null?paramValue.toString():null); // Default case, fallback to string
                         }
                     }
                 }

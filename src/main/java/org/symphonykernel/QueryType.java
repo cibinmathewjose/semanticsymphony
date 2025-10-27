@@ -18,6 +18,8 @@ public enum QueryType {
     PLUGIN,   
     /** Represents a text-based query for file */
     TOOL,   
+    /** Represents velocity template engine */
+    VELOCITY,
     /** Represents a text-based query for file */
     FILE,
      /** Represents a text-based query for sharepoint */
