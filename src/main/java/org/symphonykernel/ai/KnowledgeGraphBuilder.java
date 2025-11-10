@@ -7,9 +7,6 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -33,7 +30,6 @@ import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;
-import org.symphonykernel.steps.SharePointSearchStep;
 import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
 import org.symphonykernel.steps.ToolStep;
@@ -47,6 +43,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 
 /**
  * The KnowledgeGraphBuilder class is responsible for building and managing the
@@ -190,8 +189,6 @@ public class KnowledgeGraphBuilder {
     @Autowired
     SqlStep sqlAssistant;
 
-    @Autowired
-    SharePointSearchStep sharePointAssistant;
 
     @Autowired
     FileStep fileUrlHelper;
@@ -826,7 +823,7 @@ public class KnowledgeGraphBuilder {
                 return fileUrlHelper;
             }
             case SHAREPOINT -> {
-                return sharePointAssistant;
+                throw new UnsupportedOperationException("SHAREPOINT QueryType is not implemented");
             }
             default -> {
                 logger.warn("Unhandled QueryType: " + knowledge.getType());

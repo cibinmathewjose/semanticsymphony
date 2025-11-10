@@ -7,10 +7,12 @@ import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.Velocity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
+import org.symphonykernel.config.VelocityEngineConfig;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -20,7 +22,8 @@ import com.fasterxml.jackson.databind.node.TextNode;
 public class VelocityStep extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(VelocityStep.class);
-    
+     @Autowired
+    private VelocityEngineConfig velocityEngineConfig;
     static {
         // Initialize Velocity engine
         Velocity.init();
@@ -38,7 +41,12 @@ public class VelocityStep extends BaseStep {
         try {
             // Create Velocity context and populate with resolved values
             VelocityContext velocityContext = new VelocityContext();
-            
+
+            Map<String, Object> allParams = velocityEngineConfig.getProperties();
+              allParams.forEach((key, value) -> {
+            velocityContext.put(key, value);
+        });
+
             for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
                 String key = entry.getKey();
                 JsonNode value = entry.getValue();

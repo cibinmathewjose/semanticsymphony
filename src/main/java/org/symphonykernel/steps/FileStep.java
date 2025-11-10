@@ -29,9 +29,7 @@ import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.ai.AzureOpenAIHelper;
-import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
-import org.symphonykernel.transformer.JsonTransformer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -302,8 +300,10 @@ public class FileStep extends  BaseStep {
     public String extractTextFromPdf(ByteArrayInputStream pdfInputStream) {
         PDDocument document = null;
         try {
+           
             // Load the PDF document from the InputStream
-            document = PDDocument.load(pdfInputStream);
+            byte[] pdfBytes = IOUtils.toByteArray(pdfInputStream);
+            document = org.apache.pdfbox.Loader.loadPDF(pdfBytes);
             String text = getImagebase64Text(document,0,3);
             // Create a PDFTextStripper to extract text
             //PDFTextStripper pdfStripper = new PDFTextStripper();
