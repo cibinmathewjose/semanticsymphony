@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -30,6 +31,7 @@ import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;
+import org.symphonykernel.steps.RFCStep;
 import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
 import org.symphonykernel.steps.ToolStep;
@@ -192,6 +194,9 @@ public class KnowledgeGraphBuilder {
 
     @Autowired
     FileStep fileUrlHelper;
+
+    @Autowired
+    Optional<RFCStep> rfcStep;
 
     @Autowired
     PluginStep pluginStep;
@@ -421,10 +426,15 @@ public class KnowledgeGraphBuilder {
                 if (value != null) {
                     JsonTransformer transformer = new JsonTransformer();
                     Object val = transformer.getMatchingFieldValue(fieldName, paramNode, value);
-                    logger.info("Updated value for {} from {} to {} based on translation {}", fieldName, variables.get(fieldName), val, translateFromParamName);
-                    variables.put(fieldName, val);
-                    //variables.keySet().removeIf(existingKey -> existingKey.equalsIgnoreCase(mapperKey));
-                    changed = true;
+                    if(val!=null)
+                     {
+                        logger.info("Updated value for {} from {} to {} based on translation {}", fieldName, variables.get(fieldName), val, translateFromParamName);
+                        variables.put(fieldName, val);
+                        //variables.keySet().removeIf(existingKey -> existingKey.equalsIgnoreCase(mapperKey));
+                        changed = true;
+                     }
+                     else
+                        logger.info("Keeping value for {} as {} since translation is null for {}", fieldName, variables.get(fieldName),  translateFromParamName);
                 }
             }           
         }
@@ -824,6 +834,14 @@ public class KnowledgeGraphBuilder {
             }
             case SHAREPOINT -> {
                 throw new UnsupportedOperationException("SHAREPOINT QueryType is not implemented");
+            }
+             case RFC -> {
+                if (rfcStep.isPresent()) {
+                    return rfcStep.get();
+                } else {
+                    logger.warn("RFC Step is not enabled");
+                    return null;
+                }
             }
             default -> {
                 logger.warn("Unhandled QueryType: " + knowledge.getType());

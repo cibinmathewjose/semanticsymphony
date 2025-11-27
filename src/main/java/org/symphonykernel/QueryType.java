@@ -23,5 +23,7 @@ public enum QueryType {
     /** Represents a text-based query for file */
     FILE,
      /** Represents a text-based query for sharepoint */
-     SHAREPOINT
+     SHAREPOINT,
+    /** Represents an SAP RFC */
+     RFC
 }

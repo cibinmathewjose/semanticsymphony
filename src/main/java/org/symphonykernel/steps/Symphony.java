@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -67,6 +68,10 @@ public class Symphony extends BaseStep {
     ToolStep toolStep;
     @Autowired
     VelocityStep velocityTemplateEngine;
+    
+    @Autowired
+     Optional<RFCStep> rfcStep;
+
     @Autowired
     AzureOpenAIHelper azureOpenAIHelper;
     @Autowired
@@ -338,6 +343,15 @@ public class Symphony extends BaseStep {
 		}
         else if (kb.getType() == QueryType.VELOCITY) {
 		    result = velocityTemplateEngine.executeQueryByName(newCtx);
+		}
+         else if (kb.getType() == QueryType.RFC) {
+                if (rfcStep.isPresent()) {
+                        result = rfcStep.get().executeQueryByName(newCtx);
+                } else {
+                    logger.warn("RFC Step is not enabled");
+                    return null;
+                }
+		  
 		}
 		return result;
 	}

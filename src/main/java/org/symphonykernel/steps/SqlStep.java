@@ -62,7 +62,7 @@ public class SqlStep extends  BaseStep {
      * @param query the SQL query to execute
      * @return the result of the query as an ArrayNode
      */
-    @Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
+    @Cacheable(value = "cSCPCache", key = "#query")
     public ArrayNode executeSqlQuery(String query) {
         ArrayNode data = null;
     
