@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
@@ -21,9 +22,11 @@ import org.symphonykernel.FlowItem;
 import org.symphonykernel.FlowJson;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.QueryType;
-import org.symphonykernel.ai.AzureOpenAIHelper;
 import org.symphonykernel.config.Constants;
+import org.symphonykernel.core.IAIClient;
+import org.symphonykernel.core.IPluginLoader;
 import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
 import org.symphonykernel.transformer.TemplateResolver;
 
@@ -44,6 +47,10 @@ public class Symphony extends BaseStep {
     private static final Logger logger = LoggerFactory.getLogger(Symphony.class);
     @Autowired
     IknowledgeBase knowledgeBase;
+
+    
+    @Autowired
+    IPluginLoader pluginLoader;
     
     @Autowired
     @Qualifier("GraphQLStep")
@@ -73,9 +80,12 @@ public class Symphony extends BaseStep {
      Optional<RFCStep> rfcStep;
 
     @Autowired
-    AzureOpenAIHelper azureOpenAIHelper;
+    IAIClient azureOpenAIHelper;
     @Autowired
     private ObjectMapper objectMapper;
+    
+    @Autowired
+    private ApplicationContext applicationContext;
 
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
@@ -143,10 +153,15 @@ public class Symphony extends BaseStep {
                     userPrompt = templateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
                 }               
                 String result =null;
-                if((systemPrompt.indexOf(TemplateResolver.JSON)>=0||systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)&&
-                	userPrompt.indexOf(TemplateResolver.JSON)>=0||userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)
+                if((systemPrompt.indexOf(JsonTransformer.JSON)>=0||systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)&&
+                	userPrompt.indexOf(JsonTransformer.JSON)>=0||userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND)<0)
                 {                	
-                	result = azureOpenAIHelper.execute(systemPrompt, userPrompt);    
+                    if(_symphony.getTools() !=null && _symphony.getTools().length()>0)
+                    {
+                    	result = azureOpenAIHelper.execute(systemPrompt, userPrompt,loadTools(_symphony.getTools()), ctx.getModelName());    
+                    }
+                    else
+                	result = azureOpenAIHelper.execute(systemPrompt, userPrompt,ctx.getModelName());    
 	               
                 }
                 else
@@ -181,8 +196,43 @@ public class Symphony extends BaseStep {
     }
     
     /**
-     * Process a single flow item
+     * Loads Spring bean tools based on comma-separated tool names.
+     * <p>
+     * This method splits the input string by comma, trims each tool name,
+     * and attempts to load the corresponding Spring bean from the application context.
+     * </p>
+     *
+     * @param toolsNames comma-separated string of bean names to load
+     * @return an array of loaded tool objects, or empty array if toolsNames is null/empty
+     * @throws org.springframework.beans.BeansException if a bean cannot be found
      */
+    private Object[] loadTools(String toolsNames) {
+        if (toolsNames == null || toolsNames.isBlank()) {
+            logger.warn("No tools specified to load");
+            return new Object[0];
+        }
+        
+        String[] toolNameArray = toolsNames.split(",");
+        List<Object> tools = new ArrayList<>();
+        
+        for (String toolName : toolNameArray) {
+            String trimmedName = toolName.trim();
+            if (!trimmedName.isEmpty()) {
+                try {
+                    
+                    Object tool =  pluginLoader.createObject(trimmedName);
+                    tools.add(tool);
+                    logger.info("Successfully loaded tool: {}", trimmedName);
+                } catch (Exception e) {
+                    logger.error("Failed to load tool: {}. Error: {}", trimmedName, e.getMessage());
+                    throw new RuntimeException("Failed to load tool: " + trimmedName, e);
+                }
+            }
+        }
+        
+        return tools.toArray();
+    }
+    
     private void processFlowItem(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
        
         if(item.getCondition()!=null)
@@ -196,14 +246,14 @@ public class Symphony extends BaseStep {
         }
         Knowledge kb = knowledgeBase.GetByName(item.getName());
         if (kb != null) {
-            logger.info("Executing Symphony: " + item.getName() + " with Payload: " + item.getPaylod());
+            logger.info("Executing Symphony: " + item.getName() + " with Payload: " + item.getPayload());
             JsonNode result = null;
             JsonNode resolverPayload = null;
             ctx.setCurrentFlowItem(item);
-            if (item.getPaylod() != null) {
-                if(item.getPaylod().toLowerCase().indexOf(",")>0) // comma separated values
+            if (item.getPayload() != null) {
+                if(item.getPayload().toLowerCase().indexOf(",")>0) // comma separated values
                 {
-                	String[] keys = item.getPaylod().toLowerCase().split(",");
+                	String[] keys = item.getPayload().toLowerCase().split(",");
                 	ObjectNode combinedNode = objectMapper.createObjectNode();
                 	for(String key: keys)
                 	{
@@ -219,7 +269,7 @@ public class Symphony extends BaseStep {
                 	resolverPayload = combinedNode;
                 }
                 else
-                resolverPayload = resolvedValues.get(item.getPaylod().toLowerCase());
+                resolverPayload = resolvedValues.get(item.getPayload().toLowerCase());
             }                    
             if (resolverPayload != null) {
                 String loopKey = item.getLoopKey();
@@ -318,7 +368,7 @@ public class Symphony extends BaseStep {
 		if(prompt!=null&&!prompt.isEmpty())
 		{   
 			String systemPrompt = templateResolver.resolvePlaceholders(prompt, resolvedValues);
-			String result = azureOpenAIHelper.ask(systemPrompt);    
+			String result = azureOpenAIHelper.evaluatePrompt(systemPrompt);    
 			JsonNode resultNode = parseJson(result);    
 			resolvedValues.replace(key, resultNode);
 		    

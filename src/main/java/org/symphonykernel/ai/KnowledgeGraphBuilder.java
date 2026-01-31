@@ -23,6 +23,7 @@ import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
 import org.symphonykernel.UserSessionStepDetails;
 import org.symphonykernel.config.Constants;
+import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
@@ -75,7 +76,7 @@ import jakarta.annotation.PreDestroy;
  * <li>{@link IknowledgeBase} - Repository for managing knowledge
  * descriptions.</li>
  * <li>{@link PlatformHelper} - Helper for platform-specific operations.</li>
- * <li>{@link AzureOpenAIHelper} - Integration with OpenAI for prompt
+ * <li>{@link IAIClient} - Integration with OpenAI for prompt
  * evaluation.</li>
  * <li>{@link ObjectMapper} - JSON processing utility.</li>
  * <li>{@link QueryHandler} - Handles query matching and parsing.</li>
@@ -127,6 +128,7 @@ public class KnowledgeGraphBuilder {
     private static final Logger logger = LoggerFactory.getLogger(KnowledgeGraphBuilder.class);
 
     private static final String NONE = "NONE";
+    private static final String MODEL = "model";
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED = "FAILED";
     private static final String FOLLOWUP = "FOLLOWUP";
@@ -169,7 +171,7 @@ public class KnowledgeGraphBuilder {
     PlatformHelper platformHelper;
 
     @Autowired
-    AzureOpenAIHelper openAI;
+    IAIClient openAI;
 
     @Autowired
     ObjectMapper objectMapper;
@@ -239,9 +241,18 @@ public class KnowledgeGraphBuilder {
      * @return a new {@link ExecutionContext} initialized with the request data.
      */
     public ExecutionContext createContext(ChatRequest request) {
+        //TODO: set model name from request if any
         ExecutionContext ctx = new ExecutionContext();
         ctx.setRequest(request);
-        //todo: parse the request and set the context
+         String payload=request.getPayload();
+        if(payload!=null && !payload.isEmpty()&&!payload.equals(NONE))
+        {
+            if(payload.contains("="))
+            {
+                payload=request.getPayloadParam(MODEL);
+            }
+            ctx.setModelName(payload);
+        }
         ctx.setUsersQuery(request.getQuery());
         ctx.setHttpHeaderProvider(request.getHeaderProvider());
         ChatHistory chatHistory = sessionManager.getChatHistory(request);
@@ -547,7 +558,7 @@ public class KnowledgeGraphBuilder {
     public ChatResponse getFollowupResponse(ChatRequest request) {
         ChatResponse response = new ChatResponse();
         if (request == null || request.getQuery() == null || request.getSession() == null) {
-            response.setMessage("Unable to process followup question");
+            response.setMessage("Sorry, I am unable to process the question, please check the FAQ for more information about my capabilities.");
             return response;
         }
         String rId = sessionManager.getLastRequestId(request.getSession());
@@ -583,7 +594,7 @@ public class KnowledgeGraphBuilder {
         UserSession s = ctx.getUserSession();
         List<UserSessionStepDetails> steps = sessionManager.getRequestDetails(requestId);
         if (!s.getStatus().equals(STATUS_SUCCESS) || steps == null || steps.isEmpty() || s.getKnowldgeName() == null) {
-            response.setMessage("Previous request did not complete successfully");
+            response.setMessage("Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.");
         } else {
 
             response.setMessage("Processing request");
@@ -631,7 +642,7 @@ public class KnowledgeGraphBuilder {
             }
             String prompt = fileContentProvider.prepareFollowupPrompt(stepDetails.toString(), finalout.toString());
             String systemPrompt = templateResolver.resolvePlaceholders(prompt);
-            String out = openAI.execute(systemPrompt, query);
+            String out = openAI.execute(systemPrompt, query,ctx.getModelName());
             sessionManager.saveRequestDetails(ctx.getRequestId(), FOLLOWUP + "-" + query.hashCode(), " Question : " + query + " Ans: " + out);
             response.setMessage(out);
 
@@ -745,17 +756,34 @@ public class KnowledgeGraphBuilder {
             // Fetch knowledge descriptions and convert to JSON string
 
             //ArrayNode knowledgeDesc = vector.Search(DefaultIndexTrakingProvider.csKnowledgeIndex, question,null);// 
+            if(question==null || question.isEmpty())
+                return null;
+            if(question.startsWith("Key:"))
+            {
+                String key = question.substring(4).trim();
+                Knowledge knowledge = knowledgeBaserepo.GetByName(key);
+                if(knowledge!=null)
+                {
+                    logger.info("Direct knowledge match found for key {}", key);
+                    return knowledge;
+                }   
+            }
+
             Map<String, String> knowledgeDesc = knowledgeBaserepo.getActiveKnowledgeDescriptions();
             String jsonString = objectMapper.writeValueAsString(knowledgeDesc);
 
             // Get response from OpenAI
             String prompt = fileContentProvider.prepareMatchKnowledgePrompt(jsonString, question, params.toString());
             String response = openAI.evaluatePrompt(prompt);
-
+            int matchCount = -1;
+            if(response != null && !response.isEmpty() && !NONE.equalsIgnoreCase(response.trim()))
+            {
+                matchCount  = response.indexOf(',')+1;
+            }
             // Return knowledge if response is valid
-            if (response != null && !response.isEmpty() && !NONE.equalsIgnoreCase(response.trim())) {
+            if (matchCount>=0 && matchCount < 5) {
                 Knowledge knowledge = null;
-                if (response.indexOf(',') > 0) {
+                if (matchCount > 0) {
                     String[] matches = response.trim().split(",");
                     for (String match : matches) {
                         knowledge = knowledgeBaserepo.GetByName(match.trim());

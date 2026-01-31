@@ -151,11 +151,14 @@ public class SessionProvider {
      */
     public void updateUserSession(UserSession session, ChatResponse response) {
 
-        session.setBotResponse(response.getMessage());
-        session.setData(response.getData() != null ? response.getData().toPrettyString() : "");
+        if(response!=null)
+        {
+            session.setBotResponse(response.getMessage());
+            session.setData(response.getData() != null ? response.getData().toPrettyString() : "");
+            session.setStatus(response.getStatusCode());
+        }
 
         session.setModifyDt(Calendar.getInstance().getTime());
-        session.setStatus(response.getStatusCode());
         userSessionsBase.save(session);
     }
     /**

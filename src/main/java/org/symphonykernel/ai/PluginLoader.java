@@ -108,23 +108,4 @@ public class PluginLoader implements IPluginLoader, ApplicationContextAware {
         }      
     }
 
-    @Override
-    public Kernel load(ChatCompletionService chat,String pluginName) {
-        KernelPlugin plugin;
-        try {
-            plugin = KernelPluginFactory.createFromObject(createObject(pluginName), pluginName);
-
-            return Kernel.builder()
-                    .withPlugin(plugin)
-                    .withAIService(ChatCompletionService.class, chat)
-                    .build();
-        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException
-                | NoSuchMethodException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-        return null;
-    }
-
-
 }

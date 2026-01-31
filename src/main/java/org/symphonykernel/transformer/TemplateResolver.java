@@ -24,10 +24,11 @@ public class TemplateResolver {
      * Constant used as a default value when no data is found for a placeholder.
      */
     public static final String NO_DATA_FOUND = "{NO_DATA_FOUND}";
+     public static final JsonTransformer transformer = new JsonTransformer();
     /**
      * Prefix used to indicate that the resolved value is in JSON format.
      */
-    public static final String JSON = "JSON:";
+    
     @Autowired
     private Environment environment;
  
@@ -84,6 +85,12 @@ public class TemplateResolver {
 
     private static String resolveExpression(String expression, Map<String, JsonNode> context) {
         JsonNode value = null;
+        boolean compress = false;
+        if(expression.startsWith("|"))
+        {
+            expression=expression.substring(1).trim();  
+            compress=true;
+        }
         if (expression.contains("?") && expression.contains(":")) {
             String[] parts = expression.split("[\\?:]", 3);
             if (parts.length == 3) {
@@ -105,7 +112,16 @@ public class TemplateResolver {
         if (isJsonNodeNullorEmpty(value)) {         
             return NO_DATA_FOUND;
         } else {
-            return JSON+ JsonTransformer.getCleanedJsonNode(value).toPrettyString();
+            if(compress)
+            {
+                //logger.info("Compressing JSON : " + value.toPrettyString());
+                String data=  transformer.compress(value);
+                //logger.info("Compresed data : " + data);
+                //logger.info("recreated JSON : " + transformer.decompress(data).toPrettyString());
+                 return JsonTransformer.LLM_OPTIMIZED_DATA+data;
+            }
+            else
+                return JsonTransformer.JSON+ JsonTransformer.getCleanedJsonNode(value).toPrettyString();
         }
     }
     /**

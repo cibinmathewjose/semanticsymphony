@@ -17,6 +17,8 @@ public class Knowledge extends KnowledgeDescription  {
 	private String card;
 	
 	private String url;
+
+	private String tools;
 	
 	
 	/**
@@ -145,5 +147,13 @@ public class Knowledge extends KnowledgeDescription  {
      */
 	public void setData(String val) {
 		this.data = val;
+	}
+
+	public String getTools() {
+		return tools;
+	}
+	
+	public void setTools(String tools) {
+		this.tools = tools;
 	}
 }

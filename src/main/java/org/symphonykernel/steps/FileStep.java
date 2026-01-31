@@ -28,7 +28,7 @@ import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.ai.AzureOpenAIHelper;
+import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IknowledgeBase;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -50,7 +50,7 @@ public class FileStep extends  BaseStep {
     IknowledgeBase knowledgeBase;
 
     @Autowired
-    AzureOpenAIHelper azureOpenAIHelper;
+    IAIClient azureOpenAIHelper;
 
 
 	@Override

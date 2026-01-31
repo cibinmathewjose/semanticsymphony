@@ -42,6 +42,16 @@ public class ExecutionContext {
 
     /** The name of the execution context. */
     String name;
+      
+    String modelName;
+    public String getModelName() {
+        return modelName;
+    }
+
+    public ExecutionContext setModelName(String modelName) {
+        this.modelName = modelName;
+        return this;
+    }
 
     /** The user's query. */
     String usersQuery;
@@ -99,6 +109,7 @@ public class ExecutionContext {
         resolvedValues=ctx.getResolvedValues();
         setCurrentFlowItem(ctx.getCurrentFlowItem());
         setUserSession(ctx.getUserSession());
+        setModelName(ctx.getModelName());
     }
 
     /**

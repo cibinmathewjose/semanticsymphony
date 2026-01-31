@@ -16,9 +16,7 @@ import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.RestRequestTemplate;
 import org.symphonykernel.config.Constants;
-import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
-import org.symphonykernel.transformer.JsonTransformer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -136,6 +134,7 @@ public class RESTStep extends BaseStep {
         JsonNode root = call(url, body, headers, method);
         return root;
     }
+    
     
 	private JsonNode call(String url, String body, HttpHeaders headers, HttpMethod method) {
 		final HttpEntity<String> requestEntity = new HttpEntity<>(body,headers );

@@ -1,8 +1,5 @@
 package org.symphonykernel.steps;
 
-import java.time.Duration;
-import java.util.List;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,159 +8,93 @@ import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.FlowItem;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.ai.AzureOpenAIHelper;
-import org.symphonykernel.config.AzureOpenAIConnectionProperties;
+import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IPluginLoader;
-import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.TemplateResolver;
 
-import com.azure.ai.openai.OpenAIAsyncClient;
-import com.azure.ai.openai.OpenAIClientBuilder;
-import com.azure.core.credential.AzureKeyCredential;
-import com.azure.core.http.policy.ExponentialBackoffOptions;
-import com.azure.core.http.policy.RetryOptions;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.microsoft.semantickernel.Kernel;
-import com.microsoft.semantickernel.aiservices.openai.chatcompletion.OpenAIChatCompletion;
-import com.microsoft.semantickernel.implementation.CollectionUtil;
-import com.microsoft.semantickernel.orchestration.InvocationContext;
-import com.microsoft.semantickernel.orchestration.ToolCallBehavior;
-import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
-import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
-import com.microsoft.semantickernel.services.chatcompletion.ChatMessageContent;
 
-/**
- * PluginStep is responsible for executing plugins using Azure OpenAI services.
- * It integrates with the Symphony Kernel to process chat responses and queries.
- */
 @Component
-public class PluginStep extends BaseStep{
+public class PluginStep extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(PluginStep.class);
 
     private static final String PROMPT = "PROMPT";
-    private final AzureOpenAIHelper openAI;
 
     @Autowired
     IPluginLoader pluginLoader;
+
+    @Autowired
+    IAIClient azureOpenAIHelper;
 
     @Autowired
     ObjectMapper objectMapper;
 
     @Autowired
     TemplateResolver templateResolver;
-    
+
     @Autowired
     IknowledgeBase knowledgeBase;
 
-    ChatCompletionService chat;
+    public PluginStep() {
 
-    /**
-     * Constructs a PluginStep instance with Azure OpenAI helper and connection properties.
-     *
-     * @param openAI the Azure OpenAI helper instance
-     * @param connectionProperties the connection properties for Azure OpenAI
-     */
-    public PluginStep(AzureOpenAIHelper openAI, AzureOpenAIConnectionProperties connectionProperties) {
-        this.openAI = openAI;
-        OpenAIAsyncClient client;
-        ExponentialBackoffOptions exponentialBackoffOptions = new ExponentialBackoffOptions();
-        exponentialBackoffOptions.setMaxRetries(0);
-        RetryOptions retryOptions = new RetryOptions(exponentialBackoffOptions);
-        
-        client = new OpenAIClientBuilder()
-                .retryOptions(retryOptions)
-                .credential(new AzureKeyCredential(connectionProperties.getKey()))
-                .endpoint(connectionProperties.getEndpoint())
-                .buildAsyncClient();
-        chat = OpenAIChatCompletion.builder()
-                .withModelId(connectionProperties.getDeploymentName())
-                .withOpenAIAsyncClient(client)
-                .build();
     }
-    
-    
-
 
     @Override
     public ChatResponse getResponse(ExecutionContext context) {
-    	
-         ChatResponse a = new ChatResponse();           
-        
-        
-        Knowledge kb= context.getKnowledge();
-        if( kb == null&&context.getName()!=null) {
+
+        ChatResponse a = new ChatResponse();
+        Knowledge kb = context.getKnowledge();
+        if (kb == null && context.getName() != null) {
             kb = knowledgeBase.GetByName(context.getName());
             context.setKnowledge(kb);
         }
-        logger.info("Executing Plugin " + context.getKnowledge().getName() );
-        JsonNode paramNode = getParamNode( context.getKnowledge().getData());
-        String plugin = paramNode.get("Plugin").asText();
-      
-        String systemPrompt =null;
+        logger.info("Executing Plugin " + context.getKnowledge().getName());
+        JsonNode paramNode = getParamNode(context.getKnowledge().getData());
+        String plugin = paramNode.get("Tool").asText();
+
+        String systemPrompt = null;
         if (paramNode.has("SystemPrompt")) {
-            systemPrompt = paramNode.get("SystemPrompt").asText();          
+            systemPrompt = paramNode.get("SystemPrompt").asText();
         }
-        FlowItem item =context.getCurrentFlowItem();
-        if(item!=null && item.SystemPrompt!=null) {
-        	systemPrompt = item.SystemPrompt;
+        FlowItem item = context.getCurrentFlowItem();
+        if (item != null && item.SystemPrompt != null) {
+            systemPrompt = item.SystemPrompt;
         }
-        
-       
-        logger.info("Parsed Plugin: " + plugin );
-        ChatHistory chatHistory =new ChatHistory();// context.getChatHistory(); not setting history to avoid inconsistent results
-        if (chatHistory!=null && kb != null) {          
-            String params="consider context parameters of first priority as "+context.getVariables() +" and second priority as "+context.getResolvedValues();
-            if( systemPrompt != null)
-            {
-                systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, context.getResolvedValues());
-                params += ", SystemPrompt: " + systemPrompt;
+
+        logger.info("Parsed Plugin: " + plugin);
+        if (systemPrompt != null) {
+            systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, context.getResolvedValues());
+        }
+        String params = ". Consider context parameters of first priority as " + context.getVariables() + " and second priority as " + context.getResolvedValues();
+
+        Object tool;
+        String msg = "";
+        try {
+            tool = pluginLoader.createObject(plugin);
+            msg = azureOpenAIHelper.execute(systemPrompt + params, context.getUsersQuery(), new Object[]{tool}, context.getModelName());
+            JsonNode jsonNode = objectMapper.readTree(msg);
+
+            ArrayNode jsonArray;
+            if (!jsonNode.isArray()) {
+                jsonArray = objectMapper.createArrayNode();
+
+                jsonArray.add(jsonNode);
+
+            } else {
+                jsonArray = (ArrayNode) jsonNode;
             }
-             logger.info(params);
-            chatHistory.addUserMessage(params);
-        }      
-        else
-            throw new IllegalArgumentException("Chat history or knowledge base is null");
-        Kernel kernel = pluginLoader.load(chat,plugin);
-        if (kernel != null) {
-            InvocationContext invocationContext = InvocationContext.builder()
-                    .withToolCallBehavior(ToolCallBehavior.allowAllKernelFunctions(true))
-                    .build();
-
-            List<ChatMessageContent<?>> messages = chat
-                    .getChatMessageContentsAsync(chatHistory, kernel, invocationContext)
-                    .block(Duration.ofMinutes(5)); // Increase the timeout to 5 minutes
-
-            ChatMessageContent<?> result = CollectionUtil.getLastOrNull(messages);
-
-            String msg= result.getContent();
-            try {
-                JsonNode jsonNode = objectMapper.readTree(msg);
-                
-                ArrayNode jsonArray;
-                if (!jsonNode.isArray()) {
-                    jsonArray = objectMapper.createArrayNode();
-                    
-                    jsonArray.add(jsonNode);
-                   
-                } else {
-                    jsonArray =(ArrayNode) jsonNode;
-                }
-                saveStepData(context, jsonArray);
-                a.setData(jsonArray);                
-               
-            } catch (JsonProcessingException e) {
-                logger.info("Message is not a valid JSON, treating as plain text.");
-                a.setMessage(msg);
-            }
-            
-            a.setStatusCode(PROMPT);
-        } else {
-            return null;
+            saveStepData(context, jsonArray);
+            a.setData(jsonArray);
+        } catch (JsonProcessingException e) {
+            logger.info("Message is not a valid JSON, treating as plain text.");
+            a.setMessage(msg);
+        } catch (Exception ex) {
+            logger.error("Error processing plugin step.", ex);
         }
         return a;
     }

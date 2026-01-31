@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.steps.SqlStep;
@@ -32,7 +33,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * <ul>
  *   <li>{@link IknowledgeBase} - Interface for interacting with the knowledge base repository.</li>
  *   <li>{@link ObjectMapper} - Used for JSON serialization and deserialization.</li>
- *   <li>{@link AzureOpenAIHelper} - Helper class for interacting with Azure OpenAI services.</li>
+ *   <li>{@link IAIClient} - Helper class for interacting with Azure OpenAI services.</li>
  *   <li>{@link SqlStep} - SQL assistant for additional processing.</li>
  *   <li>{@link FileContentProvider} - Provides file content for prompts.</li>
  * </ul>
@@ -60,7 +61,7 @@ public class QueryHandler {
 
     private final IknowledgeBase knowledgeBaseRepo;
     private final ObjectMapper objectMapper;
-    private final AzureOpenAIHelper openAIHelper;
+    private final IAIClient openAIHelper;
     
     @Autowired
     SqlStep sqlAssistant;
@@ -81,7 +82,7 @@ public class QueryHandler {
      * @param objectMapper the object mapper for JSON serialization and deserialization
      * @param openAIHelper the Azure OpenAI helper for processing prompts and generating responses
      */
-    public QueryHandler(IknowledgeBase knowledgeBaseRepo, ObjectMapper objectMapper, AzureOpenAIHelper openAIHelper) {
+    public QueryHandler(IknowledgeBase knowledgeBaseRepo, ObjectMapper objectMapper, IAIClient openAIHelper) {
         this.knowledgeBaseRepo = knowledgeBaseRepo;
         this.objectMapper = objectMapper;
         this.openAIHelper = openAIHelper;

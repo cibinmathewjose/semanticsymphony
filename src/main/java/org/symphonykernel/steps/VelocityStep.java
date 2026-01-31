@@ -18,6 +18,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 
+/**
+ * A step implementation that processes Apache Velocity templates.
+ * <p>
+ * This service uses the Velocity template engine to render templates with data
+ * from the execution context. It merges resolved values and input variables
+ * with Velocity engine configuration properties to generate the final output.
+ * </p>
+ */
 @Service
 public class VelocityStep extends BaseStep {
 
@@ -29,6 +37,17 @@ public class VelocityStep extends BaseStep {
         Velocity.init();
     }
 
+    /**
+     * Processes the Velocity template and returns the rendered output.
+     * <p>
+     * This method retrieves the template from the knowledge base, populates
+     * the Velocity context with resolved values and configuration properties,
+     * then evaluates the template to produce the final rendered text.
+     * </p>
+     *
+     * @param ctx the execution context containing variables, resolved values, and knowledge
+     * @return a ChatResponse containing the rendered template output or error message
+     */
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
         
@@ -88,6 +107,16 @@ public class VelocityStep extends BaseStep {
         }
     }
     
+    /**
+     * Converts a JsonNode to an appropriate Java object for Velocity context.
+     * <p>
+     * This method handles conversion of different JsonNode types (text, number,
+     * boolean, array, object) to their corresponding Java representations.
+     * </p>
+     *
+     * @param node the JsonNode to convert
+     * @return the converted Java object (String, Double, Boolean, or JsonNode for complex types)
+     */
     private Object convertJsonNodeToObject(JsonNode node) {
         if (node.isTextual()) {
             return node.asText();

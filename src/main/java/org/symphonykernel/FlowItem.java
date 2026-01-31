@@ -18,8 +18,8 @@ public class FlowItem {
     String name;
     @JsonProperty("Key")
     String key;
-    @JsonProperty("Paylod")
-    String paylod;
+    @JsonProperty("Payload")
+    String payload;
     @JsonProperty("LoopKey")
     String loop;
     @JsonProperty("Array")
@@ -29,13 +29,9 @@ public class FlowItem {
     @JsonProperty("Condition")
     String condition;
     @JsonProperty("JSONPath")
-    String jsonPath;
-   
-    
-    @JsonProperty("Required")
-    
+    String jsonPath;    
+    @JsonProperty("Required")    
     boolean required;
-    
     /**
      * System-level prompt for the flow item.
      */
@@ -83,8 +79,8 @@ public class FlowItem {
      *
      * @return the payload as a string
      */
-    public String getPaylod() {
-        return paylod;
+    public String getPayload() {
+        return payload;
     }
 
     /**
@@ -92,8 +88,8 @@ public class FlowItem {
      *
      * @param payload the payload to set
      */
-    public void setPaylod(String payload) {
-        this.paylod = payload;
+    public void getPayload(String payload) {
+        this.payload = payload;
     }
 
     /**
@@ -152,7 +148,7 @@ public class FlowItem {
 
     @Override
     public String toString() {
-        return "FlowItem{" + "Name='" + name + '\'' + ", Paylod='" + paylod + '\'' + '}';
+        return "FlowItem{" + "Name='" + name + '\'' + ", Paylod='" + payload + '\'' + '}';
     }
 
     /**

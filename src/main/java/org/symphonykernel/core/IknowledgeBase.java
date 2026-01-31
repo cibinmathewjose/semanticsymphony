@@ -37,6 +37,7 @@ public interface IknowledgeBase extends IDelta<KnowledgeDescription> {
      */
     Map<String, String> getAllKnowledgeDescriptions();
     
+    
     String getKnowledgeDescriptions(String name);
 
     /**
