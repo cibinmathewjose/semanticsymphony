@@ -116,22 +116,27 @@ public class Symphony extends BaseStep {
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
-            Flux<String> progress = processFlowItemsByOrder(parsed, ctx, resolvedValues)
+            StringBuilder responseAccumulator = new StringBuilder();
+            return processFlowItemsByOrder(parsed, ctx, resolvedValues)
                 .onErrorResume(e -> {
                     logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
                     return Flux.just("Error: " + e.getMessage());
-                });
-            StringBuilder responseAccumulator = new StringBuilder();
-            Flux<String> finalResponse = processFinalResponseAsStream(parsed, ctx, _symphony, resolvedValues)
-                .doOnNext(responseAccumulator::append)
-                .doFinally(signalType -> {
-                    saveStepData(ctx, responseAccumulator.toString());
                 })
-                .onErrorResume(e -> {
-                    logger.error("Error in processFinalResponseAsStream: {}", e.getMessage());
-                    return Flux.just("Error: " + e.getMessage());
-                });
-            return Flux.concat(progress, finalResponse);
+            .collectList() 
+            .flatMapMany(progressList -> {
+                // Now that progress is 100% done, start the next one
+            	logger.info("Completed processing flow items, now processing final response as stream of {} items", progressList.size());
+                return processFinalResponseAsStream(parsed, ctx, _symphony, resolvedValues)
+                    .startWith(Flux.fromIterable(progressList)) // Put the progress back at the start
+                    .doOnNext(responseAccumulator::append)
+                    .doFinally(signalType -> {
+                        saveStepData(ctx, responseAccumulator.toString());
+                    })
+                    .onErrorResume(e -> {
+                        logger.error("Error in processFinalResponseAsStream: {}", e.getMessage());
+                        return Flux.just("Error: " + e.getMessage());
+                    });
+            });
         } catch (Exception e) {
             saveStepData(ctx, e.getMessage());
             return Flux.just("Error processing Symphony: " + e.getMessage());
@@ -164,20 +169,28 @@ public class Symphony extends BaseStep {
                 }
             });
     }
-
     private Flux<String> executeWithStatus(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+        String itemName = item.getKey() != null ? item.getKey() : "Unknown Item";
+
         return Flux.defer(() -> {
-            String itemName = item.getKey() != null ? item.getKey() : "Unknown Item";
-            
-            // Create the sequence: Message -> Actual Work -> Message
+            // 1. Start with the message
             return Flux.just("STARTING: " + itemName)
-                .concatWith(Mono.fromRunnable(() -> {
-                    // Note: If processFlowItem is blocking, wrap it in Schedulers.boundedElastic()
-                    processFlowItem(item, ctx, resolvedValues);
-                    logger.info("Completed processing item: {} data {}" , itemName,resolvedValues.get(itemName.toLowerCase()));
-                }).then(Mono.empty())) // then(Mono.empty()) ensures no data is emitted here
-                .concatWith(Flux.just("COMPLETED: " + itemName));
-        }).subscribeOn(Schedulers.boundedElastic()); // Keeps parallel work off the main thread
+                .concatWith(
+                    // 2. Perform work. Using fromCallable/fromRunnable 
+                    // ensures the COMPLETED message waits for this to finish.
+                    Mono.fromRunnable(() -> {
+                        logger.info("Actually starting work for: {}", itemName);
+                        processFlowItem(item, ctx, resolvedValues);
+                    })
+                    .subscribeOn(Schedulers.boundedElastic()) // Offload blocking I/O
+                    .then(Mono.just("COMPLETED: " + itemName)) // Move to end message ONLY after work finishes
+                )
+                .doOnComplete(() -> logger.info("Stream sequence finished for: {}", itemName))
+                .onErrorResume(e -> {
+                    logger.error("Error in {}: {}", itemName, e.getMessage());
+                    return Flux.just("ERROR: " + itemName + " - " + e.getMessage());
+                });
+        });
     }
 
     private void processFlowItem(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
@@ -458,24 +471,6 @@ public class Symphony extends BaseStep {
         }
         
         return tools.toArray();
-    }
-    
-    @Override
-    protected ArrayNode getData(ExecutionContext ctx) {
-        // Reuse the logic from getResponse, but only return the ArrayNode data
-        JsonNode input = ctx.getVariables();
-        Knowledge _symphony = ctx.getKnowledge();
-        ArrayNode jsonArray = objectMapper.createArrayNode();
-        Map<String, JsonNode> resolvedValues = ctx.getResolvedValues();
-        resolvedValues.put("input", input);
-        try {
-            FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
-            processFlowItemsByOrder(parsed, ctx, resolvedValues);
-            processFinalResponse(parsed, ctx, _symphony, resolvedValues, jsonArray);
-        } catch (JsonProcessingException e) {
-            handleJsonProcessingException(e, jsonArray);
-        }
-        return jsonArray;
     }
     
     // ==================== FLOW PROCESSING ====================
