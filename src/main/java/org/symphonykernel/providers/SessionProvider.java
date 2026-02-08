@@ -69,10 +69,14 @@ public class SessionProvider {
         session.setRequestId(request.getConversationId() != null ? request.getConversationId() : UUID.randomUUID().toString());       
         try {
             session.setUserInput(objectMapper.writeValueAsString(new Object() {
-                public String key = request.getKey();
-                public String query = request.getQuery();
-                public String payload = request.getPayload();
-                public Map<String, String> context = request.getContextInfo();
+                @SuppressWarnings("unused")
+				public String key = request.getKey();
+                @SuppressWarnings("unused")
+				public String query = request.getQuery();
+                @SuppressWarnings("unused")
+				public String payload = request.getPayload();
+                @SuppressWarnings("unused")
+				public Map<String, String> context = request.getContextInfo();
             }));
         } catch (Exception e) {
             logger.error("Failed to convert ChatRequest to JSON", e);

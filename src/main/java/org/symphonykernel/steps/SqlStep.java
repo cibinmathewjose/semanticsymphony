@@ -91,33 +91,48 @@ public class SqlStep extends  BaseStep {
 
 
     /**
-     * Executes a single-value SQL query with the provided parameters.
+     * Executes a single-value SQL query with the provided parameters and returns a typed result.
+     * Uses ResultSet#getObject(int, Class<T>) for a type-safe retrieval.
      *
      * @param query the SQL query to execute
+     * @param type the expected return type class
      * @param params the parameters for the query
      * @param <T> the type of the result
-     * @return the result of the query
+     * @return the result of the query or null if no rows
      * @throws Exception if an error occurs during query execution
      */
-  public <T> T executeSingleValueQuery(String query, Object... params) throws Exception {
-    try (Connection connection = dataSource.getConnection(); // Obtain connection from DataSource
-         PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+    public <T> T executeSingleValueQuery(String query, Class<T> type, Object... params) throws Exception {
+        try (Connection connection = dataSource.getConnection(); // Obtain connection from DataSource
+             PreparedStatement preparedStatement = connection.prepareStatement(query)) {
 
-        if (params != null) {
-            for (int i = 0; i < params.length; i++) {
-                preparedStatement.setObject(i + 1, params[i]);
+            if (params != null) {
+                for (int i = 0; i < params.length; i++) {
+                    preparedStatement.setObject(i + 1, params[i]);
+                }
             }
-        }
 
-        try (ResultSet resultSet = preparedStatement.executeQuery()) {
-            if (resultSet.next()) {
-                return (T) resultSet.getObject(1);
-            } else {
-                return null;
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                if (resultSet.next()) {
+                    // Use the JDBC type-aware overload to avoid unchecked casts
+                    return resultSet.getObject(1, type);
+                } else {
+                    return null;
+                }
             }
         }
     }
-}
+
+    /**
+     * Backward-compatible overload returning Object to preserve existing callers.
+     *
+     * @param query the SQL query to execute
+     * @param params the parameters for the query
+     * @return the result as Object or null if no rows
+     * @throws Exception if an error occurs during query execution
+     */
+    public Object executeSingleValueQuery(String query, Object... params) throws Exception {
+        return executeSingleValueQuery(query, Object.class, params);
+    }
 
     /**
      * Converts a ResultSet into an ArrayNode.
@@ -157,7 +172,7 @@ public class SqlStep extends  BaseStep {
         }
         catch (SQLException e)
         {
-        	logger.warn("Error processing ResultSet: {}", e.getMessage());
+            logger.warn("Error processing ResultSet: {}", e.getMessage());
         }
 
         // Print the generated JSON data
@@ -183,7 +198,7 @@ public class SqlStep extends  BaseStep {
             array[0] = getResponse(ctx).getData();
         }
         else
-        	logger.warn("knowldge not found {}", name);
+            logger.warn("knowldge not found {}", name);
         return array[0];
     }
    
@@ -200,7 +215,7 @@ public class SqlStep extends  BaseStep {
                 if(variables != null)
                 {
                 try {
-                	logger.info("Executing SQL " + kb.getName() + " with " + variables);
+                    logger.info("Executing SQL " + kb.getName() + " with " + variables);
                     sqlQuery = platformHelper.replacePlaceholders(kb.getData(), kb.getParams(), variables);
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -208,7 +223,7 @@ public class SqlStep extends  BaseStep {
             }
                 else
                 {
-                	throw new RuntimeException("Could not execut SQL " + kb.getName() + " Parameters missing " + kb.getParams());
+                    throw new RuntimeException("Could not execut SQL " + kb.getName() + " Parameters missing " + kb.getParams());
                 }
             } else {
                 logger.info("SQL without params");
@@ -218,7 +233,7 @@ public class SqlStep extends  BaseStep {
         // return sqlQuery;
         // Execute the SQL query against your database
         if (sqlQuery == null) { // Check the array element
-        	node= com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+            node= com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         }
         node= executeSqlQuery(sqlQuery);
         saveStepData(ctx, node);

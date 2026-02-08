@@ -9,8 +9,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.text.similarity.LevenshteinDistance;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -33,7 +31,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  */
 public class PlatformHelper {
 
-    private static final Logger logger = LoggerFactory.getLogger(PlatformHelper.class);
 
     /**
      * Generates an adaptive card JSON based on the provided mapping template.

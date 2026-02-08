@@ -10,8 +10,6 @@ package org.symphonykernel;
 
 import java.util.Map;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.symphonykernel.config.Constants;
@@ -28,7 +26,6 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 public class ExecutionContext {
 
     
-    private static final Logger logger = LoggerFactory.getLogger(ExecutionContext.class);
     /** The HTTP header provider for the execution context. */
     private IHttpHeaderProvider header;
 

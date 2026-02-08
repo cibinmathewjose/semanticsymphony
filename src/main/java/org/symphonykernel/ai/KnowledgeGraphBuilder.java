@@ -4,7 +4,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -45,6 +44,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
 import jakarta.annotation.PostConstruct;
@@ -380,7 +380,7 @@ public class KnowledgeGraphBuilder {
                 if (availableVariables.isArray()) {
                     ArrayNode updatedArray = objectMapper.createArrayNode();
                     for (JsonNode item : availableVariables) {
-                        Map<String, Object> variables = objectMapper.convertValue(item, Map.class);
+                        Map<String, Object> variables = objectMapper.convertValue(item, new TypeReference<Map<String, Object>>() {});
                         Iterator<String> fieldNames = paramNode.fieldNames();
                         boolean changed = false;
                         while (fieldNames.hasNext()) {
@@ -402,7 +402,7 @@ public class KnowledgeGraphBuilder {
                     }
                     return resolveValueConflictsByPriority(updatedArray,paramNode);
                 } else {
-                    Map<String, Object> variables = objectMapper.convertValue(availableVariables, Map.class);
+                    Map<String, Object> variables = objectMapper.convertValue(availableVariables, new TypeReference<Map<String, Object>>() {});
                     Iterator<String> fieldNames = paramNode.fieldNames();
                     boolean changed = false;
                     while (fieldNames.hasNext()) {
@@ -443,7 +443,7 @@ public class KnowledgeGraphBuilder {
     }
 
     private JsonNode resolveValueConflictsByPriorityForItem(JsonNode availableVariables, JsonNode paramNode) throws IllegalArgumentException {
-        Map<String, Object> variables = objectMapper.convertValue(availableVariables, Map.class);
+        Map<String, Object> variables = objectMapper.convertValue(availableVariables, new TypeReference<Map<String, Object>>() {});
         boolean changed = false;
         for (String fieldName : parameterTranslationMap.keySet()) {
             String translateFromParamName = parameterTranslationMap.get(fieldName);
