@@ -86,25 +86,26 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
      *                          call fails
      */
     @Override
+    @SuppressWarnings("unchecked")
     public String execute(LLMRequest request) {
 
-        return processPromptString(request, this::callLLM);
+        return (String) processPromptString(request, this::callLLM);
     }
 
     private String callLLM(LLMRequest request) {
          ChatClientRequestSpec client = getClient(request);
-        return client.call().content();       
+        return client.call().content();      
 
     }
 
     private Flux<String> callLLMAsync(LLMRequest request) {
          ChatClientRequestSpec client = getClient(request);
-        return client.stream().content();       
+        return client.stream().content();      
 
     }
     @Override
     public Flux<String> streamExecute(LLMRequest request) {
-        return processPromptString(request, this::callLLMAsync);
+        return (Flux<String>) processPromptString(request, this::callLLMAsync);
     }
 
     private Prompt createPrompt(String systemPrompt, String userInput, String model) {

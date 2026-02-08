@@ -82,8 +82,8 @@ public class FileStep extends  BaseStep {
             connection.setRequestProperty("Accept", "*/*");
             connection.connect();
 
-            int statusCode = connection.getResponseCode();
-            String responseMessage = connection.getResponseMessage();
+            //int statusCode = connection.getResponseCode();
+            //String responseMessage = connection.getResponseMessage();
 
             String contentType = connection.getContentType();
             byte[] fileBytes = IOUtils.toByteArray(connection.getInputStream());

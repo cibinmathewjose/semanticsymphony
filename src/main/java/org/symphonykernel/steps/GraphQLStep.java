@@ -5,8 +5,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.stream.Collectors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
@@ -29,7 +27,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Service("GraphQLStep")
 public class GraphQLStep extends RESTStep {
 
-    private static final Logger logger = LoggerFactory.getLogger(GraphQLStep.class);
     private static final String QUERY_KEY = "query";
     private static final String VARIABLES_KEY = "variables";
 
@@ -57,7 +54,7 @@ public class GraphQLStep extends RESTStep {
         ObjectNode body = objectMapper.createObjectNode();
         // body.put("operationName", null);
         body.put(QUERY_KEY, data);
-        body.put(VARIABLES_KEY, variables);
+        body.set(VARIABLES_KEY, variables);
         return body;
     }
     

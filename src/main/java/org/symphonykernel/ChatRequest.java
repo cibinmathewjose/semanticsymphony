@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 
 /**
@@ -228,7 +229,7 @@ public class ChatRequest {
 
     private JsonNode mapParams( JsonNode jsonNode) throws IllegalArgumentException {
         ObjectMapper objectMapper = new ObjectMapper();
-        Map<String, Object> combinedMap = objectMapper.convertValue(jsonNode, Map.class);
+        Map<String, Object> combinedMap = objectMapper.convertValue(jsonNode, new TypeReference<Map<String,Object>>() {});
         contextInfo.forEach((contextKey, contextValue) -> {
             boolean duplicateKey = combinedMap.keySet().stream()
                     .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
