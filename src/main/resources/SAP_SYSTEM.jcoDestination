@@ -1,0 +1,17 @@
+# ----------------------------------------------------
+# SAP JCo Destination Configuration for SAP_SYSTEM
+# ----------------------------------------------------
+
+# --- Connection Details ---
+jco.client.ashost=???       # Application Server Hostname or IP address
+jco.client.sysnr=???                                     # System Number (e.g., 00)
+jco.client.client=600                                    # SAP Client (e.g., 800)
+
+# --- Authentication Details (Direct User/Password Login) ---
+jco.client.user=???                                # SAP Username
+jco.client.passwd=???                          # SAP Password
+
+# --- Optional/Recommended Details ---
+jco.client.lang=EN                   # Logon Language (e.g., EN for English)
+jco.destination.peak_limit=10        # Max number of concurrent connections (Pooled connections)
+jco.destination.pool_capacity=5      # Initial number of connections to pool
