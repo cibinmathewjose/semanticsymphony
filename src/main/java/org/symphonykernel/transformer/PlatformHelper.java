@@ -9,8 +9,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.text.similarity.LevenshteinDistance;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -33,7 +31,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  */
 public class PlatformHelper {
 
-    private static final Logger logger = LoggerFactory.getLogger(PlatformHelper.class);
 
     /**
      * Generates an adaptive card JSON based on the provided mapping template.
@@ -322,7 +319,7 @@ public class PlatformHelper {
         JsonNode bestValue = null;
 
         // Create a LevenshteinDistance instance
-        LevenshteinDistance levenshteinDistance = new LevenshteinDistance();
+        LevenshteinDistance levenshteinDistance =  LevenshteinDistance.getDefaultInstance();
         JsonNode item = payloadNode;
         if (payloadNode.isArray()) {
             item = payloadNode.get(0);
@@ -354,7 +351,7 @@ public class PlatformHelper {
         JsonNode bestValue = null;
 
         // Create a LevenshteinDistance instance
-        LevenshteinDistance levenshteinDistance = new LevenshteinDistance();
+        LevenshteinDistance levenshteinDistance = LevenshteinDistance.getDefaultInstance();
         JsonNode item = payloadNode;
         if (payloadNode.isArray()) {
             item = payloadNode.get(0);
@@ -380,8 +377,14 @@ public class PlatformHelper {
         return bestValue;
     }
 
-    
-
+    /**
+     * Resolves a payload by replacing values based on a resolver JSON definition.
+     *
+     * @param key the key to resolve
+     * @param value the value to resolve
+     * @param resolverNode the resolver JSON node
+     * @return a resolved JSON node
+     */
     public JsonNode resolvePayload(String key, Object value, JsonNode resolverNode) {
         ObjectMapper objectMapper = new ObjectMapper();
         ObjectNode resultNode = objectMapper.createObjectNode();
@@ -451,7 +454,7 @@ public class PlatformHelper {
                         } else if ("string".equals(type) && paramValue instanceof String) {
                             resultNode.put(resultKey, (String) paramValue);
                         } else {
-                            resultNode.put(resultKey, paramValue.toString()); // Default case, fallback to string
+                            resultNode.put(resultKey, paramValue!=null?paramValue.toString():null); // Default case, fallback to string
                         }
                     }
                 }

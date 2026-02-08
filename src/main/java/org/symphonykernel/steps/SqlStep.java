@@ -18,7 +18,6 @@ import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
-import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -43,7 +42,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * @version 1.0
  * @since 1.0
  */
-public class SqlStep implements IStep {
+public class SqlStep extends  BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlStep.class);
 
@@ -62,7 +61,7 @@ public class SqlStep implements IStep {
      * @param query the SQL query to execute
      * @return the result of the query as an ArrayNode
      */
-    @Cacheable(value = "cSCPCache", key = "T(org.apache.commons.codec.digest.DigestUtils).sha256Hex(#query)")
+    @Cacheable(value = "cSCPCache", key = "#query")
     public ArrayNode executeSqlQuery(String query) {
         ArrayNode data = null;
     
@@ -92,33 +91,48 @@ public class SqlStep implements IStep {
 
 
     /**
-     * Executes a single-value SQL query with the provided parameters.
+     * Executes a single-value SQL query with the provided parameters and returns a typed result.
+     * Uses ResultSet#getObject(int, Class<T>) for a type-safe retrieval.
      *
      * @param query the SQL query to execute
+     * @param type the expected return type class
      * @param params the parameters for the query
      * @param <T> the type of the result
-     * @return the result of the query
+     * @return the result of the query or null if no rows
      * @throws Exception if an error occurs during query execution
      */
-  public <T> T executeSingleValueQuery(String query, Object... params) throws Exception {
-    try (Connection connection = dataSource.getConnection(); // Obtain connection from DataSource
-         PreparedStatement preparedStatement = connection.prepareStatement(query)) {
+    public <T> T executeSingleValueQuery(String query, Class<T> type, Object... params) throws Exception {
+        try (Connection connection = dataSource.getConnection(); // Obtain connection from DataSource
+             PreparedStatement preparedStatement = connection.prepareStatement(query)) {
 
-        if (params != null) {
-            for (int i = 0; i < params.length; i++) {
-                preparedStatement.setObject(i + 1, params[i]);
+            if (params != null) {
+                for (int i = 0; i < params.length; i++) {
+                    preparedStatement.setObject(i + 1, params[i]);
+                }
             }
-        }
 
-        try (ResultSet resultSet = preparedStatement.executeQuery()) {
-            if (resultSet.next()) {
-                return (T) resultSet.getObject(1);
-            } else {
-                return null;
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                if (resultSet.next()) {
+                    // Use the JDBC type-aware overload to avoid unchecked casts
+                    return resultSet.getObject(1, type);
+                } else {
+                    return null;
+                }
             }
         }
     }
-}
+
+    /**
+     * Backward-compatible overload returning Object to preserve existing callers.
+     *
+     * @param query the SQL query to execute
+     * @param params the parameters for the query
+     * @return the result as Object or null if no rows
+     * @throws Exception if an error occurs during query execution
+     */
+    public Object executeSingleValueQuery(String query, Object... params) throws Exception {
+        return executeSingleValueQuery(query, Object.class, params);
+    }
 
     /**
      * Converts a ResultSet into an ArrayNode.
@@ -137,6 +151,8 @@ public class SqlStep implements IStep {
         int columnCount = metaData.getColumnCount();
         int c = 50;
         // Iterate through the ResultSet and create JSON objects
+        try
+        {
         while (rs.next() || --c <= 0) {
             ObjectNode jsonObject = mapper.createObjectNode();
 
@@ -152,6 +168,11 @@ public class SqlStep implements IStep {
             }
 
             jsonArray.add(jsonObject);
+        }
+        }
+        catch (SQLException e)
+        {
+            logger.warn("Error processing ResultSet: {}", e.getMessage());
         }
 
         // Print the generated JSON data
@@ -177,33 +198,11 @@ public class SqlStep implements IStep {
             array[0] = getResponse(ctx).getData();
         }
         else
-        	logger.warn("knowldge not found {}", name);
+            logger.warn("knowldge not found {}", name);
         return array[0];
     }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-        final ArrayNode[] array = new ArrayNode[1];
-        Knowledge kb = knowledgeBase.GetByName(context.getName());
-        if (kb != null) {
-            JsonNode var = context.getVariables();
-            if (context.getConvert()) {
-                try {
-                    JsonTransformer transformer = new JsonTransformer();
-                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                    context.setVariables(var);
-                    context.setKnowledge(kb);
-                    //var=platformHelper.compareAndReplaceJson(kb.getParams(), variables);           		  
-                } catch (Exception e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
-                }
-            }
-            array[0] = getResponse(context).getData();
-        }
-        return array[0];
-    }
-
+   
+   
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {     
 
@@ -216,7 +215,7 @@ public class SqlStep implements IStep {
                 if(variables != null)
                 {
                 try {
-                	logger.info("Executing SQL " + kb.getName() + " with " + variables);
+                    logger.info("Executing SQL " + kb.getName() + " with " + variables);
                     sqlQuery = platformHelper.replacePlaceholders(kb.getData(), kb.getParams(), variables);
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -224,7 +223,7 @@ public class SqlStep implements IStep {
             }
                 else
                 {
-                	throw new RuntimeException("Could not execut SQL " + kb.getName() + " Parameters missing " + kb.getParams());
+                    throw new RuntimeException("Could not execut SQL " + kb.getName() + " Parameters missing " + kb.getParams());
                 }
             } else {
                 logger.info("SQL without params");
@@ -234,9 +233,10 @@ public class SqlStep implements IStep {
         // return sqlQuery;
         // Execute the SQL query against your database
         if (sqlQuery == null) { // Check the array element
-        	node= com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+            node= com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
         }
         node= executeSqlQuery(sqlQuery);
+        saveStepData(ctx, node);
         ChatResponse a = new ChatResponse();
         a.setData(node);
         return a;

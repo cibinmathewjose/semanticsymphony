@@ -3,6 +3,9 @@ package org.symphonykernel.providers;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
@@ -16,38 +19,66 @@ import jakarta.annotation.PostConstruct;
  */
 @Component
 public class FileContentProvider {
+
+	/**
+     * Placeholder for dataset in prompts.
+     */
+    public static final String DATA_SET = "{{$DATA_SET}}";
+    /**
+     * Placeholder for context variables in prompts.
+     */
+
+    public static final String CTX_VAR= "{{$CTX_VAR}}";
+
+    /**
+     * Placeholder for question in prompts.
+     */
+    public static final String QUESTION = "{{$QUESTION}}";
+
+    /**
+     * Placeholder for parameter definitions in prompts.
+     */
+    public static final String PARAM_DEF = "{{$PARAM_DEF}}";
+
 	private static final Logger logger = LoggerFactory.getLogger(FileContentProvider.class);
 
-	
-	private String matchKnowledgePromptPath ="prompts/matchKnowledgePrompt.text";
-	private String paramParserPromptPath = "prompts/paramParserPrompt.text";
-	//@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchSelectQueryPrompt.text') }")
-    private String matchSelectQueryPromptPath="prompts/matchSelectQueryPrompt.text";
+	private Map<String, String> promptPathsMap = new HashMap<>();
+	protected Map<String, String> promptsContentMap = new HashMap<>();
 
-   // @Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/getQueryPrompt.text') }")
-    private String getQueryPromptPath="prompts/getQueryPrompt.text";
+	protected static final String MATCH_KNOWLEDGE_PROMPT = "matchKnowledgePrompt";
+	protected static final String PARAM_PARSER_PROMPT = "paramParserPrompt";
+	protected static final String MATCH_SELECT_QUERY_PROMPT = "matchSelectQueryPrompt";
+	protected static final String GET_QUERY_PROMPT = "getQueryPrompt";
+	protected static final String MATCH_PARAMS_PROMPT = "matchParamsPrompt";
+	protected static final String FOLLOWUP_PROMPT = "followupPrompt";
+
+	protected static List<String> promptKeys = List.of(
+		MATCH_KNOWLEDGE_PROMPT,
+		PARAM_PARSER_PROMPT,
+		MATCH_SELECT_QUERY_PROMPT,
+		GET_QUERY_PROMPT,
+		MATCH_PARAMS_PROMPT,
+		FOLLOWUP_PROMPT
+	);
+
 	
-	/**
-	 * Represents a provider for file content.
-	 * 
-	 * This class provides methods and properties for handling file content prompts.
-	 */
-	public String paramParserPrompt;	
+	public Map<String, String> getPromptPathsMap() {
+	    return promptPathsMap;
+	}
+
+	public void setPromptPathsMap(Map<String, String> promptPathsMap) {
+	    this.promptPathsMap = promptPathsMap;
+	}
+
+	public Map<String, String> getPromptsContentMap() {
+	    return promptsContentMap;
+	}
+
+	public void setPromptsContentMap(Map<String, String> promptsContentMap) {
+	    this.promptsContentMap = promptsContentMap;
+	}
+
 	
-	/**
-	 * Prompt for matching knowledge.
-	 */
-	public String matchKnowledgePrompt;
-	
-	/**
-	 * Prompt for matching select queries.
-	 */
-	public String matchSelectQueryPrompt;
-	
-	/**
-	 * Prompt for getting query information.
-	 */
-	public String getQueryPrompt;
 	
 	/**
      * Initializes the file content provider by loading necessary resources.
@@ -56,10 +87,11 @@ public class FileContentProvider {
      */
 	@PostConstruct
 	public void initialize() throws IOException {
-	    this.matchKnowledgePrompt = loadFileContent(matchKnowledgePromptPath);
-	    this.paramParserPrompt= loadFileContent(paramParserPromptPath);
-	    this.matchSelectQueryPrompt = loadFileContent(matchSelectQueryPromptPath);
-	    this.getQueryPrompt= loadFileContent(getQueryPromptPath);
+	    for (String key : promptKeys) {
+	        String path = "prompts/" + key + ".text";
+	        promptPathsMap.put(key, path);
+	        promptsContentMap.put(key, loadFileContent(path));
+	    }
 	}
 	
 	/**
@@ -87,4 +119,35 @@ public class FileContentProvider {
              }
          }
     }
+		
+	public String prepareMatchParamsPrompt(String paramDef,String dataset,String question) {
+		return promptsContentMap.get(MATCH_PARAMS_PROMPT).replace(PARAM_DEF, paramDef)
+                            .replace(DATA_SET,dataset)
+                            .replace(QUESTION, question);
+	}
+	public String prepareMatchKnowledgePrompt(String jsonString,String question, String context) {
+		return promptsContentMap.get(MATCH_KNOWLEDGE_PROMPT).replace(DATA_SET, jsonString)
+            .replace(QUESTION, question)
+			.replace(CTX_VAR, context);
+	}
+	
+	public String prepareParamParserPrompt(String jsonString,String question) {
+		return  promptsContentMap.get(PARAM_PARSER_PROMPT) 
+                .replace(DATA_SET, jsonString)
+                 .replace(QUESTION, question);
+	}
+	public String prepareMatchSelectQueryPrompt(String jsonString,String question) {
+		return  promptsContentMap.get(MATCH_SELECT_QUERY_PROMPT) 
+		.replace(DATA_SET, jsonString)
+		 .replace(QUESTION, question);
+	}
+	public String prepareQueryPrompt(String jsonString,String question) {
+		return  promptsContentMap.get(GET_QUERY_PROMPT) 
+		.replace(DATA_SET, jsonString)
+		 .replace(QUESTION, question);
+	}
+	public String prepareFollowupPrompt(String contextData, String lastAnswer) {
+		return  promptsContentMap.get(FOLLOWUP_PROMPT).replace(DATA_SET, lastAnswer)		
+			.replace(CTX_VAR, contextData);
+	}
 }

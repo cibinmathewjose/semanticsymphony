@@ -8,8 +8,11 @@
  */
 package org.symphonykernel;
 
+import java.util.Map;
+
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.symphonykernel.config.Constants;
 import org.symphonykernel.core.IHttpHeaderProvider;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,6 +25,7 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
  */
 public class ExecutionContext {
 
+    
     /** The HTTP header provider for the execution context. */
     private IHttpHeaderProvider header;
 
@@ -33,6 +37,16 @@ public class ExecutionContext {
 
     /** The name of the execution context. */
     String name;
+      
+    String modelName;
+    public String getModelName() {
+        return modelName;
+    }
+
+    public ExecutionContext setModelName(String modelName) {
+        this.modelName = modelName;
+        return this;
+    }
 
     /** The user's query. */
     String usersQuery;
@@ -63,6 +77,56 @@ public class ExecutionContext {
 
     /** The URL associated with the execution context. */
     String url;
+
+    Map<String, JsonNode> resolvedValues;
+
+    FlowItem currentFlowItem;
+
+    /**
+     * Default constructor for ExecutionContext.
+     * Initializes the resolved values map.
+     */
+    public ExecutionContext() {       
+        resolvedValues=new java.util.HashMap<>();    
+    }
+
+    /**
+     * Copy constructor for ExecutionContext.
+     * Copies the properties from the given ExecutionContext instance.
+     * 
+     * @param ctx the ExecutionContext instance to copy from
+     */
+    public ExecutionContext(ExecutionContext ctx) {       
+        this();
+        setHttpHeaderProvider(ctx.getHttpHeaderProvider());
+        setUsersQuery(ctx.getUsersQuery());
+        setChatHistory(ctx.getChatHistory());
+        resolvedValues=ctx.getResolvedValues();
+        setCurrentFlowItem(ctx.getCurrentFlowItem());
+        setUserSession(ctx.getUserSession());
+        setModelName(ctx.getModelName());
+    }
+
+    /**
+     * Returns the current flow item associated with the execution context.
+     * 
+     * @return the current flow item
+     */
+    public FlowItem getCurrentFlowItem() {
+        return currentFlowItem;
+    }
+
+    /**
+     * Sets the current flow item for the execution context.
+     * 
+     * @param currentFlowItem the current flow item to set
+     * @return the updated execution context
+     */
+    public ExecutionContext setCurrentFlowItem(FlowItem currentFlowItem) {
+        this.currentFlowItem = currentFlowItem;
+        return this;
+    }
+  
 
     /**
      * Returns the URL associated with the execution context.
@@ -284,7 +348,7 @@ public class ExecutionContext {
      * @return the updated execution context
      */
     public ExecutionContext setUserSession(UserSession info) {
-        this.info = info;
+        this.info = info;       
         return this;
         
     }
@@ -297,6 +361,11 @@ public class ExecutionContext {
      */
     public ExecutionContext setRequest(ChatRequest request) {
         this.request = request;
+       
+        if(request!=null && request.getConversationId() !=null) 
+        {
+            put(Constants.LOGGER_TRACE_ID,  request.getConversationId());
+        }
         return this;
     }
 
@@ -381,4 +450,66 @@ public class ExecutionContext {
          return String.format("url:{},method:{},body:{}", url,method,body);
     	
     }
+
+    /**
+     * Retrieves the resolved values map.
+     * 
+     * @return a map of resolved values
+     */
+    public Map<String, JsonNode> getResolvedValues() {
+        return resolvedValues;
+    }
+
+    /**
+     * Checks if the execution context is asynchronous.
+     * 
+     * @return true if the context is asynchronous, false otherwise
+     */
+    public boolean isIsAsync() {
+        return request != null && "ASYNC_CHAT".equals(request.getKey());
+    }
+
+    /**
+     * Checks if the execution context is an asynchronous result.
+     * 
+     * @return true if the context is an asynchronous result, false otherwise
+     */
+    public boolean isIsAsyncResult() {
+        return request != null && "ASYNC_RESULT".equals(request.getKey());
+    }
+
+    /**
+     * Adds a key-value pair to the resolved values map.
+     * 
+     * @param key the key to add
+     * @param value the value to associate with the key
+     */
+    public void put(String key, JsonNode value) {
+        if( value!=null && key!=null&& !key.isEmpty()) 
+            resolvedValues.put(key, value);
+    }
+
+    /**
+     * Adds a key-value pair to the resolved values map.
+     * 
+     * @param key the key to add
+     * @param value the string value to associate with the key
+     */
+    public void put(String key, String value) {
+        if( value!=null && key!=null&& !key.isEmpty()) 
+            resolvedValues.put(key, com.fasterxml.jackson.databind.node.TextNode.valueOf(value));
+    }
+
+    /**
+     * Adds a key-value pair to the resolved values map.
+     * 
+     * @param key the key to add
+     * @param value the numeric value to associate with the key
+     */
+    public void put(String key, Number value) {
+        if (value != null && key != null && !key.isEmpty())
+            resolvedValues.put(key, com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.numberNode(value.doubleValue()));
+    }
 }
+
+

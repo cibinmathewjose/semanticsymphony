@@ -2,6 +2,8 @@ package org.symphonykernel;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +12,9 @@ import org.symphonykernel.core.IHttpHeaderProvider;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.core.type.TypeReference;
+
 
 /**
  * Represents a chat request with user and session details.
@@ -149,6 +154,32 @@ public class ChatRequest {
         this.payload = payload;
     }
 
+    public String getPayloadParam(String paramName) {
+        if (paramName == null || paramName.isEmpty()) {
+            return null;
+        }
+        if (payload != null && !payload.isEmpty() && !"NONE".equals(payload)) {
+            try {
+                String[] pairs = payload.split("&");
+                for (String pair : pairs) {
+                    int idx = pair.indexOf('=');
+                    if (idx < 0) {
+                        continue;
+                    }
+                    String key = URLDecoder.decode(pair.substring(0, idx), StandardCharsets.UTF_8.name());
+                    if (paramName.equals(key)) {
+                        String value = pair.length() > idx + 1
+                                ? pair.substring(idx + 1)
+                                : "";
+                        return URLDecoder.decode(value, StandardCharsets.UTF_8.name());
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Error decoding payload as query string: {}", e.getMessage());
+            }
+        }
+        return null;
+    }
     /**
      * Gets the variables from the payload and context information.
      * 
@@ -160,54 +191,61 @@ public class ChatRequest {
     public JsonNode getVariables() {
         if (payload != null && !payload.isEmpty() && !"NONE".equals(payload)) {
             try {
-                ObjectMapper objectMapper = new ObjectMapper();
-                JsonNode jsonNode = objectMapper.readTree(payload);
-                if (!contextInfo.isEmpty()) {
-                    if (jsonNode.isArray()) {
-                        ArrayNode resultArray = objectMapper.createArrayNode();
-                        for (JsonNode item : jsonNode) {
-                            if (item.isObject()) {
-                                ObjectMapper mapper = new ObjectMapper();
-                                Map<String, Object> combinedMap = mapper.convertValue(item, Map.class);
-                                contextInfo.forEach((contextKey, contextValue) -> {
-                                    boolean duplicateKey = combinedMap.keySet().stream()
-                                            .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
-                                    if (duplicateKey) {
-                                        combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
-                                        logger.warn("Potential duplicates found giving priority to explicitly set context values");
-                                    }
-                                    combinedMap.put(contextKey, contextValue);
-                                });
-                                resultArray.add(mapper.valueToTree(combinedMap));
-                            } else {
-                                resultArray.add(item);
+                if(payload.startsWith("{")||payload.startsWith("[")) {
+                    //Direct JSON
+                    logger.info("JSON payload: {}", payload);
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    JsonNode jsonNode = objectMapper.readTree(payload);
+                    if (!contextInfo.isEmpty()) {
+                        if (jsonNode.isArray()) {
+                            ArrayNode resultArray = objectMapper.createArrayNode();
+                            for (JsonNode item : jsonNode) {
+                                if (item.isObject()) {
+                                    resultArray.add(mapParams( item));
+                                } else {
+                                    resultArray.add(item);
+                                }
                             }
+                            return resultArray;
+                        } else {
+                            return mapParams(jsonNode);
                         }
-                        return resultArray;
-                    } else {
-                        ObjectMapper mapper = new ObjectMapper();
-                        Map<String, Object> combinedMap = mapper.convertValue(jsonNode, Map.class);
-                        contextInfo.forEach((contextKey, contextValue) -> {
-                            boolean duplicateKey = combinedMap.keySet().stream()
-                                    .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
-                            if (duplicateKey) {
-                                combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
-                                logger.warn("Potential duplicates found giving priority to explicitly set context values");
-                            }
-                            combinedMap.put(contextKey, contextValue);
-                        });
-                        return mapper.valueToTree(combinedMap);
                     }
-                }
-                return jsonNode;
+                    return jsonNode;
+                }                
+                
             } catch (Exception e) {
                 logger.error("Error decoding payload: {}", e.getMessage());
             }
-        } else if (!contextInfo.isEmpty()) {
+        } 
+        if (!contextInfo.isEmpty()) {
             ObjectMapper mapper = new ObjectMapper();
             return mapper.valueToTree(contextInfo);
         }
-        return null;
+        return NullNode.instance;        
+    }
+
+
+
+    private JsonNode mapParams( JsonNode jsonNode) throws IllegalArgumentException {
+        ObjectMapper objectMapper = new ObjectMapper();
+        Map<String, Object> combinedMap = objectMapper.convertValue(jsonNode, new TypeReference<Map<String,Object>>() {});
+        contextInfo.forEach((contextKey, contextValue) -> {
+            boolean duplicateKey = combinedMap.keySet().stream()
+                    .anyMatch(existingKey -> existingKey.equalsIgnoreCase(contextKey));
+            if (duplicateKey ) {
+               // combinedMap.entrySet().removeIf(entry -> entry.getKey().equalsIgnoreCase(contextKey));
+               if(combinedMap.get(contextKey)==null)
+                   combinedMap.put(contextKey, contextValue);
+                else
+                 logger.warn("Potential duplicates found for {} giving priority to explicitly specified value {} and ignoring context value {}", contextKey, combinedMap.get(contextKey), contextValue);
+            }
+            else
+            {
+                combinedMap.put(contextKey, contextValue);
+            }
+        });
+        return objectMapper.valueToTree(combinedMap);
     }
 
     /**
@@ -256,6 +294,10 @@ public class ChatRequest {
      */
     public void setConversationId(String conversationId) {
         this.conversationId = conversationId;
+    }
+
+    public Map<String, String> getContextInfo() {
+        return contextInfo;
     }
 
 }

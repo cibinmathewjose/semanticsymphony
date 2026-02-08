@@ -28,10 +28,8 @@ import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.ai.AzureOpenAIHelper;
-import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IknowledgeBase;
-import org.symphonykernel.transformer.JsonTransformer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -39,12 +37,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+
 /**
  * FileStep is responsible for processing files and extracting text from various formats,
  * such as DOCX, Excel, and PDF. It integrates with the Symphony Kernel for file-based operations.
  */
 @Service("FileStep")
-public class FileStep implements IStep {
+public class FileStep extends  BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(FileStep.class);
 
@@ -52,18 +51,20 @@ public class FileStep implements IStep {
     IknowledgeBase knowledgeBase;
 
     @Autowired
-    AzureOpenAIHelper azureOpenAIHelper;
+    IAIClient azureOpenAIHelper;
 
 
 	@Override
     public ChatResponse getResponse(ExecutionContext ctx) {
         ArrayNode node = getData(ctx);
+        saveStepData(ctx, node);
         ChatResponse a = new ChatResponse();
         a.setData(node);
         return a;
     }
-
-	private ArrayNode getData(ExecutionContext ctx) {
+	
+	@Override
+	protected ArrayNode getData(ExecutionContext ctx) {
 		HttpHeaders headers = ctx.getHttpHeaderProvider() != null ? ctx.getHttpHeaderProvider().getHeader() : null;
         String url = ctx.getVariables().findValue("url").asText();
         String data = null;
@@ -81,8 +82,8 @@ public class FileStep implements IStep {
             connection.setRequestProperty("Accept", "*/*");
             connection.connect();
 
-            int statusCode = connection.getResponseCode();
-            String responseMessage = connection.getResponseMessage();
+            //int statusCode = connection.getResponseCode();
+            //String responseMessage = connection.getResponseMessage();
 
             String contentType = connection.getContentType();
             byte[] fileBytes = IOUtils.toByteArray(connection.getInputStream());
@@ -146,26 +147,6 @@ public class FileStep implements IStep {
 		return jsonObject;
 		 
 	}
-
-	@Override
-	public JsonNode executeQueryByName(ExecutionContext context) {
-		  ArrayNode array=null;
-		  Knowledge kb = knowledgeBase.GetByName(context.getName());
-		  try {
-              JsonNode var = context.getVariables();
-              if (context.getConvert()) {
-                  JsonTransformer transformer = new JsonTransformer();
-                  var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                  context.setVariables(var);
-                  context.setKnowledge(kb);
-              }
-              array = getData(context);
-          } catch (Exception e) {
-              e.printStackTrace();
-          }
-		return array;
-	}
-
     private String getImagebase64Text(PDDocument document, int fromPage, int toPage) {
         try {
             PDFRenderer pdfRenderer = new PDFRenderer(document);
@@ -321,8 +302,10 @@ public class FileStep implements IStep {
     public String extractTextFromPdf(ByteArrayInputStream pdfInputStream) {
         PDDocument document = null;
         try {
+           
             // Load the PDF document from the InputStream
-            document = PDDocument.load(pdfInputStream);
+            byte[] pdfBytes = IOUtils.toByteArray(pdfInputStream);
+            document = org.apache.pdfbox.Loader.loadPDF(pdfBytes);
             String text = getImagebase64Text(document,0,3);
             // Create a PDFTextStripper to extract text
             //PDFTextStripper pdfStripper = new PDFTextStripper();

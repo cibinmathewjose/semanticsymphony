@@ -2,6 +2,7 @@ package org.symphonykernel.providers;
 
 import java.util.Calendar;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -10,12 +11,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
-import org.symphonykernel.ExecutionContext;
-import org.symphonykernel.Knowledge;
-import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
+import org.symphonykernel.UserSessionStepDetails;
 import org.symphonykernel.core.IUserSessionBase;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
 @Component
@@ -29,6 +29,10 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
  * @version 1.0
  * @since 1.0
  */
+/**
+ * Provides methods to manage user sessions and chat histories.
+ * This includes creating, retrieving, and updating user sessions.
+ */
 public class SessionProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionProvider.class);
@@ -40,6 +44,7 @@ public class SessionProvider {
      */
     @Value("${maxhistory:5}")
     private int maxHistory;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * Constructs a SessionProvider with the specified user session base.
@@ -60,8 +65,23 @@ public class SessionProvider {
         UserSession session = new UserSession();
         session.setSessionID(request.getSession());
         session.setUserId(request.getUser());
-        session.setRequestId(UUID.randomUUID().toString());
-        session.setUserInput(request.getQuery());
+        
+        session.setRequestId(request.getConversationId() != null ? request.getConversationId() : UUID.randomUUID().toString());       
+        try {
+            session.setUserInput(objectMapper.writeValueAsString(new Object() {
+                @SuppressWarnings("unused")
+				public String key = request.getKey();
+                @SuppressWarnings("unused")
+				public String query = request.getQuery();
+                @SuppressWarnings("unused")
+				public String payload = request.getPayload();
+                @SuppressWarnings("unused")
+				public Map<String, String> context = request.getContextInfo();
+            }));
+        } catch (Exception e) {
+            logger.error("Failed to convert ChatRequest to JSON", e);
+            session.setUserInput("{}");
+        }
         session.setCreateDt(Calendar.getInstance().getTime());
         session.setStatus("RECEIVED");
         return userSessionsBase.save(session);
@@ -71,13 +91,14 @@ public class SessionProvider {
      * Retrieves the chat history for the given chat request.
      *
      * @param request the chat request for which history is to be retrieved
-     * @return the chat history
+     * @return the chat history containing user and system messages
      */
     public ChatHistory getChatHistory(ChatRequest request) {
         List<UserSession> sessions = userSessionsBase.getSession(request.getSession());
         ChatHistory chatHistory = new ChatHistory();
         if (sessions != null && !sessions.isEmpty()) {
-            for (UserSession session : sessions) {
+            int start = Math.max(0, sessions.size() - maxHistory);
+            for (UserSession session : sessions.subList(start, sessions.size())) {
                 if (session.getUserInput() != null && session.getBotResponse() != null) {
                     chatHistory.addUserMessage(session.getUserInput());
                     chatHistory.addSystemMessage(session.getBotResponse());
@@ -99,6 +120,34 @@ public class SessionProvider {
     }
 
     /**
+     * Retrieves the details of a user session based on the request ID.
+     *
+     * @param requestId the ID of the request
+     * @return the user session details, or null if the request ID is null
+     */
+    public UserSession getRequest(String requestId) {
+        if(requestId == null)
+            return null;
+        return userSessionsBase.findById(requestId);
+    }
+
+    public List<UserSessionStepDetails> getRequestDetails(String requestId) {
+        if(requestId == null)
+            return null;
+        return userSessionsBase.getRequestDetails(requestId);
+    }
+    public UserSessionStepDetails getFollowUpDetails(String requestId) {
+        if(requestId == null)
+            return null;
+        return userSessionsBase.getFollowUpDetails(requestId);
+    }
+    public String getLastRequestId(String sessionId) {
+        if(sessionId == null)
+            return null;
+        return userSessionsBase.getLastRequestId(sessionId);
+    }
+
+    /**
      * Updates the user session with the provided response.
      *
      * @param session the user session to update
@@ -106,11 +155,38 @@ public class SessionProvider {
      */
     public void updateUserSession(UserSession session, ChatResponse response) {
 
-        session.setBotResponse(response.getMessage());
-        session.setData(response.getData() != null ? response.getData().toPrettyString() : "");
+        if(response!=null)
+        {
+            session.setBotResponse(response.getMessage());
+            session.setData(response.getData() != null ? response.getData().toPrettyString() : "");
+            session.setStatus(response.getStatusCode());
+        }
 
         session.setModifyDt(Calendar.getInstance().getTime());
-        session.setStatus(response.getStatusCode());
         userSessionsBase.save(session);
     }
+    public void updateUserSession(UserSession session, String response,String status) {
+
+        if(response!=null)
+        {
+            session.setBotResponse(response);         
+            session.setStatus(status);
+        }
+        session.setModifyDt(Calendar.getInstance().getTime());
+        userSessionsBase.save(session);
+    }
+    /**
+     * Updates the user session with the provided response.
+     *
+     * @param session the user session to update
+     */
+    public void updateUserSession(UserSession session) {
+        session.setModifyDt(Calendar.getInstance().getTime());
+        userSessionsBase.save(session);
+    }
+    public void saveRequestDetails(String id,String stepName,String data) {
+		if(stepName==null || id==null|| data==null)
+			return;
+		userSessionsBase.saveRequestDetails(id, stepName, data);
+	}
 }

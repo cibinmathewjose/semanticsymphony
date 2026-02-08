@@ -1,6 +1,6 @@
 package org.symphonykernel.steps;
 
-import java.util.List;
+import java.lang.reflect.InvocationTargetException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,136 +8,144 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
+import org.symphonykernel.FlowItem;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.QueryType;
-import org.symphonykernel.ai.AzureOpenAIHelper;
-import org.symphonykernel.config.AzureOpenAIConnectionProperties;
+import org.symphonykernel.LLMRequest;
+import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IPluginLoader;
-import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IknowledgeBase;
+import org.symphonykernel.transformer.TemplateResolver;
 
-import com.azure.ai.openai.OpenAIAsyncClient;
-import com.azure.ai.openai.OpenAIClientBuilder;
-import com.azure.core.credential.AzureKeyCredential;
-import com.azure.core.http.policy.ExponentialBackoffOptions;
-import com.azure.core.http.policy.RetryOptions;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.microsoft.semantickernel.Kernel;
-import com.microsoft.semantickernel.aiservices.openai.chatcompletion.OpenAIChatCompletion;
-import com.microsoft.semantickernel.implementation.CollectionUtil;
-import com.microsoft.semantickernel.orchestration.InvocationContext;
-import com.microsoft.semantickernel.orchestration.ToolCallBehavior;
-import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
-import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
-import com.microsoft.semantickernel.services.chatcompletion.ChatMessageContent;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 
-/**
- * PluginStep is responsible for executing plugins using Azure OpenAI services.
- * It integrates with the Symphony Kernel to process chat responses and queries.
- */
+import reactor.core.publisher.Flux;
+
 @Component
-public class PluginStep implements IStep {
+public class PluginStep extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(PluginStep.class);
 
-    private static final String PROMPT = "PROMPT";
-    private final AzureOpenAIHelper openAI;
 
     @Autowired
     IPluginLoader pluginLoader;
 
     @Autowired
-    ObjectMapper objectMapper;
+    IAIClient azureOpenAIHelper;
 
-    ChatCompletionService chat;
 
-    /**
-     * Constructs a PluginStep instance with Azure OpenAI helper and connection properties.
-     *
-     * @param openAI the Azure OpenAI helper instance
-     * @param connectionProperties the connection properties for Azure OpenAI
-     */
-    public PluginStep(AzureOpenAIHelper openAI, AzureOpenAIConnectionProperties connectionProperties) {
-        this.openAI = openAI;
-        OpenAIAsyncClient client;
-        ExponentialBackoffOptions exponentialBackoffOptions = new ExponentialBackoffOptions();
-        exponentialBackoffOptions.setMaxRetries(0);
-        RetryOptions retryOptions = new RetryOptions(exponentialBackoffOptions);
-        
-        client = new OpenAIClientBuilder()
-                .retryOptions(retryOptions)
-                .credential(new AzureKeyCredential(connectionProperties.getKey()))
-                .endpoint(connectionProperties.getEndpoint())
-                .buildAsyncClient();
-        chat = OpenAIChatCompletion.builder()
-                .withModelId(connectionProperties.getDeploymentName())
-                .withOpenAIAsyncClient(client)
-                .build();
+    @Autowired
+    TemplateResolver templateResolver;
+
+    @Autowired
+    IknowledgeBase knowledgeBase;
+
+    public PluginStep() {
+
     }
-    
-    
+    @Override
+    public Flux<String> getResponseStream(ExecutionContext context) {
+    	Knowledge kb = context.getKnowledge();
+        if (kb == null && context.getName() != null) {
+            kb = knowledgeBase.GetByName(context.getName());
+            context.setKnowledge(kb);
+        }
+        logger.info("Executing Plugin " + context.getKnowledge().getName());
+        JsonNode paramNode = getParamNode(context.getKnowledge().getData());
+        String plugin = paramNode.get("Tool").asText();
 
+        String systemPrompt = null;
+        if (paramNode.has("SystemPrompt")) {
+            systemPrompt = paramNode.get("SystemPrompt").asText();
+        }
+        FlowItem item = context.getCurrentFlowItem();
+        if (item != null && item.SystemPrompt != null) {
+            systemPrompt = item.SystemPrompt;
+        }
 
+        logger.info("Parsed Plugin: " + plugin);
+        if (systemPrompt != null) {
+            systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, context.getResolvedValues());
+        }
+        String params = ". Consider context parameters of first priority as " + context.getVariables() + " and second priority as " + context.getResolvedValues();
+
+        Object tool;
+			  StringBuilder responseAccumulator = new StringBuilder();
+			try {
+				tool = pluginLoader.createObject(plugin);
+				 return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt + params, context.getUsersQuery(), new Object[]{tool}, context.getModelName())).doOnNext(responseAccumulator::append) // Capture each chunk as it flies by
+	            		 .doFinally(signalType -> {
+	                    	 saveStepData(context, responseAccumulator.toString());
+	                     }); 
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+			
+		   
+	}
+    @Override
+  	protected ArrayNode getData(ExecutionContext context) {
+    	 Knowledge kb = context.getKnowledge();
+         if (kb == null && context.getName() != null) {
+             kb = knowledgeBase.GetByName(context.getName());
+             context.setKnowledge(kb);
+         }
+         logger.info("Executing Plugin " + context.getKnowledge().getName());
+         JsonNode paramNode = getParamNode(context.getKnowledge().getData());
+         String plugin = paramNode.get("Tool").asText();
+
+         String systemPrompt = null;
+         if (paramNode.has("SystemPrompt")) {
+             systemPrompt = paramNode.get("SystemPrompt").asText();
+         }
+         FlowItem item = context.getCurrentFlowItem();
+         if (item != null && item.SystemPrompt != null) {
+             systemPrompt = item.SystemPrompt;
+         }
+
+         logger.info("Parsed Plugin: " + plugin);
+         if (systemPrompt != null) {
+             systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, context.getResolvedValues());
+         }
+         String params = ". Consider context parameters of first priority as " + context.getVariables() + " and second priority as " + context.getResolvedValues();
+
+         Object tool;
+		try {
+			tool = pluginLoader.createObject(plugin);
+			  String msg = azureOpenAIHelper.execute(new LLMRequest(systemPrompt + params, context.getUsersQuery(), new Object[]{tool}, context.getModelName()));
+		         JsonNode jsonNode = objectMapper.readTree(msg);
+
+		         ArrayNode jsonArray;
+		         if (!jsonNode.isArray()) {
+		             jsonArray = objectMapper.createArrayNode();
+
+		             jsonArray.add(jsonNode);
+
+		         } else {
+		             jsonArray = (ArrayNode) jsonNode;
+		         }
+		         return jsonArray;
+		} catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException
+				| NoSuchMethodException | JsonProcessingException e) {
+			throw new RuntimeException(e);
+		}
+       
+    }
     @Override
     public ChatResponse getResponse(ExecutionContext context) {
-    	logger.info("Executing Plugin " + context.getKnowledge().getName() );
-         ChatResponse a = new ChatResponse();           
-        
-        ChatHistory chatHistory = context.getChatHistory();
-        Knowledge kb= context.getKnowledge();
-        JsonNode paramNode = getParamNode( context.getKnowledge().getData());
-        String plugin = paramNode.get("Plugin").asText();
-        String systemPrompt = paramNode.get("SystemPrompt").asText();
-        logger.info("Parsed Plugin: " + plugin );
+
        
-        if (chatHistory!=null && kb != null) {          
-            String params="consider context parameters: "+context.getVariables();
-            if( systemPrompt != null)
-                 params += ", SystemPrompt:" + systemPrompt;
-             logger.info(params);
-            chatHistory.addUserMessage(params);
-        }      
-        else
-            throw new IllegalArgumentException("Chat history or knowledge base is null");
-        Kernel kernel = pluginLoader.load(chat,plugin);
-        if (kernel != null) {
-            InvocationContext invocationContext = InvocationContext.builder()
-                    .withToolCallBehavior(ToolCallBehavior.allowAllKernelFunctions(true))
-                    .build();
-
-            List<ChatMessageContent<?>> messages = chat
-                    .getChatMessageContentsAsync(chatHistory, kernel, invocationContext)
-                    .block();
-
-            ChatMessageContent<?> result = CollectionUtil.getLastOrNull(messages);
-
-            String msg= result.getContent();
-            a.setMessage(msg);
-            a.setStatusCode(PROMPT);
-        } else {
-            return null;
-        }
-        return a;
-    }
-
-
-
-
-    private JsonNode getParamNode(String plugindef) {
-        JsonNode paramNode;
+       
+        ChatResponse a = new ChatResponse();
         try {
-            paramNode = objectMapper.readTree(plugindef);
-        } catch (JsonProcessingException e) {
-            logger.error("Error parsing plugin definition JSON", e);
-            throw new IllegalArgumentException("Invalid plugin definition JSON", e);
-        }
-        return paramNode;
-    }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'executeQueryByName'");
+        	ArrayNode jsonArray=getData(context);
+            saveStepData(context, jsonArray);
+            a.setData(jsonArray);
+        } catch (Exception e) {
+            logger.error("Error processing plugin step.", e);
+            a.setMessage(e.getMessage());
+        } 
+        return a;
     }
 }

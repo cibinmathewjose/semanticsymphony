@@ -17,7 +17,13 @@ public enum QueryType {
     /** Represents a plugin-based query. */
     PLUGIN,   
     /** Represents a text-based query for file */
+    TOOL,   
+    /** Represents velocity template engine */
+    VELOCITY,
+    /** Represents a text-based query for file */
     FILE,
      /** Represents a text-based query for sharepoint */
-     SHAREPOINT
+     SHAREPOINT,
+    /** Represents an SAP RFC */
+     RFC
 }

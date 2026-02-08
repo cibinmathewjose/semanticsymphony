@@ -6,6 +6,9 @@ import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -13,6 +16,7 @@ import com.fasterxml.jackson.databind.JsonNode;
  * TemplateResolver is a utility class for resolving placeholders in text templates.
  * It provides methods to check for placeholders and replace them with values from a context map.
  */
+@Component
 public class TemplateResolver {
     private static final Logger logger = LoggerFactory.getLogger(TemplateResolver.class);
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{\\$(.*?)}}");
@@ -20,10 +24,14 @@ public class TemplateResolver {
      * Constant used as a default value when no data is found for a placeholder.
      */
     public static final String NO_DATA_FOUND = "{NO_DATA_FOUND}";
+     public static final JsonTransformer transformer = new JsonTransformer();
     /**
      * Prefix used to indicate that the resolved value is in JSON format.
      */
-    public static final String JSON = "JSON:";
+    
+    @Autowired
+    private Environment environment;
+ 
 
     /**
      * Checks if the given text contains placeholders.
@@ -35,7 +43,10 @@ public class TemplateResolver {
         Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
         return matcher.find();
     }
-
+    public String resolvePlaceholders(String text)
+    {
+        return  resolvePlaceholders(text, null);
+    }
     /**
      * Resolves placeholders in the given text using the provided context map.
      *
@@ -43,14 +54,29 @@ public class TemplateResolver {
      * @param context a map containing placeholder keys and their corresponding values
      * @return the text with placeholders replaced by their corresponding values
      */
-    public static String resolvePlaceholders(String text, Map<String, JsonNode> context) {
+    public String resolvePlaceholders(String text, Map<String, JsonNode> context) {
         Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
         StringBuffer result = new StringBuffer();
 
         while (matcher.find()) {
             String expression = matcher.group(1).trim(); 
-            String replacement = resolveExpression(expression, context);           
-            matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+            if (expression.trim().toLowerCase().startsWith("env.")) {
+                String envVar = expression.substring(4).trim();
+                String envValue = environment.getProperty(envVar);              
+                if (envValue == null) {
+                    envValue = NO_DATA_FOUND;
+                }
+                matcher.appendReplacement(result, Matcher.quoteReplacement(envValue));
+                logger.info("Resolved environment variable: " + envVar + " with value: " + envValue);
+            }
+            else
+            {
+                if(context!=null)
+                {
+                    String replacement = resolveExpression(expression, context);           
+                    matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+                }
+            }
         }
         matcher.appendTail(result);
 
@@ -59,6 +85,12 @@ public class TemplateResolver {
 
     private static String resolveExpression(String expression, Map<String, JsonNode> context) {
         JsonNode value = null;
+        boolean compress = false;
+        if(expression.startsWith("|"))
+        {
+            expression=expression.substring(1).trim();  
+            compress=true;
+        }
         if (expression.contains("?") && expression.contains(":")) {
             String[] parts = expression.split("[\\?:]", 3);
             if (parts.length == 3) {
@@ -80,7 +112,16 @@ public class TemplateResolver {
         if (isJsonNodeNullorEmpty(value)) {         
             return NO_DATA_FOUND;
         } else {
-            return JSON+ JsonTransformer.getCleanedJsonNode(value).toString();
+            if(compress)
+            {
+                //logger.info("Compressing JSON : " + value.toPrettyString());
+                String data=  transformer.compress(value);
+                //logger.info("Compresed data : " + data);
+                //logger.info("recreated JSON : " + transformer.decompress(data).toPrettyString());
+                 return JsonTransformer.LLM_OPTIMIZED_DATA+data;
+            }
+            else
+                return JsonTransformer.JSON+ JsonTransformer.getCleanedJsonNode(value).toPrettyString();
         }
     }
     /**

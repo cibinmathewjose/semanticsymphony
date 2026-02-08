@@ -5,6 +5,8 @@ import org.symphonykernel.ExecutionContext;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import reactor.core.publisher.Flux;
+
 /**
  * IStep defines the contract for steps in the Symphony Kernel workflow.
  * It provides methods for generating responses and executing queries.
@@ -18,6 +20,7 @@ public interface IStep {
      * @return a ChatResponse object containing the generated response
      */
     ChatResponse getResponse(ExecutionContext context);
+    Flux<String> getResponseStream(ExecutionContext context);
 
     /**
      * Executes a query by name using the provided execution context.

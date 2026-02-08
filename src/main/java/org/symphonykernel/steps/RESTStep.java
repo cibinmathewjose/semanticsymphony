@@ -16,13 +16,10 @@ import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.RestRequestTemplate;
 import org.symphonykernel.config.Constants;
-import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
-import org.symphonykernel.transformer.JsonTransformer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -31,18 +28,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * It provides methods to create request headers, process API responses, and invoke APIs.
  */
 @Service("RESTStep")
-public class RESTStep implements IStep {
+public class RESTStep extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(RESTStep.class);
 
-    /**
-     * ObjectMapper is used for JSON processing.
-     */
-    @Autowired
-    protected ObjectMapper objectMapper;
 
     @Autowired
     IknowledgeBase knowledgeBase;
+    
+   
 
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
@@ -61,6 +55,7 @@ public class RESTStep implements IStep {
                     JsonNode root = invokeAPI(ctx);
                     JsonNode res = processResponse(ctx, root);
                     jsonArray.add(res);
+                    saveStepData(ctx, jsonArray);
                 } catch (Exception e) {
                     ObjectNode err = objectMapper.createObjectNode();
                     err.put("errors", e.getMessage());
@@ -135,6 +130,7 @@ public class RESTStep implements IStep {
         JsonNode root = call(url, body, headers, method);
         return root;
     }
+    
     
 	private JsonNode call(String url, String body, HttpHeaders headers, HttpMethod method) {
 		final HttpEntity<String> requestEntity = new HttpEntity<>(body,headers );
@@ -237,27 +233,4 @@ public class RESTStep implements IStep {
         }
         return tmp;
     }
-
-    @Override
-    public JsonNode executeQueryByName(ExecutionContext context) {
-        final ArrayNode[] array = new ArrayNode[1];
-        Knowledge kb = knowledgeBase.GetByName(context.getName());
-        if (kb != null && kb.getUrl() != null && !kb.getUrl().isEmpty()) {
-
-            try {
-                JsonNode var = context.getVariables();
-                if (context.getConvert()) {
-                    JsonTransformer transformer = new JsonTransformer();
-                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                    context.setVariables(var);
-                    context.setKnowledge(kb);
-                }
-                array[0] = getResponse(context).getData();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-        return array[0];
-    }
-
 }

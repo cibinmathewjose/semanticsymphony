@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.steps.SqlStep;
@@ -32,7 +33,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * <ul>
  *   <li>{@link IknowledgeBase} - Interface for interacting with the knowledge base repository.</li>
  *   <li>{@link ObjectMapper} - Used for JSON serialization and deserialization.</li>
- *   <li>{@link AzureOpenAIHelper} - Helper class for interacting with Azure OpenAI services.</li>
+ *   <li>{@link IAIClient} - Helper class for interacting with Azure OpenAI services.</li>
  *   <li>{@link SqlStep} - SQL assistant for additional processing.</li>
  *   <li>{@link FileContentProvider} - Provides file content for prompts.</li>
  * </ul>
@@ -60,7 +61,7 @@ public class QueryHandler {
 
     private final IknowledgeBase knowledgeBaseRepo;
     private final ObjectMapper objectMapper;
-    private final AzureOpenAIHelper openAIHelper;
+    private final IAIClient openAIHelper;
     
     @Autowired
     SqlStep sqlAssistant;
@@ -81,7 +82,7 @@ public class QueryHandler {
      * @param objectMapper the object mapper for JSON serialization and deserialization
      * @param openAIHelper the Azure OpenAI helper for processing prompts and generating responses
      */
-    public QueryHandler(IknowledgeBase knowledgeBaseRepo, ObjectMapper objectMapper, AzureOpenAIHelper openAIHelper) {
+    public QueryHandler(IknowledgeBase knowledgeBaseRepo, ObjectMapper objectMapper, IAIClient openAIHelper) {
         this.knowledgeBaseRepo = knowledgeBaseRepo;
         this.objectMapper = objectMapper;
         this.openAIHelper = openAIHelper;
@@ -103,7 +104,8 @@ public class QueryHandler {
             String jsonString = objectMapper.writeValueAsString(knowledgeDesc);          
             
             // Get response from OpenAI
-            String response = openAIHelper.evaluatePrompt(fileContentProvider.matchSelectQueryPrompt,jsonString,question);
+            String prompt = fileContentProvider.prepareMatchSelectQueryPrompt(jsonString, question);
+            String response = openAIHelper.evaluatePrompt(prompt);
 
             // Process the response if valid
             if (response != null ) {
@@ -111,12 +113,14 @@ public class QueryHandler {
                 if (vDef != null) {
                 	if(params!=null)
                     	question = "Consider the availabe variables "+params.toString()+question;
-                    return openAIHelper.evaluatePrompt(fileContentProvider.getQueryPrompt,vDef,question);
+                        prompt = fileContentProvider.prepareQueryPrompt(vDef, question);
+                    return openAIHelper.evaluatePrompt(prompt);
                 }
             }
         } catch (JsonProcessingException e) {
-            // Log the exception for debugging
-            e.printStackTrace();
+            logger.error("JSON processing error in matchSelectQuery", e);
+        } catch (Exception e) {
+            logger.error("Unexpected error in matchSelectQuery", e);
         }
         return null;
     }

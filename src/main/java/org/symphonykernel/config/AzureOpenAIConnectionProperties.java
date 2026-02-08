@@ -1,29 +1,21 @@
 package org.symphonykernel.config;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.core.env.Environment;
 
-/**
- * Configuration properties for connecting to Azure OpenAI.
- * 
- * <p>This class defines the configuration prefix and other properties
- * required to establish a connection with Azure OpenAI.
- * 
- * <p>It is used to bind configuration values from application properties.
- * 
- * @version 1.0
- * @since 1.0
- */
 @ConfigurationProperties(AzureOpenAIConnectionProperties.CONFIG_PREFIX)
 public class AzureOpenAIConnectionProperties {
 
-    /**
-     * The configuration prefix used for Azure OpenAI properties.
-     */
     public static final String CONFIG_PREFIX = "client.azureopenai";
+    
+     private String library;
     private String name;
     private int maxTokens;
     private int maxInputLength;
     private double temperature;
+    private int maxParallel;
+    private int maxProcessingTime=300;
     /**
      * Azure OpenAI API endpoint.From the Azure AI OpenAI at 'Resource
      * Management' select `Keys and Endpoint` and find it on the right side.
@@ -167,5 +159,102 @@ public class AzureOpenAIConnectionProperties {
     public void setName(String name) {
         this.name = name;
     }
+
+    /**
+     * Gets the maximum number of parallel connections allowed.
+     * 
+     * @return the maximum number of parallel connections
+     */
+    public int getMaxParallel() {
+        return maxParallel;
+    }
+
+    /**
+     * Sets the maximum number of parallel connections allowed.
+     * 
+     * @param maxParallel the maximum number of parallel connections
+     */
+    public void setMaxParallel(int maxParallel) {
+        this.maxParallel = maxParallel;
+    }
+
+    public void setMaxProcessingTime(int maxProcessingTime) {
+        this.maxProcessingTime = maxProcessingTime;
+    }
+
+    public int getMaxProcessingTime() {
+        return maxProcessingTime;
+    }
     
+    /**
+     * Gets the the library to be used to interact with LLM..
+     * 
+     * @return the library
+     */
+    public String getLibrary() {
+        return library;
+    }
+
+    /**
+     * Sets the library to be used to interact with LLM.
+     * 
+     * @param library the library
+     */
+    public void setLibrary(String library) {
+        this.library = library;
+    }
+
+    @Autowired
+    private Environment environment;
+
+    // --- helper for per-model completion tokens ---
+
+    /**
+     * Returns the max completion tokens configured for the given model name.
+     * <p>
+     * Looks for {@code client.azureopenai.{modelName}.options.maxCompletionTokens}
+     * first, and if not found falls back to the global {@code maxTokens}.
+     *
+     * @param modelName the logical / deployment model name
+     * @return the max completion tokens for this model, or {@code null} if not defined
+     */
+    public Integer getMaxCompletionTokens(String modelName) {
+        Integer maxCompletionTokens = null;
+        if (modelName != null && !modelName.isBlank() && environment != null) {
+            maxCompletionTokens = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.maxCompletionTokens", Integer.class);           
+        }
+        return maxCompletionTokens;
+    }
+    /**
+     * Returns the max tokens configured for the given model name.
+     * <p>
+     * Looks for {@code client.azureopenai.{modelName}.options.maxTokens}
+     * first, and if not found falls back to the global {@code maxTokens}.
+     *
+     * @param modelName the logical / deployment model name
+     * @return the max tokens for this model, or {@code null} if not defined
+     */
+    public Integer getMaxTokens(String modelName) {
+        Integer maxTokens = null;
+        if (modelName != null && !modelName.isBlank() && environment != null) {
+            maxTokens = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.maxTokens", Integer.class);           
+        }
+        return maxTokens;
+    }
+    /**
+     * Returns the temperature configured for the given model name.
+     * <p>
+     * Looks for {@code client.azureopenai.{modelName}.options.temperature}
+     * first, and if not found falls back to the global {@code temperature}.
+     *
+     * @param modelName the logical / deployment model name
+     * @return the temperature for this model, or {@code null} if not defined
+     */
+    public Double getTemperature(String modelName) {
+        Double temperature = null;
+        if (modelName != null && !modelName.isBlank() && environment != null) {
+            temperature = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.temperature", Double.class);           
+        }
+        return temperature;     
+    }
 }

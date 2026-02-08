@@ -1,4 +1,3 @@
-
 package org.symphonykernel.ai;
 
 import java.lang.reflect.InvocationTargetException;
@@ -10,12 +9,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.core.IPluginLoader;
-
-import com.microsoft.semantickernel.Kernel;
-import com.microsoft.semantickernel.plugin.KernelPlugin;
-import com.microsoft.semantickernel.plugin.KernelPluginFactory;
-import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
-
 /**
  * The PluginLoader class is a Spring-managed service that implements the {@link IPluginLoader} 
  * interface and the {@link ApplicationContextAware} interface. It is responsible for loading 
@@ -77,14 +70,7 @@ public class PluginLoader implements IPluginLoader, ApplicationContextAware {
      * @param fullyQualifiedName The fully qualified name of the class (e.g.,
      * "com.example.MyClass").
      * @return An instance of the class, or null if an error occurs.
-     * @throws ClassNotFoundException if the class with the given name is not
-     * found.
-     * @throws InstantiationException if the class cannot be instantiated.
-     * @throws IllegalAccessException if the constructor is not accessible.
-     * @throws InvocationTargetException if the constructor throws an exception.
-     * @throws NoSuchMethodException if an appropriate constructor is not found.
      */
-    
     public Object createObject(String fullyQualifiedName) throws ClassNotFoundException, InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException {
         // Load the class using the class loader.
         Class<?> clazz = Class.forName(fullyQualifiedName);
@@ -93,23 +79,27 @@ public class PluginLoader implements IPluginLoader, ApplicationContextAware {
         Object instance = applicationContext.getAutowireCapableBeanFactory().createBean(clazz);
         return instance;
     }
-    @Override
-    public Kernel load(ChatCompletionService chat,String pluginName) {
-        KernelPlugin plugin;
+    /**
+     * Creates an instance of a class given its fully qualified name and casts it to the specified type.
+     *
+     * @param <T> The type to cast the created object to.
+     * @param fullyQualifiedName The fully qualified name of the class (e.g., "com.example.MyClass").
+     * @param type The Class object representing the type to cast to.
+     * @return An instance of the class cast to the specified type, or null if an error occurs.
+     */
+    public <T> T createObject(String fullyQualifiedName, Class<T> type)  {
+     
+        // Use Spring to create the instance, which will handle autowiring
+        Object instance;
         try {
-            plugin = KernelPluginFactory.createFromObject(createObject(pluginName), pluginName);
+            instance = createObject(fullyQualifiedName);
 
-            return Kernel.builder()
-                    .withPlugin(plugin)
-                    .withAIService(ChatCompletionService.class, chat)
-                    .build();
-        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException
-                | NoSuchMethodException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-        return null;
+            // Cast the instance to the specified type
+            return type.cast(instance);
+        } catch (Exception e) {
+            logger.error("Error creating instance of class: " + fullyQualifiedName, e);
+            return null;
+        }      
     }
-
 
 }

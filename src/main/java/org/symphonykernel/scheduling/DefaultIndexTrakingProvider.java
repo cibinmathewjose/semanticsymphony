@@ -11,7 +11,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
@@ -20,7 +19,6 @@ import org.springframework.stereotype.Component;
 import org.symphonykernel.Index;
 import org.symphonykernel.Indexer;
 import org.symphonykernel.KnowledgeDescription;
-import org.symphonykernel.ai.Agent;
 import org.symphonykernel.ai.VectorSearchHelper;
 import org.symphonykernel.core.IIndexTraker;
 import org.symphonykernel.core.IknowledgeBase;
@@ -86,7 +84,6 @@ public class DefaultIndexTrakingProvider implements IIndexTraker, SchedulingConf
      * @param knowledgeBaserepo the knowledge base repository
      * @param knowledgeVector the vector search helper
      */
-	@Autowired
 	public DefaultIndexTrakingProvider(IknowledgeBase knowledgeBaserepo,VectorSearchHelper knowledgeVector) {
 		this.knowledgeBaserepo=knowledgeBaserepo;
 		this.knowledgeVector=knowledgeVector;
