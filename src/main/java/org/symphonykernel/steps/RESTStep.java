@@ -20,7 +20,6 @@ import org.symphonykernel.core.IknowledgeBase;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -33,14 +32,11 @@ public class RESTStep extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(RESTStep.class);
 
-    /**
-     * ObjectMapper is used for JSON processing.
-     */
-    @Autowired
-    protected ObjectMapper objectMapper;
 
     @Autowired
     IknowledgeBase knowledgeBase;
+    
+   
 
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {

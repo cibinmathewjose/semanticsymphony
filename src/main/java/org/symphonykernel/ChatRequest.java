@@ -14,7 +14,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 
-import ch.qos.logback.core.pattern.parser.Node;
 
 /**
  * Represents a chat request with user and session details.

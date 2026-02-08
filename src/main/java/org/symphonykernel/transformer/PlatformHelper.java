@@ -322,7 +322,7 @@ public class PlatformHelper {
         JsonNode bestValue = null;
 
         // Create a LevenshteinDistance instance
-        LevenshteinDistance levenshteinDistance = new LevenshteinDistance();
+        LevenshteinDistance levenshteinDistance =  LevenshteinDistance.getDefaultInstance();
         JsonNode item = payloadNode;
         if (payloadNode.isArray()) {
             item = payloadNode.get(0);
@@ -354,7 +354,7 @@ public class PlatformHelper {
         JsonNode bestValue = null;
 
         // Create a LevenshteinDistance instance
-        LevenshteinDistance levenshteinDistance = new LevenshteinDistance();
+        LevenshteinDistance levenshteinDistance = LevenshteinDistance.getDefaultInstance();
         JsonNode item = payloadNode;
         if (payloadNode.isArray()) {
             item = payloadNode.get(0);

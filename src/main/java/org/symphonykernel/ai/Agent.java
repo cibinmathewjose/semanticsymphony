@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
+
+import reactor.core.publisher.Flux;
 /**
  * The Agent class is a Spring service responsible for processing chat requests
  * and generating responses using a knowledge graph.
@@ -40,7 +42,6 @@ public class Agent {
      * 
      * @param knowledgeGraphBuilder the knowledge graph builder used for processing requests
      */
-    @Autowired
     public Agent(KnowledgeGraphBuilder knowledgeGraphBuilder) {
         this.knowledgeGraphBuilder = knowledgeGraphBuilder;
     }
@@ -52,12 +53,13 @@ public class Agent {
      * @return a {@link ChatResponse} containing the generated response
      */
     public ChatResponse process(ChatRequest request) {      
-        logger.info("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
+        long start = System.nanoTime();
+        logger.debug("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
         if (null == request) {
             return new ChatResponse("Request is null");
         } 
         ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
-        logger.info("ExecutionContext created");   
+        logger.debug("ExecutionContext created");   
       
         try
         {
@@ -69,8 +71,30 @@ public class Agent {
         	logger.warn("Error setting parameters, try to process as followup Question",ex);        	
             return knowledgeGraphBuilder.getFollowupResponse(request);
         }
-        return knowledgeGraphBuilder.getResponse(ctx);
+        ChatResponse response = knowledgeGraphBuilder.getResponse(ctx);
+        long durationMs = (System.nanoTime() - start) / 1_000_000;
+        logger.info("Processed request in {} ms", durationMs);
+        return response;
     }
+    public Flux<String> streamProcess(ChatRequest request) {  	   
+		if (null == request) {
+			return Flux.just("Request is null");
+		} 
+		ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
+		logger.debug("ExecutionContext created");   
+	  
+		try
+		{
+		ctx = knowledgeGraphBuilder.identifyIntent(ctx);
+		ctx = knowledgeGraphBuilder.setParameters(ctx); 
+		}
+		catch(Exception ex)
+		{
+			logger.warn("Error setting parameters, try to process as followup Question",ex);        	
+			return knowledgeGraphBuilder.streamFollowupResponse(request);
+		}
+		return knowledgeGraphBuilder.streamResponse(ctx);
+	}
     public ChatResponse getAsyncResults(String requestId) {   
                 
         return knowledgeGraphBuilder.getAsyncResponse(requestId);

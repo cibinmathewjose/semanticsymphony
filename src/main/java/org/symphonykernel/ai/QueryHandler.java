@@ -118,8 +118,9 @@ public class QueryHandler {
                 }
             }
         } catch (JsonProcessingException e) {
-            // Log the exception for debugging
-            e.printStackTrace();
+            logger.error("JSON processing error in matchSelectQuery", e);
+        } catch (Exception e) {
+            logger.error("Unexpected error in matchSelectQuery", e);
         }
         return null;
     }

@@ -50,14 +50,31 @@ public class VelocityStep extends BaseStep {
      */
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
+    	  
+        try {
+        	ArrayNode jsonArray = getData(ctx);
+    	ChatResponse response = new ChatResponse();
+        response.setData(jsonArray);
+        saveStepData(ctx, jsonArray);
+        return response;
+    } catch (Exception e) {
+        logger.error("Error processing Velocity template", e);
+        ArrayNode errorArray = objectMapper.createArrayNode();
+        errorArray.add(new TextNode("Error processing template: " + e.getMessage()));
         
-        JsonNode input = ctx.getVariables();
+        ChatResponse errorResponse = new ChatResponse();
+        errorResponse.setData(errorArray);
+        return errorResponse;
+    }
+    }
+    @Override
+	protected ArrayNode getData(ExecutionContext ctx) {
+    	JsonNode input = ctx.getVariables();
         Map<String, JsonNode> resolvedValues =   ctx.getResolvedValues();     
         resolvedValues.put("input", input);
         Knowledge template = ctx.getKnowledge();
         String templateData = template.getData();
-        
-        try {
+      
             // Create Velocity context and populate with resolved values
             VelocityContext velocityContext = new VelocityContext();
 
@@ -91,20 +108,8 @@ public class VelocityStep extends BaseStep {
             ArrayNode jsonArray = objectMapper.createArrayNode();
             jsonArray.add(new TextNode(renderedText));
             
-            ChatResponse response = new ChatResponse();
-            response.setData(jsonArray);
-            saveStepData(ctx, jsonArray);
-            return response;
-            
-        } catch (Exception e) {
-            logger.error("Error processing Velocity template", e);
-            ArrayNode errorArray = objectMapper.createArrayNode();
-            errorArray.add(new TextNode("Error processing template: " + e.getMessage()));
-            
-            ChatResponse errorResponse = new ChatResponse();
-            errorResponse.setData(errorArray);
-            return errorResponse;
-        }
+            return jsonArray;           
+        
     }
     
     /**

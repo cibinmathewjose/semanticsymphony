@@ -9,12 +9,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.core.IPluginLoader;
-
-import com.microsoft.semantickernel.Kernel;
-import com.microsoft.semantickernel.plugin.KernelPlugin;
-import com.microsoft.semantickernel.plugin.KernelPluginFactory;
-import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
-
 /**
  * The PluginLoader class is a Spring-managed service that implements the {@link IPluginLoader} 
  * interface and the {@link ApplicationContextAware} interface. It is responsible for loading 

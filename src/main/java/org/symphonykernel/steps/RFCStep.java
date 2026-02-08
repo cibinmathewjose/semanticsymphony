@@ -66,6 +66,7 @@ public class RFCStep extends  BaseStep {
     
     // Using Jackson's ObjectMapper for all JSON operations
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    
 
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {

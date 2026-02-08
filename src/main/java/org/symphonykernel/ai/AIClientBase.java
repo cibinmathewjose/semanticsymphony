@@ -6,14 +6,16 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.symphonykernel.LLMRequest;
 import org.symphonykernel.config.AzureOpenAIConnectionProperties;
 import org.symphonykernel.config.Constants;
 import org.symphonykernel.transformer.JsonTransformer;
+
 
 
 public abstract class AIClientBase {
@@ -48,128 +50,172 @@ public abstract class AIClientBase {
         jsonTransformer = new JsonTransformer();
     }
 
-    public abstract String execute(String systemPrompt, String userPrompt, Object[] tools, String model);
+    public abstract <R> R execute(LLMRequest request);
 
     /**
-     * Executes a system prompt and user prompt.
+     * Executes the given LLM request, handling prompt splitting and chunking logic
+     * when required.
      *
-     * @param systemPrompt the system prompt to provide context for the
-     * assistant
-     * @param question the user prompt containing the question or task
-     * @return the execution result as a string
+     * @param <R>          the type of the result returned by the LLM function
+     * @param request      the request containing system and user prompts, tools,
+     *                     and model information
+     * @param llmFunction  the function that actually executes the LLM call
+     * @return the execution result returned by {@code llmFunction}
+     * @throws IllegalArgumentException if both system and user prompts are empty
      */
-    protected String processPromptString(String systemPrompt, String question, Object[] tools, String model) {
+    protected <R> R processPromptString(LLMRequest request ,Function<LLMRequest, R> llmFunction) {
 
-        if ((systemPrompt == null || systemPrompt.trim().isEmpty()) && (question == null || question.trim().isEmpty())) {
-            return "Please provide a valid question. If multiple prompts in one go, please start with " + HEAD + " and use " + SPLITTER + " to split each section. Use " + FINAL_FORMATTING + " in header to provide final formatting instructions.";
-        }
+       
+        validatePrompts(request.getSystemMessage(), request.getUserPrompt());
 
-        if (question.contains(SPLITTER)) {
-            String[] parts = question.split(SPLITTER);
-            StringBuilder finalResponse = new StringBuilder();
-            int i = 0;
-            final String basePrompt;
-            String finalFormattingPrompt = "";
-
-            if (parts[0].contains(HEAD)) {
-                i = 1;
-                String header = parts[0];
-                if (parts[0].contains(FINAL_FORMATTING)) {
-                    basePrompt = header.substring(header.indexOf(HEAD) + HEAD.length(), header.indexOf(FINAL_FORMATTING)).trim();
-                    finalFormattingPrompt = header.substring(header.indexOf(FINAL_FORMATTING) + FINAL_FORMATTING.length()).trim();
-                } else {
-                    basePrompt = parts[0].substring(header.indexOf(HEAD) + HEAD.length()).trim();
-                }
-            } else {
-                basePrompt = systemPrompt;
-            }
-
-            // Create a thread pool with a fixed number of threads
-            List<CompletableFuture<String>> futures = new ArrayList<>();
-            String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
-            logger.info("Processing {} prompts in parallel with traceId {}", parts.length, traceId);
-
-            for (; i < parts.length; i++) {
-                String part = parts[i];
-                futures.add(CompletableFuture.supplyAsync(() -> {
-                    MDC.put(Constants.LOGGER_TRACE_ID, traceId);
-                    try {
-                        return process(basePrompt, part, tools, model);
-                    } catch (Exception e) {
-                        logger.error("Error processing part in parallel: {}", e.getMessage(), e);
-                        return "Error processing part: " + e.getMessage();
-                    } finally {
-                        MDC.clear();
-                    }
-                }, executorService));
-            }
-
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-
-            for (CompletableFuture<String> future : futures) {
-                try {
-                    String response = future.get();
-                    if (response != null) {
-                        finalResponse.append(response).append(System.lineSeparator());
-                    }
-                } catch (InterruptedException | ExecutionException e) {
-                    logger.error("Error processing part in parallel: {}", e.getMessage(), e);
-                }
-            }
-
-            if (!finalFormattingPrompt.isEmpty()) {
-                return process(finalFormattingPrompt, finalResponse.toString(), tools, model);
-            }
-            return finalResponse.toString();
+        if (request.getUserPrompt().contains(SPLITTER)) {
+            return processAsParts(request.getSystemMessage(), request.getUserPrompt(), request.getTools(), request.getModelName(), llmFunction);
         } else {
-            return process(systemPrompt, question, tools, model);
+            return process(request,llmFunction);
+        }
+    }
+ 
+
+    private void validatePrompts(String systemPrompt, String question) throws IllegalArgumentException {
+        if ((systemPrompt == null || systemPrompt.trim().isEmpty()) && (question == null || question.trim().isEmpty())) {
+            throw new IllegalArgumentException("Please provide a valid question. If multiple prompts in one go, please start with " + HEAD + " and use " + SPLITTER + " to split each section. Use " + FINAL_FORMATTING + " in header to provide final formatting instructions.");
         }
     }
 
-    private String process(String systemPrompt, String userPrompt, Object[] tools, String model) {
-        if (systemPrompt == null || StringUtils.isEmpty(systemPrompt) || systemPrompt.equals(userPrompt)) {
-            systemPrompt = "You are an AI Aissistant that helps people find information from the provided context data.";
-        } else {
-            logger.info("Processing data with LLM <!PromptHead!>\r\n {} \r\n  <!SplitPromptHere!> {}\r\n", systemPrompt, userPrompt);
+    private <R> R processAsParts(String systemPrompt, String question, Object[] tools, String model, Function<LLMRequest, R> llmFunction) {
+        String[] parts = question.split(SPLITTER);
+        String header = parts[0];
+        var headerPrompt= getBasePrompt( header);
+       
+        final String basePrompt =headerPrompt!=null? headerPrompt: systemPrompt;
+        List<String> partList = new ArrayList<>();
+        partList.addAll(List.of(parts).subList(headerPrompt!=null? 1: 0, parts.length));
 
+        // Create a thread pool with a fixed number of threads
+        List<CompletableFuture<R>> futures = getFuture(tools, model,  basePrompt, partList, llmFunction);
+        String finalFormattingPrompt =  getFormatingPrompt( header);
+       
+            return getFinalResponse(tools, model, finalFormattingPrompt, futures, llmFunction);
+        
+    }
+
+    private <R> R getFinalResponse(Object[] tools, String model, String finalFormattingPrompt ,
+            List<CompletableFuture<R>> futures, Function<LLMRequest, R> llmFunction) {
+        StringBuilder finalResponse = new StringBuilder();
+        for (CompletableFuture<R> future : futures) {
+            try {
+                R response = future.get();
+                if (response != null) {
+                    finalResponse.append(response).append(System.lineSeparator());
+                }
+            } catch (InterruptedException | ExecutionException e) {
+                logger.error("Error processing part in parallel: {}", e.getMessage(), e);
+            }
         }
+     
+        if(finalFormattingPrompt == null || finalFormattingPrompt.isEmpty())
+            finalFormattingPrompt=  "Combine the responses into a single coherent answer: " ;
+        
+        return process(new LLMRequest(finalFormattingPrompt, finalResponse.toString(), tools, model), llmFunction);
+        
+    }
+
+    private <R> List<CompletableFuture<R>> getFuture(Object[] tools, String model,
+            final String basePrompt, List<String> partList, Function<LLMRequest, R> llmFunction) {
+        List<CompletableFuture<R>> futures = new ArrayList<>();
+        String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
+        logger.info("Processing {} prompts in parallel with traceId {}", partList.size(), traceId);
+        for (String part : partList) {          
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                MDC.put(Constants.LOGGER_TRACE_ID, traceId);
+                try {
+                    return process(new LLMRequest(basePrompt, part, tools, model), llmFunction);
+                } catch (Exception e) {
+                    logger.error("Error processing part in parallel: {}", e.getMessage(), e);
+                    return null;
+                } finally {
+                    MDC.clear();
+                }
+            }, executorService));
+        }
+
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        return futures;
+    }
+
+    private String getBasePrompt(String header) {
+        String basePrompt = null;
+        if (header.contains(HEAD)) {
+           // i = 1;
+            if (header.contains(FINAL_FORMATTING)) {
+                basePrompt = header.substring(header.indexOf(HEAD) + HEAD.length(), header.indexOf(FINAL_FORMATTING)).trim();
+            } else {
+                basePrompt = header.substring(header.indexOf(HEAD) + HEAD.length()).trim();
+            }
+        } 
+        return basePrompt;
+    }
+ private String getFormatingPrompt(String header) {
+        String finalFormattingPrompt = null;
+        if (header.contains(HEAD) && header.contains(FINAL_FORMATTING)) {
+             finalFormattingPrompt = header.substring(header.indexOf(FINAL_FORMATTING) + FINAL_FORMATTING.length()).trim();
+        } 
+        return finalFormattingPrompt;
+    }
+    private  <R> R process(LLMRequest request,Function<LLMRequest, R> llmFunction) {
+        String systemPrompt = request.getSystemMessage();
+        String userPrompt = request.getUserPrompt();
+        Object[] tools = request.getTools();
+        String model = request.getModelName();
+
+        
         int len = systemPrompt.length();
         int len2 = userPrompt.length();
 
         if (maxInputLength > 4000 && (len + len2 > maxInputLength)) {
             if (systemPrompt.contains(CHUNKS) && len > len2) {
-                return executeChunks(systemPrompt, userPrompt, tools, true, model);
+                return executeChunks(systemPrompt, userPrompt, tools, true, model,llmFunction);
 
             } else if (userPrompt.contains(CHUNKS) && len2 > len) {
-                return executeChunks(userPrompt, systemPrompt, tools, false, model);
+                return executeChunks(userPrompt, systemPrompt, tools, false, model,llmFunction);
 
             } else {
-                return "Data length execeeded " + maxInputLength + " chars limit"; //128000
+                throw new IllegalArgumentException("Data length execeeded " + maxInputLength + " chars limit"); //128000
             }
         } else if (systemPrompt.contains(CHUNK_PROMPT)) {
-            return clearChunkPrompt(systemPrompt, userPrompt, tools, true, model);
+            return clearChunkPrompt(systemPrompt, userPrompt, tools, true, model,llmFunction);
         } else if (userPrompt.contains(CHUNK_PROMPT)) {
-            return clearChunkPrompt(userPrompt, systemPrompt, tools, false, model);
+            return clearChunkPrompt(userPrompt, systemPrompt, tools, false, model,llmFunction);
         } else {
-            return execute(systemPrompt, userPrompt, tools, model);
+            return llmFunction.apply(request);
         }
     }
-
-    private String clearChunkPrompt(String chunkedPrompt, String prompt, Object[] tools, boolean isSystemPromptChunk, String model) {
+    
+    private  <R> R clearChunkPrompt(String chunkedPrompt, String prompt, Object[] tools, boolean isSystemPromptChunk, String model, Function<LLMRequest, R> llmFunction) {
         int startIdx = chunkedPrompt.indexOf(CHUNKS);
         String head = chunkedPrompt.substring(0, chunkedPrompt.indexOf(CHUNK_PROMPT));
         String tail = chunkedPrompt.substring(chunkedPrompt.indexOf(CHUNKS) + CHUNKS.length());
         int endIdx = tail.indexOf(CHUNKS);
         tail = tail.substring(endIdx+10);
-        String datapart = chunkedPrompt.substring(startIdx + CHUNKS.length(), endIdx);
+        startIdx += CHUNKS.length();
+        String datapart ;
+        if(endIdx>startIdx) {
+        	datapart = chunkedPrompt.substring(startIdx + CHUNKS.length(), endIdx);
+        	
+		}
+        else {
+        	datapart="NONE";
+			logger.warn("No data found between chunk markers in the prompt.");
+		}
         if (isSystemPromptChunk) {
-            return process(head + System.lineSeparator() + datapart + System.lineSeparator() + tail, prompt, tools, model);
+            return llmFunction.apply(new LLMRequest(head + System.lineSeparator() + datapart + System.lineSeparator() + tail, prompt, tools, model));
         } else {
-            return process(prompt, head + System.lineSeparator() + datapart + System.lineSeparator() + tail, tools, model);
+            return llmFunction.apply(new LLMRequest(prompt, head + System.lineSeparator() + datapart + System.lineSeparator() + tail, tools, model));
         }
+        
     }
 
-    private String executeChunks(String chunkedPrompt, String prompt, Object[] tools, boolean isSystemPromptChunk, String model) {
+    private   <R> R executeChunks(String chunkedPrompt, String prompt, Object[] tools, boolean isSystemPromptChunk, String model,Function<LLMRequest, R> llmFunction) {
         
         int startIdx = chunkedPrompt.indexOf(CHUNKS);
         String chunkPrompt;
@@ -212,9 +258,9 @@ public abstract class AIClientBase {
            
         } catch (Exception e) {
             logger.error("Error processing chunks {}", e.getMessage(), e);
-            return "Error processing chunk " + e.getMessage();
+            return null;
         }
-        List<CompletableFuture<String>> futures = new ArrayList<>();
+        List<CompletableFuture<R>> futures = new ArrayList<>();
         String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
     
         logger.info("Processing {} chunks in parallel with traceId {}", chunks.size(), traceId);
@@ -224,7 +270,7 @@ public abstract class AIClientBase {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 MDC.put(Constants.LOGGER_TRACE_ID, traceId);
                 try {
-                    String result;
+                    R result;
                     logger.info("Processing chunks on {}", isSystemPromptChunk ? "system prompt" : "user prompt");
                     String systemprompt;
                     String userprompt;
@@ -236,13 +282,13 @@ public abstract class AIClientBase {
                         userprompt= head + System.lineSeparator() + part + System.lineSeparator() + tail;
                     }
                     
-                    result= execute(systemprompt, userprompt, tools, model);
+                    result= llmFunction.apply(new LLMRequest(systemprompt, userprompt, tools, model));
                     logger.info("Processed systemprompt \n{}\n userprompt \n{}\n  Result \n{}", systemprompt, userprompt, result);
                     return result;
 
                 } catch (Exception e) {
                     logger.error("Error processing part in parallel: {}", e.getMessage(), e);
-                    return "Error processing part: " + e.getMessage();
+                    return null;
                 } finally {
                     MDC.clear();
                 }
@@ -252,9 +298,9 @@ public abstract class AIClientBase {
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         int c = 1;
         StringBuilder finalResponse = new StringBuilder();
-        for (CompletableFuture<String> future : futures) {
+        for (CompletableFuture<R> future : futures) {
             try {
-                String response = future.get();
+                R response = future.get();
                 if (response != null) {
                     finalResponse.append("CHUNK ").append(c++).append(System.lineSeparator()).append(response).append(System.lineSeparator());
                 }
@@ -263,7 +309,8 @@ public abstract class AIClientBase {
             }
         }
 
-        return execute(chunkPrompt, finalResponse.toString(), tools, model);
+        return execute(new LLMRequest(chunkPrompt, finalResponse.toString(), tools, model));
     }
 
 }
+

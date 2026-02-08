@@ -18,7 +18,6 @@ import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
-import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -187,7 +186,8 @@ public class SqlStep extends  BaseStep {
         	logger.warn("knowldge not found {}", name);
         return array[0];
     }
-
+   
+   
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {     
 

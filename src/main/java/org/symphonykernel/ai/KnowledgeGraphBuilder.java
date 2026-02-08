@@ -19,6 +19,7 @@ import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
+import org.symphonykernel.LLMRequest;
 import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
 import org.symphonykernel.UserSessionStepDetails;
@@ -49,6 +50,7 @@ import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import reactor.core.publisher.Flux;
 
 /**
  * The KnowledgeGraphBuilder class is responsible for building and managing the
@@ -127,18 +129,26 @@ public class KnowledgeGraphBuilder {
 
     private static final Logger logger = LoggerFactory.getLogger(KnowledgeGraphBuilder.class);
 
-    private static final String NONE = "NONE";
-    private static final String MODEL = "model";
-    private static final String STATUS_SUCCESS = "SUCCESS";
-    private static final String STATUS_FAILED = "FAILED";
-    private static final String FOLLOWUP = "FOLLOWUP";
-    private static final String STATUS_PROCESSING = "PROCESSING";
-    private static Map<String, String> parameterTranslationMap = new HashMap<>();
+    private static final class Status {
+        static final String NONE = "NONE";
+        static final String MODEL = "model";
+        static final String SUCCESS = "SUCCESS";
+        static final String FAILED = "FAILED";
+        static final String FOLLOWUP = "FOLLOWUP";
+        static final String PROCESSING = "PROCESSING";
+    }
 
     @Value("${symphony.threadpool.size:25}")
     private int threadPoolSize;
+    @Value("${symphony.knowledge.cache.ttl.ms:60000}")
+    private long cacheTtlMs;
 
     private ExecutorService executorService;
+
+    // Caching for knowledge descriptions (thread-safe)
+    private static final Object cacheLock = new Object();    
+    private static String knowledgeDescJsonCache = null;
+    private static long knowledgeDescCacheTimestamp = 0;
 
     /**
      * Initializes the thread pool with the configured size. This method is
@@ -158,7 +168,17 @@ public class KnowledgeGraphBuilder {
     public void cleanup() {
         if (executorService != null) {
             executorService.shutdown();
-            logger.info("Thread pool shutdown initiated");
+            try {
+                if (!executorService.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    executorService.shutdownNow();
+                    logger.warn("Thread pool forced shutdown after timeout");
+                }
+            } catch (InterruptedException e) {
+                executorService.shutdownNow();
+                Thread.currentThread().interrupt();
+                logger.warn("Thread pool shutdown interrupted", e);
+            }
+            logger.info("Thread pool shutdown completed");
         }
     }
     @Autowired
@@ -245,11 +265,11 @@ public class KnowledgeGraphBuilder {
         ExecutionContext ctx = new ExecutionContext();
         ctx.setRequest(request);
          String payload=request.getPayload();
-        if(payload!=null && !payload.isEmpty()&&!payload.equals(NONE))
+        if(payload!=null && !payload.isEmpty()&&!payload.equals(Status.NONE))
         {
             if(payload.contains("="))
             {
-                payload=request.getPayloadParam(MODEL);
+                payload=request.getPayloadParam(Status.MODEL);
             }
             ctx.setModelName(payload);
         }
@@ -260,6 +280,8 @@ public class KnowledgeGraphBuilder {
         UserSession info = null;
         info = sessionManager.createUserSession(request);
         ctx.setUserSession(info);
+        ctx.put("input", ctx.getVariables());
+        ctx.put("userprompt", ctx.getUsersQuery()); 
         return ctx;
     }
 
@@ -296,11 +318,11 @@ public class KnowledgeGraphBuilder {
         if (knowledge == null) {
             throw new RuntimeException("No matching knowldge found");
         }
-        logger.info("Knowldge idetified as {}", knowledge.getName());
+        logger.debug("Knowldge idetified as {}", knowledge.getName());
         ctx.setKnowledge(knowledge);
         UserSession s = ctx.getUserSession();
         if (s != null) {
-            s.setStatus(STATUS_PROCESSING);
+            s.setStatus(Status.PROCESSING);
             s.setKnowldgeName(knowledge.getName());
             sessionManager.updateUserSession(s);
         }
@@ -324,13 +346,13 @@ public class KnowledgeGraphBuilder {
         }
         Knowledge knowledge = ctx.getKnowledge();
         if (knowledge != null && knowledge.getParams() != null) {
-            if (request.getPayload() != null && !NONE.equals(request.getPayload())) {
+            if (request.getPayload() != null && !Status.NONE.equals(request.getPayload())) {
                 logger.warn("Ignore paylod : " + request.getPayload());
             } else {
                 String prompt = fileContentProvider.prepareParamParserPrompt(knowledge.getParams(), request.getQuery());
                 String params = openAI.evaluatePrompt(prompt);
                 request.setPayload(params);
-                logger.info("payload identified as : " + params);
+                logger.debug("payload identified as : " + params);
             }
         }
         ctx.setRequest(request);
@@ -339,7 +361,7 @@ public class KnowledgeGraphBuilder {
             node = mapMissingVariables(node, knowledge.getParams());
         }        
         ctx.setVariables(node);
-        logger.info("Variables set as : " + node);
+        logger.debug("Variables set as : {}", node);
         return ctx;
     }
 
@@ -508,7 +530,7 @@ public class KnowledgeGraphBuilder {
         response = new ChatResponse();
         response.setMessage("No knowledge found for the query");
         response.setRequestId(ctx.getRequestId());
-        response.setStatusCode(STATUS_FAILED);
+        response.setStatusCode(Status.FAILED);
         sessionManager.updateUserSession(ctx.getUserSession(), response);
         return response;
     }
@@ -518,7 +540,7 @@ public class KnowledgeGraphBuilder {
         response = new ChatResponse();
         response.setMessage("Processing request");
         response.setRequestId(ctx.getRequestId());
-        response.setStatusCode(STATUS_PROCESSING);
+        response.setStatusCode(Status.PROCESSING);
         executorService.submit(() -> {
             process(ctx);
         });
@@ -543,7 +565,7 @@ public class KnowledgeGraphBuilder {
                 UserSession session = ctx.getUserSession();
                 if (session != null) {
                     session.setBotResponse("An error occurred while processing your request: " + e.getMessage());
-                    session.setStatus(STATUS_FAILED);
+                    session.setStatus(Status.FAILED);
                     sessionManager.updateUserSession(session, null);
                 }
             } finally {
@@ -554,6 +576,29 @@ public class KnowledgeGraphBuilder {
         }
         return response;
     }
+    public Flux<String> streamResponse(ExecutionContext ctx) {
+
+		Knowledge knowledge = ctx.getKnowledge();
+		IStep step = getExecuter(knowledge);
+		if (step == null) {
+			return Flux.just("No knowledge found for the query");
+		} else {
+			try {
+				logger.info("Processing request for requestId: {}", ctx.getRequestId());
+				return processRequestStream(ctx,  step);
+			} catch (Exception e) {
+				logger.error("Error processing request for requestId: {}", ctx.getRequestId(), e);
+				UserSession session = ctx.getUserSession();
+				if (session != null) {
+					session.setBotResponse("An error occurred while processing your request: " + e.getMessage());
+					session.setStatus(Status.FAILED);
+					sessionManager.updateUserSession(session, null);
+				}
+				return Flux.just("An error occurred while processing your request: " + e.getMessage());
+			} 
+
+		}
+	}
 
     public ChatResponse getFollowupResponse(ChatRequest request) {
         ChatResponse response = new ChatResponse();
@@ -570,6 +615,43 @@ public class KnowledgeGraphBuilder {
         return getFollowupResponse(rId, request.getQuery());
 
     }
+    public Flux<String> streamFollowupResponse(ChatRequest request) {
+		if (request == null || request.getQuery() == null || request.getSession() == null) {
+			return Flux.just("Sorry, I am unable to process the question, please check the FAQ for more information about my capabilities.");
+		}
+		String rId = sessionManager.getLastRequestId(request.getSession());
+		if (rId == null || rId.isEmpty()) {
+			return Flux.just("No previous session found for the given conversation id");
+		}
+
+		return streamFollowupResponse(rId, request.getQuery());
+
+	}
+
+	 public Flux<String> streamFollowupResponse(String requestId, String query) {
+		
+		 if (requestId == null || requestId.isEmpty() || query == null || query.isEmpty()) {
+			 	return Flux.just("Conversation id and followup question required");
+	        }
+	        ExecutionContext ctx = loadContext(requestId, Status.FOLLOWUP);
+
+	        if (ctx == null || ctx.getUserSession() == null) {
+	        	return Flux.just("No previous session found for the given conversation id");
+	        }
+	        UserSession s = ctx.getUserSession();
+	        List<UserSessionStepDetails> steps = sessionManager.getRequestDetails(requestId);
+	        if (!s.getStatus().equals(Status.SUCCESS) || steps == null || steps.isEmpty() || s.getKnowldgeName() == null) {
+	        	return Flux.just("Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.");
+	        } else {
+	        	sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), "");
+	        	return Flux.concat(
+	        			Flux.just("Processing request"),
+	        	        Flux.just("Status: Searching database..."),
+	        	        processFollowup(query, ctx, s, steps) // This returns the actual Flux<String>
+	        	    );
+	        }	      
+	       
+	}
 
     /**
      * Retrieves the follow-up response for a given request ID and query.
@@ -585,7 +667,7 @@ public class KnowledgeGraphBuilder {
             response.setMessage("Conversation id and followup question required");
             return response;
         }
-        ExecutionContext ctx = loadContext(requestId, FOLLOWUP);
+        ExecutionContext ctx = loadContext(requestId, Status.FOLLOWUP);
 
         if (ctx == null || ctx.getUserSession() == null) {
             response.setMessage("No previous session found for the given conversation id");
@@ -593,14 +675,14 @@ public class KnowledgeGraphBuilder {
         }
         UserSession s = ctx.getUserSession();
         List<UserSessionStepDetails> steps = sessionManager.getRequestDetails(requestId);
-        if (!s.getStatus().equals(STATUS_SUCCESS) || steps == null || steps.isEmpty() || s.getKnowldgeName() == null) {
+        if (!s.getStatus().equals(Status.SUCCESS) || steps == null || steps.isEmpty() || s.getKnowldgeName() == null) {
             response.setMessage("Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.");
         } else {
 
             response.setMessage("Processing request");
             response.setRequestId(ctx.getRequestId());
-            response.setStatusCode(STATUS_PROCESSING);
-            sessionManager.saveRequestDetails(ctx.getRequestId(), FOLLOWUP + "-" + query.hashCode(), "");
+            response.setStatusCode(Status.PROCESSING);
+            sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), "");
             executorService.submit(() -> {
                 processFollowup(query, response, ctx, s, steps);
             });
@@ -609,7 +691,7 @@ public class KnowledgeGraphBuilder {
 
         }
         response.setRequestId(ctx.getRequestId());
-        response.setStatusCode(STATUS_SUCCESS);
+        response.setStatusCode(Status.SUCCESS);
         return response;
     }
 
@@ -622,33 +704,68 @@ public class KnowledgeGraphBuilder {
             StringBuilder finalout = new StringBuilder();
             String finalStep = s.getKnowldgeName();
 
-            for (UserSessionStepDetails step : steps) {
-                String stepName = step.getStepName();
-                String stepData = step.getData();
-                String stepDescription = knowledgeBaserepo.getKnowledgeDescriptions(stepName);
-                if (stepData == null || stepData.isEmpty()) {
-                    stepDescription = "";
-                }
-                if (stepName.equalsIgnoreCase(finalStep)) {
-
-                    finalout.append("key: ").append(stepName).append("\n");
-                    finalout.append("Description: ").append(stepDescription).append("\n");
-                    finalout.append("Data: ").append(stepData).append("\n\n");
-                } else {
-                    stepDetails.append("key: ").append(stepName).append("\n");
-                    stepDetails.append("Description: ").append(stepDescription).append("\n");
-                    stepDetails.append("Data: ").append(stepData).append("\n\n");
-                }
-            }
+            build(steps, stepDetails, finalout, finalStep);
             String prompt = fileContentProvider.prepareFollowupPrompt(stepDetails.toString(), finalout.toString());
             String systemPrompt = templateResolver.resolvePlaceholders(prompt);
-            String out = openAI.execute(systemPrompt, query,ctx.getModelName());
-            sessionManager.saveRequestDetails(ctx.getRequestId(), FOLLOWUP + "-" + query.hashCode(), " Question : " + query + " Ans: " + out);
+            String out = openAI.execute(new LLMRequest(systemPrompt, query, null, ctx.getModelName()));
+            sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), " Question : " + query + " Ans: " + out);
             response.setMessage(out);
 
         } finally {
             MDC.clear();
         }
+    }
+
+	private void build(List<UserSessionStepDetails> steps, StringBuilder stepDetails, StringBuilder finalout,
+			String finalStep) {
+		for (UserSessionStepDetails step : steps) {
+		    String stepName = step.getStepName();
+		    String stepData = step.getData();
+		    String stepDescription = knowledgeBaserepo.getKnowledgeDescriptions(stepName);
+		    if (stepData == null || stepData.isEmpty()) {
+		        stepDescription = "";
+		    }
+		    if (stepName.equalsIgnoreCase(finalStep)) {
+
+		        finalout.append("key: ").append(stepName).append("\n");
+		        finalout.append("Description: ").append(stepDescription).append("\n");
+		        finalout.append("Data: ").append(stepData).append("\n\n");
+		    } else {
+		        stepDetails.append("key: ").append(stepName).append("\n");
+		        stepDetails.append("Description: ").append(stepDescription).append("\n");
+		        stepDetails.append("Data: ").append(stepData).append("\n\n");
+		    }
+		}
+	}
+    private Flux<String> processFollowup(String query, ExecutionContext ctx, UserSession s,
+			List<UserSessionStepDetails> steps) {
+    	try {
+            logger.info("Processing follow-up request for requestId: {}", ctx.getRequestId());
+            StringBuilder stepDetails = new StringBuilder();
+            StringBuilder finalout = new StringBuilder();
+            String finalStep = s.getKnowldgeName();
+
+            build(steps, stepDetails, finalout, finalStep);
+            String prompt = fileContentProvider.prepareFollowupPrompt(stepDetails.toString(), finalout.toString());
+            String systemPrompt = templateResolver.resolvePlaceholders(prompt);
+         // 2. Use a local StringBuilder to capture the stream chunks
+            StringBuilder responseAccumulator = new StringBuilder();
+            return openAI.streamExecute(new LLMRequest(systemPrompt, query, null, ctx.getModelName())).doOnNext(responseAccumulator::append) // Capture each chunk as it flies by
+                    .doFinally(signalType -> {
+                        // 3. This runs only when the stream completes or errors out
+                        String fullResponse = responseAccumulator.toString();
+                        sessionManager.saveRequestDetails(
+                            ctx.getRequestId(), 
+                            Status.FOLLOWUP + "-" + query.hashCode(), 
+                            " Question : " + query + " Ans: " + fullResponse
+                        );
+                        logger.info("Session saved for requestId: {}", ctx.getRequestId());
+                    });
+            } catch (Exception e) {
+				logger.error("Error processing follow-up request for requestId: {}", ctx.getRequestId(), e);
+				String out = "An error occurred while processing your follow-up question: " + e.getMessage();
+				return Flux.just(out);
+            }    			
     }
 
     /**
@@ -677,21 +794,21 @@ public class KnowledgeGraphBuilder {
                 if (reqDetails == null) {
                     response.setMessage("Invalid request id");
                     response.setRequestId(ctx.getRequestId());
-                    response.setStatusCode(STATUS_FAILED);
+                    response.setStatusCode(Status.FAILED);
                     return response;
                 }
             } else {
                 reqDetails = followupreqDetails;
             }
 
-            if (STATUS_SUCCESS.equals(reqDetails.getStatus()) || STATUS_FAILED.equals(reqDetails.getStatus())) {
+            if (Status.SUCCESS.equals(reqDetails.getStatus()) || Status.FAILED.equals(reqDetails.getStatus())) {
 
                 UserSessionStepDetails followUps = sessionManager.getFollowUpDetails(ctx.getRequestId());
                 if (followUps != null) {
                     if (followUps.getData() != null && !followUps.getData().isEmpty()) {
                         response.setMessage(followUps.getData());
                         response.setRequestId(ctx.getRequestId());
-                        response.setStatusCode(STATUS_SUCCESS);
+                        response.setStatusCode(Status.SUCCESS);
                         return response;
                     } else {
                         followupreqDetails = reqDetails;
@@ -727,7 +844,7 @@ public class KnowledgeGraphBuilder {
         String createTime = reqDetails != null ? reqDetails.getCreateDt().toString() : "unknown time";
         response.setMessage("Request is still processing. Started at " + createTime);
         response.setRequestId(ctx.getRequestId());
-        response.setStatusCode(STATUS_PROCESSING);
+        response.setStatusCode(Status.PROCESSING);
         return response;
     }
 
@@ -738,9 +855,21 @@ public class KnowledgeGraphBuilder {
             response.setMessage(platformHelper.generateAdaptiveCardJson(response.getData().get(0), knowledge.getCard()));
         }
         response.setRequestId(ctx.getRequestId());
-        response.setStatusCode(STATUS_SUCCESS);
+        response.setStatusCode(Status.SUCCESS);
         sessionManager.updateUserSession(ctx.getUserSession(), response);
         return response;
+    }
+    private Flux<String> processRequestStream(ExecutionContext ctx, IStep step) {
+    	
+    	StringBuilder responseAccumulator = new StringBuilder();
+        return step.getResponseStream(ctx).doOnNext(responseAccumulator::append) // Capture each chunk as it flies by
+                .doFinally(signalType -> {
+                    // 3. This runs only when the stream completes or errors out
+                    String fullResponse = responseAccumulator.toString();
+                    sessionManager.updateUserSession(ctx.getUserSession(), fullResponse, Status.SUCCESS);
+                    logger.info("Session saved for requestId: {}", ctx.getRequestId());
+                });
+        
     }
 
     /**
@@ -752,10 +881,8 @@ public class KnowledgeGraphBuilder {
      * is found
      */
     private Knowledge matchKnowledge(String question, JsonNode params) {
+        Map<String, String> knowledgeDescCache = new HashMap<>();
         try {
-            // Fetch knowledge descriptions and convert to JSON string
-
-            //ArrayNode knowledgeDesc = vector.Search(DefaultIndexTrakingProvider.csKnowledgeIndex, question,null);// 
             if(question==null || question.isEmpty())
                 return null;
             if(question.startsWith("Key:"))
@@ -764,23 +891,27 @@ public class KnowledgeGraphBuilder {
                 Knowledge knowledge = knowledgeBaserepo.GetByName(key);
                 if(knowledge!=null)
                 {
-                    logger.info("Direct knowledge match found for key {}", key);
+                    logger.debug("Direct knowledge match found for key {}", key);
                     return knowledge;
                 }   
             }
-
-            Map<String, String> knowledgeDesc = knowledgeBaserepo.getActiveKnowledgeDescriptions();
-            String jsonString = objectMapper.writeValueAsString(knowledgeDesc);
-
-            // Get response from OpenAI
+            long now = System.currentTimeMillis();
+            String jsonString;
+            synchronized (cacheLock) {
+                if (knowledgeDescJsonCache == null || now - knowledgeDescCacheTimestamp > cacheTtlMs) {
+                    knowledgeDescCache = knowledgeBaserepo.getActiveKnowledgeDescriptions();
+                    knowledgeDescJsonCache = objectMapper.writeValueAsString(knowledgeDescCache);
+                    knowledgeDescCacheTimestamp = now;
+                }
+                jsonString = knowledgeDescJsonCache;
+            }
             String prompt = fileContentProvider.prepareMatchKnowledgePrompt(jsonString, question, params.toString());
             String response = openAI.evaluatePrompt(prompt);
             int matchCount = -1;
-            if(response != null && !response.isEmpty() && !NONE.equalsIgnoreCase(response.trim()))
+            if(response != null && !response.isEmpty() && !Status.NONE.equalsIgnoreCase(response.trim()))
             {
                 matchCount  = response.indexOf(',')+1;
             }
-            // Return knowledge if response is valid
             if (matchCount>=0 && matchCount < 5) {
                 Knowledge knowledge = null;
                 if (matchCount > 0) {
@@ -789,19 +920,18 @@ public class KnowledgeGraphBuilder {
                         knowledge = knowledgeBaserepo.GetByName(match.trim());
                         if (knowledge != null && knowledge.getParams() != null) {
                             prompt = fileContentProvider.prepareMatchParamsPrompt(knowledge.getParams(), params.toString(), question);
-
                             String isMatch = openAI.evaluatePrompt(prompt);
                             if ("YES".equalsIgnoreCase(isMatch)) {
-                                logger.info("Matching knowldge mapped {} from multiple matches", match);
+                                logger.debug("Matching knowldge mapped {} from multiple matches", match);
                                 return knowledge;
                             }
-                            logger.info("Knowldge not matching with context {}", match);
+                            logger.debug("Knowldge not matching with context {}", match);
                         }
                     }
-                    logger.info("No matching knowldge found for the query based on parameters returning one match");
+                    logger.debug("No matching knowldge found for the query based on parameters returning one match");
                     return knowledge;
                 } else {
-                    logger.info("question matched with knowledge {}", response);
+                    logger.debug("question matched with knowledge {}", response);
                     return knowledgeBaserepo.GetByName(response.trim());
                 }
             } else {
@@ -813,10 +943,8 @@ public class KnowledgeGraphBuilder {
                     return k;
                 }
             }
-
         } catch (JsonProcessingException e) {
-            // Log the exception for debugging
-            e.printStackTrace();
+            logger.warn("Exception in matchKnowledge", e);
         }
         return null;
     }
@@ -877,4 +1005,6 @@ public class KnowledgeGraphBuilder {
             }
         }
     }
+
+    private static Map<String, String> parameterTranslationMap = new HashMap<>();
 }

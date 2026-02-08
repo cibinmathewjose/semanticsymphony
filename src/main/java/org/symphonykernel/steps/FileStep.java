@@ -37,6 +37,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+
 /**
  * FileStep is responsible for processing files and extracting text from various formats,
  * such as DOCX, Excel, and PDF. It integrates with the Symphony Kernel for file-based operations.
@@ -61,8 +62,9 @@ public class FileStep extends  BaseStep {
         a.setData(node);
         return a;
     }
-
-	private ArrayNode getData(ExecutionContext ctx) {
+	
+	@Override
+	protected ArrayNode getData(ExecutionContext ctx) {
 		HttpHeaders headers = ctx.getHttpHeaderProvider() != null ? ctx.getHttpHeaderProvider().getHeader() : null;
         String url = ctx.getVariables().findValue("url").asText();
         String data = null;

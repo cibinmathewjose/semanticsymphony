@@ -9,7 +9,6 @@ import java.util.Map;
 import org.apache.commons.text.similarity.LevenshteinDistance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.symphonykernel.ai.StringAIHelper;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +28,7 @@ public class JsonTransformer {
     public static final String JSON = "JSON:";
     public static final String LLM_OPTIMIZED_DATA = "LLM-optimized JSON DATA:";
     private final ObjectMapper mapper = new ObjectMapper();
+    private static final ObjectMapper sharedMapper = new ObjectMapper();
     private static final Logger logger = LoggerFactory.getLogger(JsonTransformer.class);
 
     /**
@@ -141,15 +141,24 @@ public class JsonTransformer {
             ObjectNode resultNode = mapper.createObjectNode();
             valueNode.fieldNames().forEachRemaining(fieldName -> {
                 JsonNode fieldTemplate = valueNode.get(fieldName);
+				// TODO :Array Type
+                String expectedType = null;
+                String fieldNameToMatch = IsInArray ? parentNodeforArray : fieldName;
+                JsonNode bestMatch = null;
+
+                // Accept both object with "type" and array with first element having "type"
                 if (fieldTemplate.has("type")) {
-                    String expectedType = fieldTemplate.get("type").asText();
-                    String fieldNameToMatch = IsInArray ? parentNodeforArray : fieldName;
-                    JsonNode bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
-                    if (bestMatch != null) {
-                        bestMatch = castValue(bestMatch, expectedType);
-                    }
-                    resultNode.set(fieldName, bestMatch);
+                    expectedType = fieldTemplate.get("type").asText();
+                    bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
+                } else if (fieldTemplate.isArray() && fieldTemplate.size() > 0 && fieldTemplate.get(0).has("type")) {
+                    expectedType = fieldTemplate.get(0).get("type").asText();
+                    bestMatch = findBestMatch(fieldNameToMatch, payloadNode);
                 }
+
+                if (bestMatch != null && expectedType != null) {
+                    bestMatch = castValue(bestMatch, expectedType);
+                }
+                resultNode.set(fieldName, bestMatch);
             });
             return resultNode;
         }
@@ -184,6 +193,9 @@ public class JsonTransformer {
 
     private JsonNode castValue(JsonNode value, String type) {
         try {
+        	 if (value.isArray() && value.size() == 1) {
+                 value = value.get(0);
+             }
             JsonNode match;
             switch (type) {
                 case "number":
@@ -210,7 +222,7 @@ public class JsonTransformer {
     }
 
     private JsonNode findBestMatch(String templateFieldName, JsonNode payloadNode) {
-        LevenshteinDistance levenshtein = new LevenshteinDistance();
+        LevenshteinDistance levenshtein = LevenshteinDistance.getDefaultInstance();
         JsonNode flattened = flattenPayload(payloadNode);
         JsonNode bestValue = null;
         int bestDistance = Integer.MAX_VALUE;
@@ -232,7 +244,7 @@ public class JsonTransformer {
 
     private JsonNode flattenPayload(JsonNode payloadNode) {
         if (payloadNode.isArray() && payloadNode.size() > 0) {
-            ObjectNode merged = mapper.createObjectNode();
+            ObjectNode merged = sharedMapper.createObjectNode();
             for (JsonNode item : payloadNode) {
                 if (item.isObject()) {
                     item.fields().forEachRemaining(field
@@ -273,9 +285,8 @@ public class JsonTransformer {
      * @return A cleaned JSON node.
      */
     public static JsonNode getCleanedJsonNode(JsonNode inputNode) {
-        ObjectMapper mapper = new ObjectMapper();
         if (inputNode.isObject()) {
-            ObjectNode cleanedObject = mapper.createObjectNode();
+            ObjectNode cleanedObject = sharedMapper.createObjectNode();
             inputNode.fields().forEachRemaining(entry -> {
                 JsonNode value = entry.getValue();
                 if (!value.isNull() && !(value.isTextual() && value.asText().trim().isEmpty())) {
@@ -284,7 +295,7 @@ public class JsonTransformer {
             });
             return cleanedObject;
         } else if (inputNode.isArray()) {
-            ArrayNode cleanedArray = mapper.createArrayNode();
+            ArrayNode cleanedArray = sharedMapper.createArrayNode();
             for (JsonNode item : inputNode) {
                 JsonNode cleanedItem = getCleanedJsonNode(item);
                 if (!cleanedItem.isNull() && !(cleanedItem.isTextual() && cleanedItem.asText().trim().isEmpty())) {
@@ -297,50 +308,52 @@ public class JsonTransformer {
     }
     
     public String compress(JsonNode root)  {
-        StringBuilder sb = new StringBuilder();
-        
-        // Check if root is array of objects
         if (root.isArray() && !root.isEmpty() && root.get(0).isObject()) {
-            // Compact array format - direct conversion
-            Map<String, String> fieldSchemas = new LinkedHashMap<>();
-            collectFieldSchemas(root, "", fieldSchemas);
-            
-            // Build schema
-            sb.append("SCHEMA:\n[");
-            List<String> schemaFields = new ArrayList<>();
-            for (Map.Entry<String, String> entry : fieldSchemas.entrySet()) {
-                schemaFields.add(entry.getKey() + ":" + entry.getValue());
-            }
-            sb.append(String.join("|", schemaFields)).append("]\n\nDATA:\n");
-            
-            // Build data rows directly
-            List<String> rows = new ArrayList<>();
-            for (JsonNode item : root) {
-                List<String> rowValues = new ArrayList<>();
-                for (String fieldPath : fieldSchemas.keySet()) {
-                    JsonNode fieldValue = getNestedValue(item, fieldPath);
-                    rowValues.add(fieldValue != null && !fieldValue.isNull() ? fieldValue.asText() : "");
-                }
-                rows.add(String.join("|", rowValues));
-            }
-            sb.append(String.join("\n", rows));
+            return compressArrayRoot(root);
         } else {
-            // Standard format for non-array structures
-            LinkedHashMap<String, String> schema = new LinkedHashMap<>();
-            List<String> values = new ArrayList<>();
-            flatten(root, "", schema, values);
-            
-            sb.append("SCHEMA:\n");
-            int i = 0;
-            for (Map.Entry<String, String> e : schema.entrySet()) {
-                sb.append(i++).append("=")
-                        .append(e.getKey()).append(":")
-                        .append(e.getValue()).append("\n");
-            }
-            sb.append("\nDATA:\n");
-            sb.append(String.join("|", values));
+            return compressStandardRoot(root);
         }
-        
+    }
+
+    // Helper for compact array format
+    private String compressArrayRoot(JsonNode root) {
+        StringBuilder sb = new StringBuilder();
+        Map<String, String> fieldSchemas = new LinkedHashMap<>();
+        collectFieldSchemas(root, "", fieldSchemas);
+        sb.append("SCHEMA:\n[");
+        List<String> schemaFields = new ArrayList<>();
+        for (Map.Entry<String, String> entry : fieldSchemas.entrySet()) {
+            schemaFields.add(entry.getKey() + ":" + entry.getValue());
+        }
+        sb.append(String.join("|", schemaFields)).append("]\n\nDATA:\n");
+        List<String> rows = new ArrayList<>();
+        for (JsonNode item : root) {
+            List<String> rowValues = new ArrayList<>();
+            for (String fieldPath : fieldSchemas.keySet()) {
+                JsonNode fieldValue = getNestedValue(item, fieldPath);
+                rowValues.add(fieldValue != null && !fieldValue.isNull() ? fieldValue.asText() : "");
+            }
+            rows.add(String.join("|", rowValues));
+        }
+        sb.append(String.join("\n", rows));
+        return sb.toString();
+    }
+
+    // Helper for standard format
+    private String compressStandardRoot(JsonNode root) {
+        StringBuilder sb = new StringBuilder();
+        LinkedHashMap<String, String> schema = new LinkedHashMap<>();
+        List<String> values = new ArrayList<>();
+        flatten(root, "", schema, values);
+        sb.append("SCHEMA:\n");
+        int i = 0;
+        for (Map.Entry<String, String> e : schema.entrySet()) {
+            sb.append(i++).append("=")
+                    .append(e.getKey()).append(":")
+                    .append(e.getValue()).append("\n");
+        }
+        sb.append("\nDATA:\n");
+        sb.append(String.join("|", values));
         return sb.toString();
     }
 
@@ -463,12 +476,12 @@ public class JsonTransformer {
         
         return current;
     }
-
-    private static String encodeObject(Map<String, String> obj) {
-        List<String> parts = new ArrayList<>();
-        obj.forEach((k, v) -> parts.add(k + "=" + v));
-        return "{" + String.join(",", parts) + "}";
-    }
+//
+//    private static String encodeObject(Map<String, String> obj) {
+//        List<String> parts = new ArrayList<>();
+//        obj.forEach((k, v) -> parts.add(k + "=" + v));
+//        return "{" + String.join(",", parts) + "}";
+//    }
 
     private static String typeOf(JsonNode node) {
         if (node.isTextual()) {
@@ -500,76 +513,77 @@ public class JsonTransformer {
             return decompressArrayFormat(schemaPart, dataPart);
         }
 
-        // Standard format
-        Map<String, String> schemaMap = new LinkedHashMap<>();
+        Map<String, String> schemaMap = parseSchemaMap(schemaPart);
+        String[] dataValues = dataPart.split("\\|", -1);
+        return buildObjectFromSchema(schemaMap, dataValues);
+    }
 
+    // Helper to parse schema lines into a map
+    private Map<String, String> parseSchemaMap(String schemaPart) {
+        Map<String, String> schemaMap = new LinkedHashMap<>();
         for (String line : schemaPart.split("\n")) {
             if (line.trim().isEmpty()) continue;
             String[] p = line.split("=", 2);
             String[] meta = p[1].split(":", 2);
             schemaMap.put(meta[0], meta[1]);
         }
+        return schemaMap;
+    }
 
-        String[] dataValues = dataPart.split("\\|", -1);
-        
+    // Helper to build the object from schema and values
+    private JsonNode buildObjectFromSchema(Map<String, String> schemaMap, String[] dataValues) {
         ObjectNode root = mapper.createObjectNode();
         int valueIndex = 0;
-        
         for (Map.Entry<String, String> entry : schemaMap.entrySet()) {
             String path = entry.getKey();
             String type = entry.getValue();
             String value = valueIndex < dataValues.length ? dataValues[valueIndex++] : "";
-            
             insertRecursive(root, path, type, value);
         }
-
         return root;
     }
 
     private JsonNode decompressArrayFormat(String schemaPart, String dataPart) {
-        // Parse schema: [field1:type1|field2:type2|...]
-        String schemaContent = schemaPart.substring(1, schemaPart.length() - 1);
-        String[] fieldDefs = schemaContent.split("\\|");
-        
         List<String> fieldNames = new ArrayList<>();
         List<String> fieldTypes = new ArrayList<>();
-        
+        parseArraySchema(schemaPart, fieldNames, fieldTypes);
+        ArrayNode result = mapper.createArrayNode();
+        if (!dataPart.trim().isEmpty()) {
+            String[] rows = dataPart.split("\n");
+            for (String row : rows) {
+                if (row.trim().isEmpty()) continue;
+                result.add(buildObjectFromRow(row, fieldNames, fieldTypes));
+            }
+        }
+        return result;
+    }
+
+    // Helper to parse array schema
+    private void parseArraySchema(String schemaPart, List<String> fieldNames, List<String> fieldTypes) {
+        String schemaContent = schemaPart.substring(1, schemaPart.length() - 1);
+        String[] fieldDefs = schemaContent.split("\\|");
         for (String fieldDef : fieldDefs) {
             String[] parts = fieldDef.split(":", 2);
             fieldNames.add(parts[0]);
             fieldTypes.add(parts.length > 1 ? parts[1] : "string");
         }
-        
-        // Parse data rows
-        ArrayNode result = mapper.createArrayNode();
-        
-        if (!dataPart.trim().isEmpty()) {
-            String[] rows = dataPart.split("\n");
-            
-            for (String row : rows) {
-                if (row.trim().isEmpty()) continue;
-                
-                String[] values = row.split("\\|", -1);
-                ObjectNode obj = mapper.createObjectNode();
-                
-                for (int i = 0; i < fieldNames.size(); i++) {
-                    String fieldName = fieldNames.get(i);
-                    String fieldType = fieldTypes.get(i);
-                    String value = i < values.length ? values[i] : "";
-                    
-                    // Handle nested fields (e.g., "address.city")
-                    if (fieldName.contains(".")) {
-                        insertNestedField(obj, fieldName, fieldType, value);
-                    } else {
-                        insertField(obj, fieldName, fieldType, value);
-                    }
-                }
-                
-                result.add(obj);
+    }
+
+    // Helper to build object from a row
+    private ObjectNode buildObjectFromRow(String row, List<String> fieldNames, List<String> fieldTypes) {
+        String[] values = row.split("\\|", -1);
+        ObjectNode obj = mapper.createObjectNode();
+        for (int i = 0; i < fieldNames.size(); i++) {
+            String fieldName = fieldNames.get(i);
+            String fieldType = fieldTypes.get(i);
+            String value = i < values.length ? values[i] : "";
+            if (fieldName.contains(".")) {
+                insertNestedField(obj, fieldName, fieldType, value);
+            } else {
+                insertField(obj, fieldName, fieldType, value);
             }
         }
-        
-        return result;
+        return obj;
     }
 
     private void insertRecursive(
@@ -618,12 +632,8 @@ public class JsonTransformer {
             // Navigate to parent and create array
             if (field.contains(".")) {
                 String[] pathParts = field.split("\\.");
-                ObjectNode current = root;
-                for (int i = 0; i < pathParts.length - 1; i++) {
-                    current = current.with(pathParts[i]);
-                }
+                ObjectNode current = getOrCreateObjectNode(root, pathParts, mapper);
                 ArrayNode array = current.putArray(pathParts[pathParts.length - 1]);
-                
                 if (!value.isEmpty()) {
                     for (String item : value.split(";")) {
                         addArrayItem(array, type, item);
@@ -671,24 +681,14 @@ public class JsonTransformer {
 
     private void insertNestedField(ObjectNode obj, String path, String type, String value) {
         String[] parts = path.split("\\.");
-        ObjectNode current = obj;
-
-        for (int i = 0; i < parts.length - 1; i++) {
-            current = current.with(parts[i]);
-        }
-
+        ObjectNode current = getOrCreateObjectNode(obj, parts, mapper);
         String field = parts[parts.length - 1];
         insertField(current, field, type, value);
     }
 
     private ArrayNode ensureArray(ObjectNode root, String path) {
         String[] parts = path.split("\\.");
-        ObjectNode current = root;
-
-        for (int i = 0; i < parts.length - 1; i++) {
-            current = current.with(parts[i]);
-        }
-
+        ObjectNode current = getOrCreateObjectNode(root, parts, mapper);
         String field = parts[parts.length - 1];
         if (!current.has(field)) {
             return current.putArray(field);
@@ -842,26 +842,26 @@ public class JsonTransformer {
         int currentLength = 0;
 
         for (String row : rows) {
-            if (row.isEmpty()) {
-                continue;
-            }
-
-            int rowLength = row.length();
-
-            // Edge case: single row larger than maxLength -> its own chunk
-            if (rowLength > maxLength) {
-                if (currentLength > 0) {
-                    chunks.add(currentChunk.toString());
-                    currentChunk.setLength(0);
-                    currentLength = 0;
+            boolean skipRow = row.isEmpty();
+            if (!skipRow) {
+                int rowLength = row.length();
+                if (rowLength > maxLength) {
+                    if (currentLength > 0) {
+                        chunks.add(currentChunk.toString());
+                        currentChunk.setLength(0);
+                        currentLength = 0;
+                    }
+                    chunks.add(row);
+                    skipRow = true;
                 }
-                chunks.add(row);
+            }
+            if (skipRow) {
                 continue;
             }
 
             int projectedLength = currentLength == 0
-                    ? rowLength
-                    : currentLength + 1 + rowLength + schemaLength; // +1 for '\n'
+                    ? row.length()
+                    : currentLength + 1 + row.length() + schemaLength; // +1 for '\n'
 
             if (projectedLength > maxLength) {
                 // Flush current chunk
@@ -884,5 +884,23 @@ public class JsonTransformer {
         }
 
         return chunks;
+    }
+
+    /**
+     * Helper to traverse or create nested ObjectNodes along a path.
+     */
+    private static ObjectNode getOrCreateObjectNode(ObjectNode parent, String[] pathParts, ObjectMapper mapper) {
+        ObjectNode current = parent;
+        for (int i = 0; i < pathParts.length - 1; i++) {
+            JsonNode child = current.get(pathParts[i]);
+            if (!(child instanceof ObjectNode)) {
+                ObjectNode newChild = mapper.createObjectNode();
+                current.set(pathParts[i], newChild);
+                current = newChild;
+            } else {
+                current = (ObjectNode) child;
+            }
+        }
+        return current;
     }
 }

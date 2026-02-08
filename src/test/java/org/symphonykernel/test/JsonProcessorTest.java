@@ -1,20 +1,20 @@
 package org.symphonykernel.test;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+//import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.symphonykernel.transformer.JsonTransformer;
+//import org.symphonykernel.transformer.JsonTransformer;
 
 
 class JsonProcessorTest {
 
-    private ObjectMapper mapper;
-    private JsonTransformer processor;
+    //private ObjectMapper mapper;
+    //private JsonTransformer processor;
 
     @BeforeEach
     void setUp() {
-        mapper = new ObjectMapper();
-        processor = new JsonTransformer();
+        //mapper = new ObjectMapper();
+        //processor = new JsonTransformer();
     }
 
    

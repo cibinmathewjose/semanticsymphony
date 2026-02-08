@@ -161,6 +161,16 @@ public class SessionProvider {
         session.setModifyDt(Calendar.getInstance().getTime());
         userSessionsBase.save(session);
     }
+    public void updateUserSession(UserSession session, String response,String status) {
+
+        if(response!=null)
+        {
+            session.setBotResponse(response);         
+            session.setStatus(status);
+        }
+        session.setModifyDt(Calendar.getInstance().getTime());
+        userSessionsBase.save(session);
+    }
     /**
      * Updates the user session with the provided response.
      *

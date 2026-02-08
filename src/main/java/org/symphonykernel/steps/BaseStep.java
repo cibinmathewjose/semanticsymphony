@@ -41,6 +41,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
+
+import reactor.core.publisher.Flux;
 
 /**
  *
@@ -50,14 +53,23 @@ public abstract class BaseStep  implements IStep {
 
     protected static final Logger logger = LoggerFactory.getLogger(BaseStep.class);
     @Autowired
-    ObjectMapper objectMapper;
+    protected ObjectMapper objectMapper;
 
     @Autowired
     IknowledgeBase knowledgeBase;
        
     @Autowired
     IUserSessionBase sessionBase;
-       
+    protected ArrayNode getData(ExecutionContext ctx) {
+        return getResponse(ctx).getData();	
+    }
+    @Override
+    public Flux<String> getResponseStream(ExecutionContext ctx) {
+		//TODO: Implement streaming response if needed
+		 ArrayNode node = getData(ctx);
+	     saveStepData(ctx, node);
+	     return Flux.just(node.toString());
+	}
     @Override
     public JsonNode executeQueryByName(ExecutionContext context) {
         final ArrayNode[] array = new ArrayNode[1];
@@ -93,7 +105,14 @@ public abstract class BaseStep  implements IStep {
                 logger.error("Error saving step data", e);
             }
     }
-
+    public void saveStepData(ExecutionContext context,String data)
+    {
+        try {
+        	sessionBase.saveRequestDetails(context.getRequestId(), context.getName(),data);
+            } catch (Exception e) {
+                logger.error("Error saving step data", e);
+            }
+    }
      protected JsonNode getParamNode(String plugindef) {
         JsonNode paramNode;
         try {
@@ -137,6 +156,13 @@ public abstract class BaseStep  implements IStep {
 
             return createTextNode(jsonString);
         }
+    }
+     protected ChatResponse makeResponseObject(String result) {
+        ArrayNode jsonArray = objectMapper.createArrayNode();
+        jsonArray.add(new TextNode(result));
+        ChatResponse response = new ChatResponse();
+        response.setData(jsonArray);
+        return response;
     }
 
 }

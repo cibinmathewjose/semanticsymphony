@@ -20,6 +20,7 @@ public class Knowledge extends KnowledgeDescription  {
 
 	private String tools;
 	
+	private String systemprompt;
 	
 	/**
      * Gets the URL associated with the knowledge.
@@ -155,5 +156,12 @@ public class Knowledge extends KnowledgeDescription  {
 	
 	public void setTools(String tools) {
 		this.tools = tools;
+	}
+	public String getSystemprompt() {
+		return systemprompt;
+	}
+	
+	public void setSystemprompt(String systemprompt) {
+		this.systemprompt = systemprompt;
 	}
 }

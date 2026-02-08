@@ -19,8 +19,6 @@ import com.azure.search.documents.indexes.SearchIndexClientBuilder;
 import com.azure.search.documents.indexes.models.FieldBuilderOptions;
 import com.azure.search.documents.indexes.models.IndexDocumentsBatch;
 import com.azure.search.documents.indexes.models.SearchIndex;
-import com.azure.search.documents.models.QueryAnswer;
-import com.azure.search.documents.models.QueryAnswerType;
 import com.azure.search.documents.models.QueryCaption;
 import com.azure.search.documents.models.QueryCaptionType;
 import com.azure.search.documents.models.SearchOptions;
@@ -93,7 +91,11 @@ public class VectorSearchHelper {
      * @return the search client for the index
      */
     public SearchClient createSearchClient(String indexName) {
-    	 return new SearchClientBuilder()
+        return getOrCreateSearchClient(indexName);
+    }
+    private SearchClient getOrCreateSearchClient(String indexName) {
+        // In a real application, use a cache or bean for SearchClient reuse
+        return new SearchClientBuilder()
                 .endpoint(aisearchProps.getEndpoint())
                 .credential(aisearchProps.getAzureKeyCredential())
                 .indexName(indexName)
@@ -110,15 +112,12 @@ public class VectorSearchHelper {
      * @param modelClass the class of the model
      */
 	public <T> void createIndex(String indexName, Class<T> modelClass) {
-		SearchIndexClient searchIndexClient = new SearchIndexClientBuilder()
-    	            .endpoint(aisearchProps.getEndpoint())
-    	            .credential(aisearchProps.getAzureKeyCredential())
-    	            .buildClient();
-		FieldBuilderOptions options =new FieldBuilderOptions();
-		//options.setJsonSerializer();
+        SearchIndexClient searchIndexClient = getOrCreateSearchIndexClient();
+        FieldBuilderOptions options = new FieldBuilderOptions();
+        //options.setJsonSerializer();
     	 // Create Search Index for Knowledge model
     	searchIndexClient.createOrUpdateIndex(
-    				 new SearchIndex(indexName, SearchIndexClient.buildSearchFields(modelClass, options)));
+                new SearchIndex(indexName, SearchIndexClient.buildSearchFields(modelClass, options)));
 	}
 
     /**
@@ -189,14 +188,14 @@ public class VectorSearchHelper {
     @ServiceMethod(returns = ReturnType.SINGLE)
     public <T> T getDocument(String indexName,String key, Class<T> modelClass) 
     {    
-    	T lookupResponse = null;    
-    	try
-    	{
-    	SearchClient searchClient =createSearchClient(indexName);
-    	lookupResponse = searchClient.getDocument(key, modelClass);
-    	}
-    	catch (Exception e) {
-    		 LOGGER.info("{} key {} not found in {} ",e.getMessage(),indexName,key);
+        T lookupResponse = null;    
+        try
+        {
+            SearchClient searchClient = getOrCreateSearchClient(indexName);
+            lookupResponse = searchClient.getDocument(key, modelClass);
+        }
+        catch (Exception e) {
+            LOGGER.info("{} key {} not found in {} ",e.getMessage(),indexName,key);
 		}
         return lookupResponse;
     }
@@ -212,7 +211,7 @@ public class VectorSearchHelper {
      * @return an iterator over the search results
      */
     public <T> Iterator<T> search(String indexName, String text, SearchOptions options, Class<T> modelClass) {
-        SearchClient searchClient = createSearchClient(indexName);
+        SearchClient searchClient = getOrCreateSearchClient(indexName);
         SearchPagedIterable searchResults = searchClient.search(text, options, Context.NONE);
         
         return searchResults.stream()
@@ -230,60 +229,39 @@ public class VectorSearchHelper {
      */
     public ArrayNode Search(String indexName,String text,String fields)
     {
-    	SearchOptions options = new SearchOptions();
-        options.setIncludeTotalCount(true);
-        options.setFilter("");
-        options.setOrderBy("");
+        SearchOptions options = new SearchOptions();
         options.setIncludeTotalCount(true);
         if(fields!=null)
-        options.setSelect(fields);
-        //options.setQueryType(com.azure.search.documents.models.QueryType.SEMANTIC);
-        
-
-	     // Create an instance of SemanticSearchOptions
-	     //SemanticSearchOptions semanticOptions = new SemanticSearchOptions();
-	    // semanticOptions.setSemanticConfigurationName("default"); // Set your semantic configuration name here
-	     QueryCaption caption =new QueryCaption(QueryCaptionType.EXTRACTIVE);
-	     caption.setHighlightEnabled(true);
-	  //   semanticOptions.setQueryCaption(caption);
-	     QueryAnswer answers =new QueryAnswer(QueryAnswerType.EXTRACTIVE);
-	  //   semanticOptions.setQueryAnswer(answers);
-	     // Set the semanticOptions in the SearchOptions
-	    // options.setSemanticSearchOptions(semanticOptions);
-     
-        //options.setQueryLanguage("en-us");
-        //options.setQueryRewrites("generative");
+            options.setSelect(fields);
+        QueryCaption caption = new QueryCaption(QueryCaptionType.EXTRACTIVE);
+        caption.setHighlightEnabled(true);
+        //QueryAnswer answers = new QueryAnswer(QueryAnswerType.EXTRACTIVE);
         options.setTop(2);
-        options.setSkip(1);
-
+        options.setSkip(0); // Do not skip first result
         VectorSearchOptions voptions = new VectorSearchOptions();
         List<VectorQuery> vQuery = new ArrayList<>();
         VectorQuery q = new VectorizableTextQuery(text)
-        		.setFields("content_vector");   
-            	//.setQueryRewrites("generative");
+                .setFields("content_vector");
         vQuery.add(q);
         voptions.setQueries(vQuery);
-        //voptions.setVectorFilterMode("postFilter");
-       // options.setVectorSearchOptions(voptions);
-    	 SearchClient searchClient = createSearchClient(indexName);    	 
-         SearchPagedIterable searchResults = searchClient.search(text, options, Context.NONE);
-         // Convert results to JSONArray
-    
-        // Convert results to ArrayNode
-	    
-	    ArrayNode arrayNode = objectMapper.createArrayNode();
-	
-	    searchResults.forEach(result -> {
-	        JsonNode document = result.getDocument(JsonNode.class);
-	        if (document != null) {
-	            arrayNode.add(document);
-	        }
-	    });
-
-    return arrayNode;
-        
+        SearchClient searchClient = getOrCreateSearchClient(indexName);
+        SearchPagedIterable searchResults = searchClient.search(text, options, Context.NONE);
+        ArrayNode arrayNode = objectMapper.createArrayNode();
+        searchResults.forEach(result -> {
+            JsonNode document = result.getDocument(JsonNode.class);
+            if (document != null) {
+                arrayNode.add(document);
+            }
+        });
+        return arrayNode;
     }
 
-    
+    private SearchIndexClient getOrCreateSearchIndexClient() {
+        // In a real application, use a cache or bean for SearchIndexClient reuse
+        return new SearchIndexClientBuilder()
+                .endpoint(aisearchProps.getEndpoint())
+                .credential(aisearchProps.getAzureKeyCredential())
+                .buildClient();
+    }
 
 }
