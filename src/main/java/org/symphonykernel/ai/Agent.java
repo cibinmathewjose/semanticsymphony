@@ -45,6 +45,7 @@ public class Agent {
         this.knowledgeGraphBuilder = knowledgeGraphBuilder;
     }
 
+    // ==================== REQUEST PROCESSING ====================
     /**
      * Processes a chat request and generates a response.
      * 
@@ -54,46 +55,47 @@ public class Agent {
     public ChatResponse process(ChatRequest request) {      
         long start = System.nanoTime();
         logger.debug("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
-        if (null == request) {
+        if (request == null) {
             return new ChatResponse("Request is null");
-        } 
-        ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
-        logger.debug("ExecutionContext created");   
-      
-        try
-        {
-        ctx = knowledgeGraphBuilder.identifyIntent(ctx);
-        ctx = knowledgeGraphBuilder.setParameters(ctx); 
         }
-        catch(Exception ex)
-        {
-        	logger.warn("Error setting parameters, try to process as followup Question",ex);        	
+        try {
+            ExecutionContext ctx = knowledgeGraphBuilder.prepareContext(request);
+            ChatResponse response = knowledgeGraphBuilder.getResponse(ctx);
+            long durationMs = (System.nanoTime() - start) / 1_000_000;
+            logger.info("Processed request in {} ms", durationMs);
+            return response;
+        } catch (Exception ex) {
+            logger.warn("Error setting parameters or processing request, try to process as followup Question", ex);
             return knowledgeGraphBuilder.getFollowupResponse(request);
+        } catch (Throwable t) {
+            logger.error("Unexpected error during processing", t);
+            return new ChatResponse("Unexpected error occurred");
         }
-        ChatResponse response = knowledgeGraphBuilder.getResponse(ctx);
-        long durationMs = (System.nanoTime() - start) / 1_000_000;
-        logger.info("Processed request in {} ms", durationMs);
-        return response;
     }
-    public Flux<String> streamProcess(ChatRequest request) {  	   
-		if (null == request) {
-			return Flux.just("Request is null");
-		} 
-		ExecutionContext ctx = knowledgeGraphBuilder.createContext(request);
-		logger.debug("ExecutionContext created");   
-	  
-		try
-		{
-		ctx = knowledgeGraphBuilder.identifyIntent(ctx);
-		ctx = knowledgeGraphBuilder.setParameters(ctx); 
-		}
-		catch(Exception ex)
-		{
-			logger.warn("Error setting parameters, try to process as followup Question",ex);        	
-			return knowledgeGraphBuilder.streamFollowupResponse(request);
-		}
-		return knowledgeGraphBuilder.streamResponse(ctx);
-	}
+
+    // ==================== STREAMING ====================
+    /**
+     * Streams the response for a chat request.
+     * @param request the chat request containing the query
+     * @return a Flux containing the streamed response
+     */
+    public Flux<String> streamProcess(ChatRequest request) {
+        if (request == null) {
+            return Flux.just("Request is null");
+        }
+        try {
+            ExecutionContext ctx = knowledgeGraphBuilder.prepareContext(request);
+            return knowledgeGraphBuilder.streamResponse(ctx);
+        } catch (Exception ex) {
+            logger.warn("Error setting parameters, try to process as followup Question", ex);
+            return knowledgeGraphBuilder.streamFollowupResponse(request);
+        } catch (Throwable t) {
+            logger.error("Unexpected error during streaming process", t);
+            return Flux.just("Unexpected error occurred");
+        }
+    }
+
+    // ==================== FOLLOWUP / ASYNC ====================
     public ChatResponse getAsyncResults(String requestId) {   
                 
         return knowledgeGraphBuilder.getAsyncResponse(requestId);

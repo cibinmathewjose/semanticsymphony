@@ -678,9 +678,8 @@ public class KnowledgeGraphBuilder {
             response.setMessage("Processing request");
             response.setRequestId(ctx.getRequestId());
             response.setStatusCode(Status.PROCESSING);
-            sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), "");
             executorService.submit(() -> {
-                processFollowup(query, response, ctx, s, steps);
+                updateSessionAndPrompt(requestId, query, ctx, s, steps, response);
             });
 
             return response;
@@ -691,26 +690,21 @@ public class KnowledgeGraphBuilder {
         return response;
     }
 
-    private void processFollowup(String query, ChatResponse response, ExecutionContext ctx, UserSession s,
-            List<UserSessionStepDetails> steps) {
-        MDC.put(Constants.LOGGER_TRACE_ID, ctx.getRequestId());
-        try {
-            logger.info("Processing follow-up request for requestId: {}", ctx.getRequestId());
-            StringBuilder stepDetails = new StringBuilder();
-            StringBuilder finalout = new StringBuilder();
-            String finalStep = s.getKnowldgeName();
-
-            build(steps, stepDetails, finalout, finalStep);
-            String prompt = fileContentProvider.prepareFollowupPrompt(stepDetails.toString(), finalout.toString());
-            String systemPrompt = templateResolver.resolvePlaceholders(prompt);
-            String out = openAI.execute(new LLMRequest(systemPrompt, query, null, ctx.getModelName()));
-            sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), " Question : " + query + " Ans: " + out);
-            response.setMessage(out);
-
-        } finally {
-            MDC.clear();
-        }
+    
+    private void updateSessionAndPrompt(String requestId, String query, ExecutionContext ctx, UserSession s, List<UserSessionStepDetails> steps, ChatResponse response) {
+        sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), "");
+        StringBuilder stepDetails = new StringBuilder();
+        StringBuilder finalout = new StringBuilder();
+        String finalStep = s.getKnowldgeName();
+        build(steps, stepDetails, finalout, finalStep);
+        String prompt = fileContentProvider.prepareFollowupPrompt(stepDetails.toString(), finalout.toString());
+        String systemPrompt = templateResolver.resolvePlaceholders(prompt);
+        String out = openAI.execute(new LLMRequest(systemPrompt, query, null, ctx.getModelName()));
+        sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), " Question : " + query + " Ans: " + out);
+        response.setMessage(out);
     }
+
+   
 
 	private void build(List<UserSessionStepDetails> steps, StringBuilder stepDetails, StringBuilder finalout,
 			String finalStep) {
@@ -996,4 +990,16 @@ public class KnowledgeGraphBuilder {
     }
 
     private static Map<String, String> parameterTranslationMap = new HashMap<>();
+
+    /**
+     * Creates and prepares ExecutionContext from ChatRequest.
+     * Handles intent identification and parameter setting.
+     * Throws Exception if any step fails.
+     */
+    public ExecutionContext prepareContext(ChatRequest request) throws Exception {
+        ExecutionContext ctx = createContext(request);
+        ctx = identifyIntent(ctx);
+        ctx = setParameters(ctx);
+        return ctx;
+    }
 }
