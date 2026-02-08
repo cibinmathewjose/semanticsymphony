@@ -77,9 +77,6 @@ public class Symphony extends BaseStep {
     VelocityStep velocityTemplateEngine;
     
     @Autowired
-     Optional<RFCStep> rfcStep;
-
-    @Autowired
     IAIClient azureOpenAIHelper;
 
     
@@ -438,15 +435,7 @@ public class Symphony extends BaseStep {
         else if (kb.getType() == QueryType.VELOCITY) {
 		    result = velocityTemplateEngine.executeQueryByName(newCtx);
 		}
-         else if (kb.getType() == QueryType.RFC) {
-                if (rfcStep.isPresent()) {
-                        result = rfcStep.get().executeQueryByName(newCtx);
-                } else {
-                    logger.warn("RFC Step is not enabled");
-                    return null;
-                }
-		  
-		}
+  
 		return result;
 	}
 

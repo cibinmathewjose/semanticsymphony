@@ -33,7 +33,6 @@ import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;
-import org.symphonykernel.steps.RFCStep;
 import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
 import org.symphonykernel.steps.ToolStep;
@@ -216,9 +215,6 @@ public class KnowledgeGraphBuilder {
 
     @Autowired
     FileStep fileUrlHelper;
-
-    @Autowired
-    Optional<RFCStep> rfcStep;
 
     @Autowired
     PluginStep pluginStep;
@@ -991,14 +987,7 @@ public class KnowledgeGraphBuilder {
             case SHAREPOINT -> {
                 throw new UnsupportedOperationException("SHAREPOINT QueryType is not implemented");
             }
-             case RFC -> {
-                if (rfcStep.isPresent()) {
-                    return rfcStep.get();
-                } else {
-                    logger.warn("RFC Step is not enabled");
-                    return null;
-                }
-            }
+           
             default -> {
                 logger.warn("Unhandled QueryType: " + knowledge.getType());
                 return null;
