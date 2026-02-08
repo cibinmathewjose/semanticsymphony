@@ -64,10 +64,13 @@ public abstract class AIClientBase {
      * @throws IllegalArgumentException if both system and user prompts are empty
      */
     protected <R> R processPromptString(LLMRequest request ,Function<LLMRequest, R> llmFunction) {
-
-       
+        if (request == null || llmFunction == null) {
+            throw new IllegalArgumentException("Request and LLM function must not be null.");
+        }
         validatePrompts(request.getSystemMessage(), request.getUserPrompt());
-
+        if (request.getUserPrompt() == null) {
+            throw new IllegalArgumentException("User prompt must not be null.");
+        }
         if (request.getUserPrompt().contains(SPLITTER)) {
             return processAsParts(request.getSystemMessage(), request.getUserPrompt(), request.getTools(), request.getModelName(), llmFunction);
         } else {
@@ -143,24 +146,27 @@ public abstract class AIClientBase {
         return futures;
     }
 
-    private String getBasePrompt(String header) {
-        String basePrompt = null;
-        if (header.contains(HEAD)) {
-           // i = 1;
-            if (header.contains(FINAL_FORMATTING)) {
-                basePrompt = header.substring(header.indexOf(HEAD) + HEAD.length(), header.indexOf(FINAL_FORMATTING)).trim();
-            } else {
-                basePrompt = header.substring(header.indexOf(HEAD) + HEAD.length()).trim();
-            }
-        } 
-        return basePrompt;
+  
+
+
+    /**
+     * Unified prompt extraction for base and formatting prompts.
+     */
+    private String extractPrompt(String header, String marker) {
+        if (header.contains(marker)) {
+            int idx = header.indexOf(marker) + marker.length();
+            int endIdx = marker.equals(HEAD) && header.contains(FINAL_FORMATTING) ? header.indexOf(FINAL_FORMATTING) : header.length();
+            return header.substring(idx, endIdx).trim();
+        }
+        return null;
     }
- private String getFormatingPrompt(String header) {
-        String finalFormattingPrompt = null;
-        if (header.contains(HEAD) && header.contains(FINAL_FORMATTING)) {
-             finalFormattingPrompt = header.substring(header.indexOf(FINAL_FORMATTING) + FINAL_FORMATTING.length()).trim();
-        } 
-        return finalFormattingPrompt;
+
+    // Update getBasePrompt and getFormatingPrompt to use extractPrompt
+    private String getBasePrompt(String header) {
+        return extractPrompt(header, HEAD);
+    }
+    private String getFormatingPrompt(String header) {
+        return extractPrompt(header, FINAL_FORMATTING);
     }
     private  <R> R process(LLMRequest request,Function<LLMRequest, R> llmFunction) {
         String systemPrompt = request.getSystemMessage();
@@ -313,4 +319,3 @@ public abstract class AIClientBase {
     }
 
 }
-

@@ -24,7 +24,10 @@ public class LLMRequest   {
 
 
 	public void setSystemMessage(String systemMessage) {
-		this.systemMessage = systemMessage;
+		if(systemMessage==null)
+			this.systemMessage="";
+		else
+			this.systemMessage = systemMessage;
 	}
 	
 	public String getSystemMessage() {
@@ -32,7 +35,10 @@ public class LLMRequest   {
 	}
 
 	public void setUserPrompt(String userPrompt) {
-		this.userPrompt = userPrompt;
+		if(userPrompt==null)
+			this.userPrompt="";
+		else
+			this.userPrompt = userPrompt;
 	}
 	
 	public String getUserPrompt() {

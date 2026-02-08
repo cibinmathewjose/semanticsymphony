@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,6 +78,7 @@ public class Symphony extends BaseStep {
     @Autowired
     IAIClient azureOpenAIHelper;
 
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
     
 
     @Override
@@ -85,12 +87,13 @@ public class Symphony extends BaseStep {
         Knowledge _symphony = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
         logger.info("Executing Symphony " + _symphony.getName() + " with " + input);
-        Map<String, JsonNode> resolvedValues = ctx.getResolvedValues();
+        Map<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
             processFlowItemsByOrder(parsed, ctx, resolvedValues)
             .doOnNext(item -> logger.info("Processing item: " + item))
+            .onErrorContinue((e, o) -> logger.error("Error in processFlowItemsByOrder: {}", e.getMessage()))
             .then()
             .block();
             processFinalResponse(parsed, ctx, _symphony, resolvedValues, jsonArray);
@@ -98,7 +101,7 @@ public class Symphony extends BaseStep {
         } catch (JsonProcessingException e) {
             handleJsonProcessingException(e, jsonArray);
         }
-        logger.info("Data " + jsonArray);
+        logger.info("Data " + jsonArray); // Consider removing if sensitive
         ChatResponse a = new ChatResponse();
         a.setData(jsonArray);
         saveStepData(ctx, jsonArray);
@@ -109,158 +112,74 @@ public class Symphony extends BaseStep {
         JsonNode input = ctx.getVariables();
         Knowledge _symphony = ctx.getKnowledge();
         logger.info("Executing Symphony {} with {}", _symphony.getName(), input);
-        
-        Map<String, JsonNode> resolvedValues = ctx.getResolvedValues();
+        Map<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
         resolvedValues.put("input", input);
-
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
-            
-            // 1. This Flux handles the item processing and status strings
-            Flux<String> progress = processFlowItemsByOrder(parsed, ctx, resolvedValues);
-            
-            // 2. This Flux handles the final LLM streaming
+            Flux<String> progress = processFlowItemsByOrder(parsed, ctx, resolvedValues)
+                .onErrorResume(e -> {
+                    logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
+                    return Flux.just("Error: " + e.getMessage());
+                });
             StringBuilder responseAccumulator = new StringBuilder();
             Flux<String> finalResponse = processFinalResponseAsStream(parsed, ctx, _symphony, resolvedValues)
                 .doOnNext(responseAccumulator::append)
                 .doFinally(signalType -> {
                     saveStepData(ctx, responseAccumulator.toString());
+                })
+                .onErrorResume(e -> {
+                    logger.error("Error in processFinalResponseAsStream: {}", e.getMessage());
+                    return Flux.just("Error: " + e.getMessage());
                 });
-
-            // 3. CONCAT joins them: progress finishes, then finalResponse starts
             return Flux.concat(progress, finalResponse);
-
         } catch (Exception e) {
             saveStepData(ctx, e.getMessage());
             return Flux.just("Error processing Symphony: " + e.getMessage());
         }
     }
 
-    /**
-     * Helper method to handle JsonProcessingException and add error to response array.
-     */
-    private void handleJsonProcessingException(JsonProcessingException e, ArrayNode jsonArray) {
-        ObjectNode err = objectMapper.createObjectNode();
-        err.put("errors", e.getMessage());
-        jsonArray.add(err);
+    // ==================== FLOW PROCESSING ====================
+    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+        // 1. Group items as before
+        Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
+        for (FlowItem item : parsed.Flow) {
+            Integer order = item.getOrder() != null ? item.getOrder() : 0;
+            flowItemsByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(item);
+        }
+
+        // 2. Convert the Map entries into a Flux to process each "Order Group" sequentially
+        return Flux.fromIterable(flowItemsByOrder.entrySet())
+            .concatMap(entry -> {
+                Integer order = entry.getKey();
+                List<FlowItem> items = entry.getValue();
+
+                if (order == 0 || items.size() == 1) {
+                    // SEQUENTIAL PROCESSING
+                    return Flux.fromIterable(items)
+                        .concatMap(item -> executeWithStatus(item, ctx, resolvedValues));
+                } else {
+                    // PARALLEL PROCESSING (for items within the same order group)
+                    return Flux.fromIterable(items)
+                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues));
+                }
+            });
     }
 
-    /**
-     * Helper method to process the final response logic (SystemPrompt, UserPrompt, result generation).
-     */
-    private void processFinalResponse(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, Map<String, JsonNode> resolvedValues, ArrayNode jsonArray) {
-        if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
-            logger.info("Processing final response");
-            String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
-            String userPrompt = parsed.UserPrompt;
-            if (parsed.AdaptiveCardPrompt != null && !parsed.AdaptiveCardPrompt.trim().isEmpty()) {
-                userPrompt = parsed.AdaptiveCardPrompt;
-            } else if (userPrompt == null) {
-                userPrompt = ctx.getUsersQuery();
-            } else if (!userPrompt.trim().isEmpty() && TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
-                userPrompt = templateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
-            }
-            String result = null;
-            if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
-                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
-                if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
-                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
-                } else {
-                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()));
-                }
-            } else {
-                result = "Unable to process request, data not availabe";
-                logger.warn("Missing Data, Avoid LLM Call, systemPrompt {} userPrompt {}", systemPrompt, userPrompt);
-            }
-            JsonNode resultNode = parseJson(result);
-            jsonArray.add(resultNode);
-        } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
-            JsonNode resultNode = resolvedValues.get(parsed.Result.toLowerCase());
-            jsonArray.add(resultNode);
-        } else {
-            ObjectNode objectNode = objectMapper.createObjectNode();
-            for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
-                objectNode.set(entry.getKey(), entry.getValue());
-            }
-            jsonArray.add(objectNode);
-        }
-    }
-    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, Map<String, JsonNode> resolvedValues) {
-        if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
-            logger.info("Processing final response");
-            String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
-            String userPrompt = parsed.UserPrompt;
-            if (parsed.AdaptiveCardPrompt != null && !parsed.AdaptiveCardPrompt.trim().isEmpty()) {
-                userPrompt = parsed.AdaptiveCardPrompt;
-            } else if (userPrompt == null) {
-                userPrompt = ctx.getUsersQuery();
-            } else if (!userPrompt.trim().isEmpty() && TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
-                userPrompt = templateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
-            }
-           
-            if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
-                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
-                if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
-                    return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
-                } else {
-                    return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()));
-                }
-            } else {
-                 String result = "Unable to process request, data not availabe";
-                logger.warn("Missing Data, Avoid LLM Call, systemPrompt {} userPrompt {}", systemPrompt, userPrompt);
-                return Flux.just(result);
-            }
-        } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
-            JsonNode resultNode = resolvedValues.get(parsed.Result.toLowerCase());
-            return Flux.just(resultNode.toString());
-        } else {
-            ObjectNode objectNode = objectMapper.createObjectNode();
-            for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
-                objectNode.set(entry.getKey(), entry.getValue());
-            }
+    private Flux<String> executeWithStatus(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+        return Flux.defer(() -> {
+            String itemName = item.getKey() != null ? item.getKey() : "Unknown Item";
             
-            return Flux.just(objectNode.toString());
-        }
+            // Create the sequence: Message -> Actual Work -> Message
+            return Flux.just("STARTING: " + itemName)
+                .concatWith(Mono.fromRunnable(() -> {
+                    // Note: If processFlowItem is blocking, wrap it in Schedulers.boundedElastic()
+                    processFlowItem(item, ctx, resolvedValues);
+                    logger.info("Completed processing item: {} data {}" , itemName,resolvedValues.get(itemName.toLowerCase()));
+                }).then(Mono.empty())) // then(Mono.empty()) ensures no data is emitted here
+                .concatWith(Flux.just("COMPLETED: " + itemName));
+        }).subscribeOn(Schedulers.boundedElastic()); // Keeps parallel work off the main thread
     }
-    
-    /**
-     * Loads Spring bean tools based on comma-separated tool names.
-     * <p>
-     * This method splits the input string by comma, trims each tool name,
-     * and attempts to load the corresponding Spring bean from the application context.
-     * </p>
-     *
-     * @param toolsNames comma-separated string of bean names to load
-     * @return an array of loaded tool objects, or empty array if toolsNames is null/empty
-     * @throws org.springframework.beans.BeansException if a bean cannot be found
-     */
-    private Object[] loadTools(String toolsNames) {
-        if (toolsNames == null || toolsNames.isBlank()) {
-            logger.warn("No tools specified to load");
-            return new Object[0];
-        }
-        
-        String[] toolNameArray = toolsNames.split(",");
-        List<Object> tools = new ArrayList<>();
-        
-        for (String toolName : toolNameArray) {
-            String trimmedName = toolName.trim();
-            if (!trimmedName.isEmpty()) {
-                try {
-                    
-                    Object tool =  pluginLoader.createObject(trimmedName);
-                    tools.add(tool);
-                    logger.info("Successfully loaded tool: {}", trimmedName);
-                } catch (Exception e) {
-                    logger.error("Failed to load tool: {}. Error: {}", trimmedName, e.getMessage());
-                    throw new RuntimeException("Failed to load tool: " + trimmedName, e);
-                }
-            }
-        }
-        
-        return tools.toArray();
-    }
-    
+
     private void processFlowItem(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
         if (shouldSkipItem(item, resolvedValues)) {
             return;
@@ -361,6 +280,92 @@ public class Symphony extends BaseStep {
         return getResults(ctx, kb, resolverPayload);
     }
 
+    // ==================== PROMPT HANDLING ====================
+    private void processPrompt(String key, Map<String, JsonNode> resolvedValues, String prompt) {
+        if (prompt != null && !prompt.isEmpty()) {
+            String systemPrompt = templateResolver.resolvePlaceholders(prompt, resolvedValues);
+            String result = azureOpenAIHelper.evaluatePrompt(systemPrompt);
+            JsonNode resultNode = parseJson(result);
+            resolvedValues.replace(key, resultNode);
+        }
+    }
+
+    private void processFinalResponse(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, Map<String, JsonNode> resolvedValues, ArrayNode jsonArray) {
+        if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
+            logger.info("Processing final response");
+            String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
+            String userPrompt = parsed.UserPrompt;
+            if (parsed.AdaptiveCardPrompt != null && !parsed.AdaptiveCardPrompt.trim().isEmpty()) {
+                userPrompt = parsed.AdaptiveCardPrompt;
+            } else if (userPrompt == null) {
+                userPrompt = ctx.getUsersQuery();
+            } else if (!userPrompt.trim().isEmpty() && TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
+                userPrompt = templateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
+            }
+            String result = null;
+            if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
+                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
+                if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
+                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
+                } else {
+                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()));
+                }
+            } else {
+                result = "Unable to process request, data not availabe";
+                logger.warn("Missing Data, Avoid LLM Call, systemPrompt {} userPrompt {}", systemPrompt, userPrompt);
+            }
+            JsonNode resultNode = parseJson(result);
+            jsonArray.add(resultNode);
+        } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
+            JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
+            jsonArray.add(resultNode);
+        } else {
+            ObjectNode objectNode = objectMapper.createObjectNode();
+            for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
+                objectNode.set(entry.getKey(), entry.getValue());
+            }
+            jsonArray.add(objectNode);
+        }
+    }
+    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, Map<String, JsonNode> resolvedValues) {
+        if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
+            logger.info("Processing final response");
+            String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
+            String userPrompt = parsed.UserPrompt;
+            if (parsed.AdaptiveCardPrompt != null && !parsed.AdaptiveCardPrompt.trim().isEmpty()) {
+                userPrompt = parsed.AdaptiveCardPrompt;
+            } else if (userPrompt == null) {
+                userPrompt = ctx.getUsersQuery();
+            } else if (!userPrompt.trim().isEmpty() && TemplateResolver.hasPlaceholders(parsed.UserPrompt)) {
+                userPrompt = templateResolver.resolvePlaceholders(parsed.UserPrompt, resolvedValues);
+            }
+           
+            if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
+                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
+                if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
+                    return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
+                } else {
+                    return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()));
+                }
+            } else {
+                 String result = "Unable to process request, data not availabe";
+                logger.warn("Missing Data, Avoid LLM Call, systemPrompt {} userPrompt {}", systemPrompt, userPrompt);
+                return Flux.just(result);
+            }
+        } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
+            JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
+            return Flux.just(resultNode.toString());
+        } else {
+            ObjectNode objectNode = objectMapper.createObjectNode();
+            for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
+                objectNode.set(entry.getKey(), entry.getValue());
+            }
+            
+            return Flux.just(objectNode.toString());
+        }
+    }
+    
+    // ==================== RESULT HANDLING ====================
     private void addResultMap(Map<String, JsonNode> resolvedValues, FlowItem item, JsonNode resultNode) {
         if(TemplateResolver.isJsonNodeNullorEmpty(resultNode) )
         {           
@@ -386,137 +391,75 @@ public class Symphony extends BaseStep {
             	logger.error("Error evaluating {}",e.getMessage());
                }
         }
-        resolvedValues.put(item.getKey().toLowerCase(), resultNode);        
+        resolvedValues.put(item.getKey().toLowerCase(), resultNode);
     }
-
-	private JsonNode getResults(ExecutionContext ctx, Knowledge kb, JsonNode idNode) {
-        long startTime = System.currentTimeMillis(); // Start time logging
-       
-		JsonNode result;
-		ExecutionContext newCtx = new ExecutionContext(ctx);	                                    
-		newCtx.setName(kb.getName());	 
-		newCtx.setVariables(idNode);		
-		newCtx.setConvert(true);
-		result = getResult(kb, newCtx);
-        long endTime = System.currentTimeMillis(); // End time logging       
-        logger.info("Processing time for "+kb.getName() + " = " + (endTime - startTime) + " ms");
-		return result;
-	}
-
-	private void processPrompt(String key,Map<String, JsonNode> resolvedValues, String prompt) {
-		if(prompt!=null&&!prompt.isEmpty())
-		{   
-			String systemPrompt = templateResolver.resolvePlaceholders(prompt, resolvedValues);
-			String result = azureOpenAIHelper.evaluatePrompt(systemPrompt);    
-			JsonNode resultNode = parseJson(result);    
-			resolvedValues.replace(key, resultNode);
-		    
-		}
-	}
-
-	private JsonNode getResult(Knowledge kb, ExecutionContext newCtx) {
-		JsonNode result = null;
-		if (kb.getType() == QueryType.SQL) {
-		    result = sqlAssistant.executeQueryByName(newCtx);
-		} else if (kb.getType() == QueryType.GRAPHQL) {
-		    result = graphQLHelper.executeQueryByName(newCtx);
-		} else if (kb.getType() == QueryType.REST) {
-		    result = restHelper.executeQueryByName(newCtx);
-		} else if (kb.getType() == QueryType.SYMPHNOY) {
-		    result = executeQueryByName(newCtx);
-		}
-		else if (kb.getType() == QueryType.PLUGIN) {
-		    result = pluginStep.executeQueryByName(newCtx);
-		}else if (kb.getType() == QueryType.TOOL) {
-		    result = toolStep.executeQueryByName(newCtx);
-		}
-        else if (kb.getType() == QueryType.VELOCITY) {
-		    result = velocityTemplateEngine.executeQueryByName(newCtx);
-		}
-  
-		return result;
-	}
-
-//    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
-//        // Group FlowItems by order
-//        Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
-//        for (FlowItem item : parsed.Flow) {
-//            Integer order = item.getOrder() != null ? item.getOrder() : 0;
-//            flowItemsByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(item);
-//        }
-//        
-//        // Process items in order
-//        for (Map.Entry<Integer, List<FlowItem>> entry : flowItemsByOrder.entrySet()) {
-//            Integer order = entry.getKey();
-//            List<FlowItem> items = entry.getValue();
-//            
-//            if (order == 0 || items.size() == 1) {
-//                // Process sequentially for order 0 or single items
-//                for (FlowItem item : items) {
-//                    processFlowItem(item, ctx, resolvedValues);
-//                }
-//            } else {
-//
-//                // Process in parallel for same order > 0            
-//
-//                    String traceId = MDC.get(Constants.LOGGER_TRACE_ID);
-//                    logger.info("Processing order {} of {} items in parallel with traceId {}", order,items.size(), traceId);
-//                    List<CompletableFuture<Void>> futures = items.stream()
-//                        .map(item -> CompletableFuture.runAsync(() -> {
-//                            try {
-//                                MDC.put(Constants.LOGGER_TRACE_ID, traceId+"-"+item.getKey());
-//                                processFlowItem(item, ctx, resolvedValues);
-//                            } finally {
-//                                MDC.clear();
-//                            }
-//                        })).collect(Collectors.toList());
-//                
-//                // Wait for all parallel executions to complete
-//                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-//            }
-//        }
-//    }
-    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
-        // 1. Group items as before
-        Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
-        for (FlowItem item : parsed.Flow) {
-            Integer order = item.getOrder() != null ? item.getOrder() : 0;
-            flowItemsByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(item);
+    private JsonNode getResult(Knowledge kb, ExecutionContext newCtx) {
+        JsonNode result = null;
+        if (kb.getType() == QueryType.SQL) {
+            result = sqlAssistant.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.GRAPHQL) {
+            result = graphQLHelper.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.REST) {
+            result = restHelper.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.SYMPHNOY) { // fixed typo
+            result = executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.PLUGIN) {
+            result = pluginStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.TOOL) {
+            result = toolStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.VELOCITY) {
+            result = velocityTemplateEngine.executeQueryByName(newCtx);
         }
+        return result;
+    }   
 
-        // 2. Convert the Map entries into a Flux to process each "Order Group" sequentially
-        return Flux.fromIterable(flowItemsByOrder.entrySet())
-            .concatMap(entry -> {
-                Integer order = entry.getKey();
-                List<FlowItem> items = entry.getValue();
-
-                if (order == 0 || items.size() == 1) {
-                    // SEQUENTIAL PROCESSING
-                    return Flux.fromIterable(items)
-                        .concatMap(item -> executeWithStatus(item, ctx, resolvedValues));
-                } else {
-                    // PARALLEL PROCESSING (for items within the same order group)
-                    return Flux.fromIterable(items)
-                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues));
+    /**
+     * Helper method to handle JsonProcessingException and add error to response array.
+     */
+    private void handleJsonProcessingException(JsonProcessingException e, ArrayNode jsonArray) {
+        ObjectNode err = objectMapper.createObjectNode();
+        err.put("errors", e.getMessage());
+        jsonArray.add(err);
+    }
+    
+    /**
+     * Loads Spring bean tools based on comma-separated tool names.
+     * <p>
+     * This method splits the input string by comma, trims each tool name,
+     * and attempts to load the corresponding Spring bean from the application context.
+     * </p>
+     *
+     * @param toolsNames comma-separated string of bean names to load
+     * @return an array of loaded tool objects, or empty array if toolsNames is null/empty
+     * @throws org.springframework.beans.BeansException if a bean cannot be found
+     */
+    private Object[] loadTools(String toolsNames) {
+        if (toolsNames == null || toolsNames.isBlank()) {
+            logger.warn("No tools specified to load");
+            return new Object[0];
+        }
+        
+        String[] toolNameArray = toolsNames.split(",");
+        List<Object> tools = new ArrayList<>();
+        
+        for (String toolName : toolNameArray) {
+            String trimmedName = toolName.trim();
+            if (!trimmedName.isEmpty()) {
+                try {
+                    
+                    Object tool =  pluginLoader.createObject(trimmedName);
+                    tools.add(tool);
+                    logger.info("Successfully loaded tool: {}", trimmedName);
+                } catch (Exception e) {
+                    logger.error("Failed to load tool: {}. Error: {}", trimmedName, e.getMessage());
+                    throw new RuntimeException("Failed to load tool: " + trimmedName, e);
                 }
-            });
+            }
+        }
+        
+        return tools.toArray();
     }
-
-    private Flux<String> executeWithStatus(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
-        return Flux.defer(() -> {
-            String itemName = item.getKey() != null ? item.getKey() : "Unknown Item";
-            
-            // Create the sequence: Message -> Actual Work -> Message
-            return Flux.just("STARTING: " + itemName)
-                .concatWith(Mono.fromRunnable(() -> {
-                    // Note: If processFlowItem is blocking, wrap it in Schedulers.boundedElastic()
-                    processFlowItem(item, ctx, resolvedValues);
-                    logger.info("Completed processing item: {} data {}" , itemName,resolvedValues.get(itemName.toLowerCase()));
-                }).then(Mono.empty())) // then(Mono.empty()) ensures no data is emitted here
-                .concatWith(Flux.just("COMPLETED: " + itemName));
-        }).subscribeOn(Schedulers.boundedElastic()); // Keeps parallel work off the main thread
-    }
-
+    
     @Override
     protected ArrayNode getData(ExecutionContext ctx) {
         // Reuse the logic from getResponse, but only return the ArrayNode data
@@ -533,5 +476,19 @@ public class Symphony extends BaseStep {
             handleJsonProcessingException(e, jsonArray);
         }
         return jsonArray;
+    }
+    
+    // ==================== FLOW PROCESSING ====================
+    private JsonNode getResults(ExecutionContext ctx, Knowledge kb, JsonNode idNode) {
+        long startTime = System.currentTimeMillis();
+        JsonNode result;
+        ExecutionContext newCtx = new ExecutionContext(ctx);
+        newCtx.setName(kb.getName());
+        newCtx.setVariables(idNode);
+        newCtx.setConvert(true);
+        result = getResult(kb, newCtx);
+        long endTime = System.currentTimeMillis();
+        logger.info("Processing time for {} = {} ms", kb.getName(), (endTime - startTime));
+        return result;
     }
 }

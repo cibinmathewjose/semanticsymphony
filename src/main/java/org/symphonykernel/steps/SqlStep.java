@@ -92,7 +92,7 @@ public class SqlStep extends  BaseStep {
 
     /**
      * Executes a single-value SQL query with the provided parameters and returns a typed result.
-     * Uses ResultSet#getObject(int, Class<T>) for a type-safe retrieval.
+     * Uses ResultSet#getObject(int, Class) for a type-safe retrieval.
      *
      * @param query the SQL query to execute
      * @param type the expected return type class
