@@ -26,7 +26,7 @@ import com.fasterxml.jackson.databind.node.TextNode;
 public class JsonTransformer {
 
     public static final String JSON = "JSON:";
-    public static final String LLM_OPTIMIZED_DATA = "LLM-optimized JSON DATA:";
+    public static final String LLM_OPTIMIZED_DATA = "COMPRESSED-JSON:";
     private final ObjectMapper mapper = new ObjectMapper();
     private static final ObjectMapper sharedMapper = new ObjectMapper();
     private static final Logger logger = LoggerFactory.getLogger(JsonTransformer.class);

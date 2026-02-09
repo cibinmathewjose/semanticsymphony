@@ -47,15 +47,17 @@ public class PluginStep extends BaseStep {
     @Override
     public Flux<String> getResponseStream(ExecutionContext context) {
     	Knowledge kb = context.getKnowledge();
+    	 String systemPrompt = null;
         if (kb == null && context.getName() != null) {
             kb = knowledgeBase.GetByName(context.getName());
             context.setKnowledge(kb);
+            systemPrompt = kb.getSystemPrompt();
         }
         logger.info("Executing Plugin " + context.getKnowledge().getName());
         JsonNode paramNode = getParamNode(context.getKnowledge().getData());
         String plugin = paramNode.get("Tool").asText();
 
-        String systemPrompt = null;
+       
         if (paramNode.has("SystemPrompt")) {
             systemPrompt = paramNode.get("SystemPrompt").asText();
         }
@@ -87,15 +89,16 @@ public class PluginStep extends BaseStep {
     @Override
   	protected ArrayNode getData(ExecutionContext context) {
     	 Knowledge kb = context.getKnowledge();
+    	 String systemPrompt = null;
          if (kb == null && context.getName() != null) {
              kb = knowledgeBase.GetByName(context.getName());
              context.setKnowledge(kb);
+             systemPrompt = kb.getSystemPrompt();
          }
          logger.info("Executing Plugin " + context.getKnowledge().getName());
          JsonNode paramNode = getParamNode(context.getKnowledge().getData());
          String plugin = paramNode.get("Tool").asText();
 
-         String systemPrompt = null;
          if (paramNode.has("SystemPrompt")) {
              systemPrompt = paramNode.get("SystemPrompt").asText();
          }

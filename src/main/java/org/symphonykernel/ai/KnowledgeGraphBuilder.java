@@ -97,8 +97,6 @@ import reactor.core.publisher.Flux;
  *
  * <h2>Methods:</h2>
  * <ul>
- * <li>{@link #getLocalExecutionContext()} - Retrieves the thread-local
- * execution context.</li>
  * <li>{@link #createContext(ChatRequest)} - Creates a new execution context for
  * a given chat request.</li>
  * <li>{@link #identifyIntent(ExecutionContext)} - Identifies the intent of the
@@ -135,6 +133,7 @@ public class KnowledgeGraphBuilder {
         static final String FAILED = "FAILED";
         static final String FOLLOWUP = "FOLLOWUP";
         static final String PROCESSING = "PROCESSING";
+		static final String ERROR = "ERROR";
     }
 
     @Value("${symphony.threadpool.size:25}")
@@ -232,23 +231,6 @@ public class KnowledgeGraphBuilder {
     @Autowired
     private FileContentProvider fileContentProvider;
 
-//@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/matchKnowledgePrompt.text') }")
-    //@Value("${fileContentProvider.matchKnowledgePrompt}")
-    //private String matchKnowledgePrompt;
-    //@Value("#{ @fileContentProvider.loadFileContent('classpath:prompts/paramParserPrompt.text') }")
-    //@Value("${fileContentProvider.paramParserPrompt}")
-    //private String paramParserPrompt;
-    private static final ThreadLocal<ExecutionContext> threadLocalContext = ThreadLocal.withInitial(ExecutionContext::new);
-
-    /**
-     * Retrieves the thread-local execution context for the current thread.
-     *
-     * @return the {@link ExecutionContext} associated with the current thread.
-     */
-    public ExecutionContext getLocalExecutionContext() {
-        return threadLocalContext.get();
-    }
-
     /**
      * Creates a new execution context for a given chat request.
      *
@@ -325,6 +307,33 @@ public class KnowledgeGraphBuilder {
         return ctx;
 
     }
+    public ChatResponse process(ChatRequest request) {      
+        long start = System.nanoTime();
+        logger.debug("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
+        if (request == null) {
+            return new ChatResponse("Request is null");
+        }
+        try {
+            ExecutionContext ctx = prepareContext(request);
+            ChatResponse response = getResponse(ctx);
+            long durationMs = (System.nanoTime() - start) / 1_000_000;
+            logger.info("Processed request in {} ms", durationMs);
+            return response;
+        } catch (Exception ex) {
+            logger.warn("Error setting parameters or processing request, try to process as followup Question", ex);
+            if(hasContextInfo(request)) {
+            	return getFollowupResponse(request);
+			}
+            else
+            {
+            	ChatResponse resp= new ChatResponse("Unexpected error occurred: " + ex.getMessage());
+            	resp.setRequestId(request.getConversationId());
+            	resp.setStatusCode(Status.ERROR);
+            	updateUserSession(request.getConversationId(), resp);
+            	return resp;
+            }
+        } 
+    }
 
     /**
      * Sets parameters for the query using OpenAI prompt evaluation. Updates the
@@ -348,7 +357,7 @@ public class KnowledgeGraphBuilder {
                 String prompt = fileContentProvider.prepareParamParserPrompt(knowledge.getParams(), request.getQuery());
                 String params = openAI.evaluatePrompt(prompt);
                 request.setPayload(params);
-                logger.debug("payload identified as : " + params);
+                logger.info("payload identified as : " + params);
             }
         }
         ctx.setRequest(request);
@@ -558,11 +567,18 @@ public class KnowledgeGraphBuilder {
                 logger.info("Response {}", response.getMessage());
             } catch (Exception e) {
                 logger.error("Error processing request for requestId: {}", ctx.getRequestId(), e);
+                response = new ChatResponse("Error processing request: " + e.getMessage());
+                response.setRequestId(ctx.getRequestId());
+                response.setStatusCode(Status.FAILED);
                 UserSession session = ctx.getUserSession();
+                if(session==null)
+				{
+                	session= this.sessionManager.getRequest(ctx.getRequestId());
+				}
                 if (session != null) {
                     session.setBotResponse("An error occurred while processing your request: " + e.getMessage());
                     session.setStatus(Status.FAILED);
-                    sessionManager.updateUserSession(session, null);
+                    sessionManager.updateUserSession(session, response);
                 }
             } finally {
                 logger.info("request processing completed for requestId: {}", ctx.getRequestId());
@@ -596,18 +612,19 @@ public class KnowledgeGraphBuilder {
 		}
 	}
 
-    public ChatResponse getFollowupResponse(ChatRequest request) {
-        ChatResponse response = new ChatResponse();
-        if (request == null || request.getQuery() == null || request.getSession() == null) {
-            response.setMessage("Sorry, I am unable to process the question, please check the FAQ for more information about my capabilities.");
-            return response;
+    public boolean hasContextInfo(ChatRequest request) {
+    	if (request == null || request.getQuery() == null || request.getSession() == null) {
+            return false;
         }
         String rId = sessionManager.getLastRequestId(request.getSession());
         if (rId == null || rId.isEmpty()) {
-            response.setMessage("No previous session found for the given conversation id");
-            return response;
+           return false;
         }
-
+        return true;
+	}
+    
+    public ChatResponse getFollowupResponse(ChatRequest request) {
+    	String rId = sessionManager.getLastRequestId(request.getSession());
         return getFollowupResponse(rId, request.getQuery());
 
     }
@@ -837,7 +854,11 @@ public class KnowledgeGraphBuilder {
         response.setStatusCode(Status.PROCESSING);
         return response;
     }
-
+    public void updateUserSession(String requestId, ChatResponse response) {
+    	UserSession reqDetails = sessionManager.getRequest(requestId);
+    	if(reqDetails!=null)
+    		sessionManager.updateUserSession(reqDetails, response);
+    }
     private ChatResponse processRequest(ExecutionContext ctx, Knowledge knowledge, IStep step) {
         ChatResponse response;
         response = step.getResponse(ctx);

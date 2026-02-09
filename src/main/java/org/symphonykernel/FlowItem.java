@@ -190,5 +190,19 @@ public class FlowItem {
     public String getJsonPath() {
         return jsonPath;
     }
+    public FlowItem copy() {
+		FlowItem copy = new FlowItem();
+		copy.name = this.name;
+		copy.key = this.key;
+		copy.payload = this.payload;
+		copy.loop = this.loop;
+		copy.array = this.array;
+		copy.order = this.order;
+		copy.condition = this.condition;
+		copy.jsonPath = this.jsonPath;
+		copy.required = this.required;
+		copy.SystemPrompt = this.SystemPrompt;
+		return copy;
+	}
     
 }

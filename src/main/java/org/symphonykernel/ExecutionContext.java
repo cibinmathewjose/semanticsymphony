@@ -9,6 +9,7 @@
 package org.symphonykernel;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -96,13 +97,13 @@ public class ExecutionContext {
      * 
      * @param ctx the ExecutionContext instance to copy from
      */
-    public ExecutionContext(ExecutionContext ctx) {       
-        this();
+    public ExecutionContext(ExecutionContext ctx) {    
         setHttpHeaderProvider(ctx.getHttpHeaderProvider());
         setUsersQuery(ctx.getUsersQuery());
         setChatHistory(ctx.getChatHistory());
         resolvedValues=ctx.getResolvedValues();
-        setCurrentFlowItem(ctx.getCurrentFlowItem());
+        if(ctx.getCurrentFlowItem()!=null)
+        	setCurrentFlowItem(ctx.getCurrentFlowItem().copy());
         setUserSession(ctx.getUserSession());
         setModelName(ctx.getModelName());
     }
