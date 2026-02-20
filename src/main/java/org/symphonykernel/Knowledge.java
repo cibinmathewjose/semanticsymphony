@@ -1,5 +1,8 @@
 package org.symphonykernel;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Lob;
+
 /**
  * Represents a knowledge entity with a description and data.
  */
@@ -20,7 +23,8 @@ public class Knowledge extends KnowledgeDescription  {
 
 	private String tools;
 	
-	private String systemprompt;
+    private String systemPrompt;
+    
 	
 	/**
      * Gets the URL associated with the knowledge.
@@ -157,11 +161,11 @@ public class Knowledge extends KnowledgeDescription  {
 	public void setTools(String tools) {
 		this.tools = tools;
 	}
-	public String getSystemprompt() {
-		return systemprompt;
-	}
-	
-	public void setSystemprompt(String systemprompt) {
-		this.systemprompt = systemprompt;
-	}
+	public String getSystemPrompt() {
+        return systemPrompt;
+    }
+
+    public void setSystemPrompt(String systemPrompt) {
+        this.systemPrompt = systemPrompt;
+    }
 }

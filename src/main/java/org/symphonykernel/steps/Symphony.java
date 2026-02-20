@@ -87,7 +87,7 @@ public class Symphony extends BaseStep {
         Knowledge _symphony = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
         logger.info("Executing Symphony " + _symphony.getName() + " with " + input);
-        Map<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
+        ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
@@ -112,7 +112,7 @@ public class Symphony extends BaseStep {
         JsonNode input = ctx.getVariables();
         Knowledge _symphony = ctx.getKnowledge();
         logger.info("Executing Symphony {} with {}", _symphony.getName(), input);
-        Map<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
+        ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
@@ -144,7 +144,7 @@ public class Symphony extends BaseStep {
     }
 
     // ==================== FLOW PROCESSING ====================
-    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
         // 1. Group items as before
         Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
         for (FlowItem item : parsed.Flow) {
@@ -169,7 +169,7 @@ public class Symphony extends BaseStep {
                 }
             });
     }
-    private Flux<String> executeWithStatus(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+    private Flux<String> executeWithStatus(FlowItem item, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
         String itemName = item.getKey() != null ? item.getKey() : "Unknown Item";
 
         return Flux.defer(() -> {
@@ -193,7 +193,7 @@ public class Symphony extends BaseStep {
         });
     }
 
-    private void processFlowItem(FlowItem item, ExecutionContext ctx, Map<String, JsonNode> resolvedValues) {
+    private void processFlowItem(FlowItem item, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
         if (shouldSkipItem(item, resolvedValues)) {
             return;
         }
@@ -202,7 +202,7 @@ public class Symphony extends BaseStep {
             return;
         }
         logger.info("Executing Symphony: {} with Payload: {}", item.getName(), item.getPayload());
-        ctx.setCurrentFlowItem(item);
+        
         JsonNode resolverPayload = resolvePayload(item, resolvedValues);
         if (resolverPayload != null) {
             JsonNode result = processPayload(item, ctx, kb, resolverPayload);
@@ -261,7 +261,7 @@ public class Symphony extends BaseStep {
         if (resolverPayload.isArray()) {
             Map<String, JsonNode> resultPair = new HashMap<>();
             for (JsonNode idNode : resolverPayload) {
-                JsonNode result = getResults(ctx, kb, idNode);
+                JsonNode result = getResults(ctx, kb,item, idNode);
                 if (result.isArray() && result.size() == 1) {
                     result = result.get(0);
                 }
@@ -274,14 +274,14 @@ public class Symphony extends BaseStep {
             }
             return objectMapper.valueToTree(resultPair);
         }
-        return getResults(ctx, kb, resolverPayload);
+        return getResults(ctx, kb,item, resolverPayload);
     }
 
     private JsonNode processWithoutLoopKey(FlowItem item, ExecutionContext ctx, Knowledge kb, JsonNode resolverPayload) {
         if (resolverPayload.isArray() && !item.isArray()) {
             ArrayNode resultArray = objectMapper.createArrayNode();
             for (JsonNode idNode : resolverPayload) {
-                JsonNode result = getResults(ctx, kb, idNode);
+                JsonNode result = getResults(ctx, kb, item,idNode);
                 if (result.isArray() && result.size() == 1) {
                     resultArray.add(result.get(0));
                 } else {
@@ -290,11 +290,11 @@ public class Symphony extends BaseStep {
             }
             return resultArray;
         }
-        return getResults(ctx, kb, resolverPayload);
+        return getResults(ctx, kb, item,resolverPayload);
     }
 
     // ==================== PROMPT HANDLING ====================
-    private void processPrompt(String key, Map<String, JsonNode> resolvedValues, String prompt) {
+    private void processPrompt(String key, ConcurrentHashMap<String, JsonNode> resolvedValues, String prompt) {
         if (prompt != null && !prompt.isEmpty()) {
             String systemPrompt = templateResolver.resolvePlaceholders(prompt, resolvedValues);
             String result = azureOpenAIHelper.evaluatePrompt(systemPrompt);
@@ -379,7 +379,7 @@ public class Symphony extends BaseStep {
     }
     
     // ==================== RESULT HANDLING ====================
-    private void addResultMap(Map<String, JsonNode> resolvedValues, FlowItem item, JsonNode resultNode) {
+    private void addResultMap(ConcurrentHashMap<String, JsonNode> resolvedValues, FlowItem item, JsonNode resultNode) {
         if(TemplateResolver.isJsonNodeNullorEmpty(resultNode) )
         {           
             if(item.isRequired())
@@ -474,10 +474,11 @@ public class Symphony extends BaseStep {
     }
     
     // ==================== FLOW PROCESSING ====================
-    private JsonNode getResults(ExecutionContext ctx, Knowledge kb, JsonNode idNode) {
+    private JsonNode getResults(ExecutionContext ctx, Knowledge kb,FlowItem item, JsonNode idNode) {
         long startTime = System.currentTimeMillis();
         JsonNode result;
         ExecutionContext newCtx = new ExecutionContext(ctx);
+        ctx.setCurrentFlowItem(item);
         newCtx.setName(kb.getName());
         newCtx.setVariables(idNode);
         newCtx.setConvert(true);

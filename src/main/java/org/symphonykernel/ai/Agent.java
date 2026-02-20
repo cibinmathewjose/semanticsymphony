@@ -53,24 +53,8 @@ public class Agent {
      * @return a {@link ChatResponse} containing the generated response
      */
     public ChatResponse process(ChatRequest request) {      
-        long start = System.nanoTime();
-        logger.debug("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
-        if (request == null) {
-            return new ChatResponse("Request is null");
-        }
-        try {
-            ExecutionContext ctx = knowledgeGraphBuilder.prepareContext(request);
-            ChatResponse response = knowledgeGraphBuilder.getResponse(ctx);
-            long durationMs = (System.nanoTime() - start) / 1_000_000;
-            logger.info("Processed request in {} ms", durationMs);
-            return response;
-        } catch (Exception ex) {
-            logger.warn("Error setting parameters or processing request, try to process as followup Question", ex);
-            return knowledgeGraphBuilder.getFollowupResponse(request);
-        } catch (Throwable t) {
-            logger.error("Unexpected error during processing", t);
-            return new ChatResponse("Unexpected error occurred");
-        }
+    	return knowledgeGraphBuilder.process(request);
+
     }
 
     // ==================== STREAMING ====================
