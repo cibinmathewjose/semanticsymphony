@@ -485,10 +485,49 @@ public class KnowledgeGraphBuilder {
     private Object getValue(JsonNode paramNode, Map<String, Object> variables, String fieldName) {
         Object mappedValue = findMapping(fieldName, paramNode, variables);
         if (mappedValue == null) {
-            logger.error("Unable to find mapping for {}", fieldName);
-            throw new RuntimeException("Unable to find field mapping");
+            // Try to get default value from parameter configuration
+            Object defaultValue = getDefaultValueFromParamConfig(paramNode, fieldName);
+            if (defaultValue != null) {
+                logger.error("unable to do field mapping for '{}', assigning default value from parameter config: '{}'.", fieldName, defaultValue);
+                mappedValue = defaultValue;
+            } else {
+                logger.error("unable to do field mapping for '{}', assigning empty string as default value.", fieldName);
+                mappedValue = ""; // Assign empty string as fallback default
+            }
         }
         return mappedValue;
+    }
+
+    /**
+     * Retrieves the default value for a field from the parameter configuration.
+     * Looks for "default" or "defaultValue" property in the parameter node.
+     *
+     * @param paramNode the parameter configuration node
+     * @param fieldName the name of the field to get default value for
+     * @return the default value if found, null otherwise
+     */
+    private Object getDefaultValueFromParamConfig(JsonNode paramNode, String fieldName) {
+        if (paramNode == null || !paramNode.has(fieldName)) {
+            return null;
+        }
+        
+        JsonNode fieldConfig = paramNode.get(fieldName);
+        if (fieldConfig == null || !fieldConfig.isObject()) {
+            return null;
+        }
+        
+        // Try common default value field names
+        String[] defaultFieldNames = {"default", "defaultValue", "defaultVal", "value"};
+        for (String defaultFieldName : defaultFieldNames) {
+            if (fieldConfig.has(defaultFieldName)) {
+                JsonNode defaultNode = fieldConfig.get(defaultFieldName);
+                if (defaultNode != null && !defaultNode.isNull()) {
+                    return defaultNode.asText();
+                }
+            }
+        }
+        
+        return null;
     }
 
     private Object findMapping(String fieldName, JsonNode mapType, Map<String, Object> mapFrom) {
