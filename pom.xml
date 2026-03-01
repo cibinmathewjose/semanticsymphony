@@ -9,7 +9,7 @@
     </parent>
     <groupId>org.symphonykernel</groupId>
     <artifactId>semantickernel-spring-symphony</artifactId>
-    <version>0.4.7-SNAPSHOT</version> 
+    <version>0.5.0-SNAPSHOT</version> 
     <packaging>jar</packaging>
     <name>Semantic Kernel Spring Symphony</name>
     <description>Defines a chat agentic framework with the Semantic Kernel and SpringBoot</description>
@@ -38,6 +38,11 @@
        <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-azure-openai</artifactId>
+            <version>1.1.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-anthropic</artifactId>
             <version>1.1.2</version>
         </dependency>
         <dependency>
