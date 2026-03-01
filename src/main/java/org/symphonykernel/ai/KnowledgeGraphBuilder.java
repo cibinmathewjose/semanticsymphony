@@ -249,7 +249,8 @@ public class KnowledgeGraphBuilder {
             {
                 payload=request.getPayloadParam(Status.MODEL);
             }
-            ctx.setModelName(payload);
+            ctx.setModelName(payload);			
+            request.setPayload(null);
         }
         ctx.setUsersQuery(request.getQuery());
         ctx.setHttpHeaderProvider(request.getHeaderProvider());
@@ -258,7 +259,6 @@ public class KnowledgeGraphBuilder {
         UserSession info = null;
         info = sessionManager.createUserSession(request);
         ctx.setUserSession(info);
-        ctx.put("input", ctx.getVariables());
         ctx.put("userprompt", ctx.getUsersQuery()); 
         return ctx;
     }
@@ -486,7 +486,7 @@ public class KnowledgeGraphBuilder {
         Object mappedValue = findMapping(fieldName, paramNode, variables);
         if (mappedValue == null) {
             // Try to get default value from parameter configuration
-            Object defaultValue = getDefaultValueFromParamConfig(paramNode, fieldName);
+            Object defaultValue = getDefaultValue(paramNode, fieldName);
             if (defaultValue != null) {
                 logger.error("unable to do field mapping for '{}', assigning default value from parameter config: '{}'.", fieldName, defaultValue);
                 mappedValue = defaultValue;
@@ -498,37 +498,46 @@ public class KnowledgeGraphBuilder {
         return mappedValue;
     }
 
-    /**
-     * Retrieves the default value for a field from the parameter configuration.
-     * Looks for "default" or "defaultValue" property in the parameter node.
+      /**
+     * Gets the default value for a parameter field from the parameter definition.
+     * The parameter definition should have a "default" property to specify the default value.
+     * Example: {"fieldName": {"type": "string", "default": "defaultValue"}}
      *
-     * @param paramNode the parameter configuration node
-     * @param fieldName the name of the field to get default value for
-     * @return the default value if found, null otherwise
+     * @param paramNode the parameter definition JSON node
+     * @param fieldName the name of the field to get the default value for
+     * @return the default value, or null if not defined
      */
-    private Object getDefaultValueFromParamConfig(JsonNode paramNode, String fieldName) {
+    private Object getDefaultValue(JsonNode paramNode, String fieldName) {
         if (paramNode == null || !paramNode.has(fieldName)) {
             return null;
         }
-        
-        JsonNode fieldConfig = paramNode.get(fieldName);
-        if (fieldConfig == null || !fieldConfig.isObject()) {
+        JsonNode fieldDef = paramNode.get(fieldName);
+        if (fieldDef == null || !fieldDef.has("default")) {
             return null;
         }
-        
-        // Try common default value field names
-        String[] defaultFieldNames = {"default", "defaultValue", "defaultVal", "value"};
-        for (String defaultFieldName : defaultFieldNames) {
-            if (fieldConfig.has(defaultFieldName)) {
-                JsonNode defaultNode = fieldConfig.get(defaultFieldName);
-                if (defaultNode != null && !defaultNode.isNull()) {
-                    return defaultNode.asText();
-                }
-            }
+        JsonNode defaultNode = fieldDef.get("default");
+        if (defaultNode == null || defaultNode.isNull()) {
+            return null;
         }
-        
-        return null;
+        // Return the appropriate Java type based on the JSON node type
+        if (defaultNode.isTextual()) {
+            return defaultNode.asText();
+        } else if (defaultNode.isNumber()) {
+            if (defaultNode.isInt()) {
+                return defaultNode.asInt();
+            } else if (defaultNode.isLong()) {
+                return defaultNode.asLong();
+            } else {
+                return defaultNode.asDouble();
+            }
+        } else if (defaultNode.isBoolean()) {
+            return defaultNode.asBoolean();
+        } else if (defaultNode.isArray() || defaultNode.isObject()) {
+            return defaultNode;
+        }
+        return defaultNode.asText();
     }
+
 
     private Object findMapping(String fieldName, JsonNode mapType, Map<String, Object> mapFrom) {
         for (String key : mapFrom.keySet()) {
