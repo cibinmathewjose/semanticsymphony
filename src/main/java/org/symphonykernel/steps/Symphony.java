@@ -176,14 +176,14 @@ public class Symphony extends BaseStep {
 
         return Flux.defer(() -> {
             // 1. Start with the status message
-            return Flux.just(knowledgeBase.getKnowledgeDescriptions(itemName) +"(Step-:"+itemName +")")
+            return Flux.just(knowledgeBase.getKnowledgeDescriptions(itemName) +"(Step:"+itemName +")")
                 .concatWith(
                     // 2. Perform work and directly emit COMPLETED as the Mono's value
                     Mono.fromCallable(() -> {
                         logger.info("Actually starting work for: {}", itemName);
                         long startTime = System.currentTimeMillis();
                         processFlowItem(item, ctx, resolvedValues);                        
-                        return "Step-:" + itemName +"completed in " + (System.currentTimeMillis() - startTime) + " ms";
+                        return "Step:" + itemName +" completed in " + (System.currentTimeMillis() - startTime) + " ms";
                     })
                     .subscribeOn(Schedulers.boundedElastic()) // Offload blocking I/O
                 )
