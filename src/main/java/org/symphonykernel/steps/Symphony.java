@@ -108,35 +108,37 @@ public class Symphony extends BaseStep {
         return a;
     }
     @Override
-    public Flux<String> getResponseStream(ExecutionContext ctx) {
-        JsonNode input = ctx.getVariables();
-        Knowledge _symphony = ctx.getKnowledge();
-        logger.info("Executing Symphony {} with {}", _symphony.getName(), input);
+    public Flux<String> getResponseStream(ExecutionContext ctx) {       
+        Knowledge _symphony = ctx.getKnowledge();       
         ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
-        resolvedValues.put("input", input);
+        logger.info("Executing Symphony {} with {}", _symphony.getName(), ctx.getVariables());
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
             StringBuilder responseAccumulator = new StringBuilder();
-            return processFlowItemsByOrder(parsed, ctx, resolvedValues)
-                .onErrorResume(e -> {
-                    logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
-                    return Flux.just("Error: " + e.getMessage());
-                })
-            .collectList() 
-            .flatMapMany(progressList -> {
-                // Now that progress is 100% done, start the next one
-            	logger.info("Completed processing flow items, now processing final response as stream of {} items", progressList.size());
-                return processFinalResponseAsStream(parsed, ctx, _symphony, resolvedValues)
-                    .startWith(Flux.fromIterable(progressList)) // Put the progress back at the start
-                    .doOnNext(responseAccumulator::append)
-                    .doFinally(signalType -> {
-                        saveStepData(ctx, responseAccumulator.toString());
+            return Flux.just("Thinking...")
+                .concatWith(
+                    // Stream progress items immediately as they arrive
+                    processFlowItemsByOrder(parsed, ctx, resolvedValues)
+                        .onErrorResume(e -> {
+                            logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
+                            return Flux.just("Error: " + e.getMessage());
+                        })
+                )
+                .concatWith(
+                    // After all flow items complete, stream the final response
+                    Flux.defer(() -> {
+                        logger.info("Completed processing flow items, now processing final response as stream");
+                        return processFinalResponseAsStream(parsed, ctx, _symphony, resolvedValues)
+                            .onErrorResume(e -> {
+                                logger.error("Error in processFinalResponseAsStream: {}", e.getMessage());
+                                return Flux.just("Error: " + e.getMessage());
+                            });
                     })
-                    .onErrorResume(e -> {
-                        logger.error("Error in processFinalResponseAsStream: {}", e.getMessage());
-                        return Flux.just("Error: " + e.getMessage());
-                    });
-            });
+                )
+                .doOnNext(responseAccumulator::append)
+                .doFinally(signalType -> {
+                    saveStepData(ctx, responseAccumulator.toString());
+                });
         } catch (Exception e) {
             saveStepData(ctx, e.getMessage());
             return Flux.just("Error processing Symphony: " + e.getMessage());
@@ -153,7 +155,7 @@ public class Symphony extends BaseStep {
         }
 
         // 2. Convert the Map entries into a Flux to process each "Order Group" sequentially
-        return Flux.fromIterable(flowItemsByOrder.entrySet())
+        return  Flux.fromIterable(flowItemsByOrder.entrySet())
             .concatMap(entry -> {
                 Integer order = entry.getKey();
                 List<FlowItem> items = entry.getValue();
@@ -173,18 +175,19 @@ public class Symphony extends BaseStep {
         String itemName = item.getKey() != null ? item.getKey() : "Unknown Item";
 
         return Flux.defer(() -> {
-            // 1. Start with the message
-            return Flux.just("STARTING: " + itemName)
+            // 1. Start with the status message
+            return Flux.just(knowledgeBase.getKnowledgeDescriptions(itemName) +"(Step-:"+itemName +")")
                 .concatWith(
-                    // 2. Perform work. Using fromCallable/fromRunnable 
-                    // ensures the COMPLETED message waits for this to finish.
-                    Mono.fromRunnable(() -> {
+                    // 2. Perform work and directly emit COMPLETED as the Mono's value
+                    Mono.fromCallable(() -> {
                         logger.info("Actually starting work for: {}", itemName);
-                        processFlowItem(item, ctx, resolvedValues);
+                        long startTime = System.currentTimeMillis();
+                        processFlowItem(item, ctx, resolvedValues);                        
+                        return "Step-:" + itemName +"completed in " + (System.currentTimeMillis() - startTime) + " ms";
                     })
                     .subscribeOn(Schedulers.boundedElastic()) // Offload blocking I/O
-                    .then(Mono.just("COMPLETED: " + itemName)) // Move to end message ONLY after work finishes
                 )
+                .doOnNext(msg -> logger.info("Flux emitting: {}", msg))
                 .doOnComplete(() -> logger.info("Stream sequence finished for: {}", itemName))
                 .onErrorResume(e -> {
                     logger.error("Error in {}: {}", itemName, e.getMessage());
@@ -197,6 +200,7 @@ public class Symphony extends BaseStep {
         if (shouldSkipItem(item, resolvedValues)) {
             return;
         }
+        
         Knowledge kb = knowledgeBase.GetByName(item.getName());
         if (kb == null) {
             return;
@@ -355,10 +359,15 @@ public class Symphony extends BaseStep {
            
             if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
                 userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
+                Flux<String> generatingMsg = Flux.just("Generating output:");
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
-                    return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
+                    return generatingMsg.concatWith(
+                        azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()))
+                    );
                 } else {
-                    return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()));
+                    return generatingMsg.concatWith(
+                        azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()))
+                    );
                 }
             } else {
                  String result = "Unable to process request, data not availabe";

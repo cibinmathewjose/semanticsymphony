@@ -80,6 +80,7 @@ public class ChatRequest {
      */
     public void setUser(String user) {
         this.user = user;
+        addContextInfo("user_id", user);
     }
 
     /**

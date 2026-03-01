@@ -6,6 +6,7 @@ import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.azure.openai.AzureOpenAiChatOptions;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ChatClient.ChatClientRequestSpec;
@@ -16,6 +17,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.content.Media;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.retry.support.RetryTemplate;
@@ -44,8 +46,13 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
 
     private static final Logger logger = LoggerFactory.getLogger(StringAIHelper.class);
     static String DEFAULT_MODEL = "default";
-    @Autowired
-    private ChatModel myChatModel;
+    @Autowired(required = false)
+    @Qualifier("azureOpenAiChatModel")
+    private ChatModel azureOpenAiChatModel;
+
+    @Autowired(required = false)
+    @Qualifier("anthropicChatModel")
+    private ChatModel anthropicChatModel;
     RetryTemplate retryTemplate;
 
     /**
@@ -125,9 +132,31 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
             throw new RuntimeException("Cannot create prompt with empty messages");
         }
 
-        var openAiChatOptions = resolveOptions(model);
-        return new Prompt(messages, openAiChatOptions);
+        String provider = conProperties.getProvider(model);
+        if (provider != null && provider.equalsIgnoreCase("anthropic")) {
 
+            // Anthropic API requires at least one UserMessage in the messages array;
+            // SystemMessage is sent separately as the "system" parameter.
+            // If only a system prompt was provided, move it into a UserMessage.
+            boolean hasUserMessage = messages.stream().anyMatch(m -> m instanceof UserMessage);
+            if (!hasUserMessage) {
+                String systemText = messages.stream()
+                        .filter(m -> m instanceof SystemMessage)
+                        .map(Message::getText)
+                        .reduce("", (a, b) -> a + "\n" + b)
+                        .trim();
+                messages.clear();
+                messages.add(new UserMessage(systemText));
+            }
+
+            var chatOptions = resolveOptionsForAnthropic(model);
+            return new Prompt(messages, chatOptions);
+        } else {
+
+            var chatOptions = resolveOptionsForAzureOpenAi(model);
+            return new Prompt(messages, chatOptions);
+
+        }
     }
 
     private ChatClientRequestSpec getClient(LLMRequest request) {
@@ -136,11 +165,19 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
         return client;
     }
 
-    private ChatClientRequestSpec getClient(Prompt prompt, Object[] tools) {
-        if (myChatModel == null) {
-            throw new IllegalStateException("ChatModel is not initialized");
+    private ChatModel resolveChatModel(Prompt prompt) {
+        boolean isAnthropic = prompt.getOptions() instanceof AnthropicChatOptions;
+        ChatModel model = isAnthropic ? anthropicChatModel : azureOpenAiChatModel;
+        if (model == null) {
+            throw new IllegalStateException(
+                "ChatModel is not initialized for provider: " + (isAnthropic ? "anthropic" : "azureOpenAi"));
         }
-        var client = ChatClient.create(myChatModel).prompt(prompt);
+        return model;
+    }
+
+    private ChatClientRequestSpec getClient(Prompt prompt, Object[] tools) {
+        ChatModel chatModel = resolveChatModel(prompt);
+        var client = ChatClient.create(chatModel).prompt(prompt);
         if (tools != null && tools.length > 0) {
             logger.info("Processing with tools: {}", tools.length);
             client = client.tools(tools);
@@ -148,7 +185,7 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
         return client;
     }
 
-    private AzureOpenAiChatOptions resolveOptions(String modelName) {
+    private AzureOpenAiChatOptions resolveOptionsForAzureOpenAi(String modelName) {
         if (modelName == null || modelName.isBlank() || modelName.equalsIgnoreCase(DEFAULT_MODEL)) {
             // no override – use model & options configured on the ChatModel bean
             modelName = conProperties.getDeploymentName();
@@ -156,14 +193,34 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
 
         Integer maxCompletionTokens = conProperties.getMaxCompletionTokens(modelName);
         Integer maxTokens = conProperties.getMaxTokens(modelName);
-        Double temperature = conProperties.getTemperature(modelName);
+        Double temperature = conProperties.getTemperature(modelName);       
         var builder = AzureOpenAiChatOptions.builder().deploymentName(modelName);
-
+        
         if (maxCompletionTokens != null) {
             builder.maxCompletionTokens(maxCompletionTokens);
         } else if (maxTokens != null) {
             builder.maxTokens(maxTokens);
         }
+
+        if (temperature != null) {
+            builder.temperature(temperature);
+        }
+
+        return builder.build();
+    }
+    private AnthropicChatOptions resolveOptionsForAnthropic(String modelName) {
+        if (modelName == null || modelName.isBlank() || modelName.equalsIgnoreCase(DEFAULT_MODEL)) {
+            // no override – use model & options configured on the ChatModel bean
+            modelName = conProperties.getDeploymentName();
+        }
+
+        Integer maxTokens = conProperties.getMaxTokens(modelName);
+        Double temperature = conProperties.getTemperature(modelName);       
+        AnthropicChatOptions.Builder builder = AnthropicChatOptions.builder().model(modelName);
+        
+         if (maxTokens != null) {
+            builder.maxTokens(maxTokens);
+        } 
 
         if (temperature != null) {
             builder.temperature(temperature);
@@ -193,7 +250,8 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
                 .media(new Media(MimeTypeUtils.APPLICATION_OCTET_STREAM, new ByteArrayResource(imageBytes)))
                 .build();
 
-        var client = getClient(new Prompt(userMessage), null);
+        Prompt imagePrompt = new Prompt(userMessage, resolveOptionsForAzureOpenAi(DEFAULT_MODEL));
+        var client = getClient(imagePrompt, null);
         return client.call().content();
     }
 

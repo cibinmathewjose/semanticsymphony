@@ -399,7 +399,8 @@ public class ExecutionContext {
      * @return the updated execution context
      */
     public ExecutionContext setVariables(JsonNode variables) {
-        this.variables = variables;
+        this.variables = variables;        
+        put("input", variables);
         return this;
     }
 

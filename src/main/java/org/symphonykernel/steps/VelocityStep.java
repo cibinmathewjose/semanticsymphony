@@ -69,9 +69,7 @@ public class VelocityStep extends BaseStep {
     }
     @Override
 	protected ArrayNode getData(ExecutionContext ctx) {
-    	JsonNode input = ctx.getVariables();
-        Map<String, JsonNode> resolvedValues =   ctx.getResolvedValues();     
-        resolvedValues.put("input", input);
+    	Map<String, JsonNode> resolvedValues =   ctx.getResolvedValues();   
         Knowledge template = ctx.getKnowledge();
         String templateData = template.getData();
       

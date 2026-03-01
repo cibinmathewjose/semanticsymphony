@@ -257,4 +257,21 @@ public class AzureOpenAIConnectionProperties {
         }
         return temperature;     
     }
+   public String getEndpoint(String modelName) {
+        String url = null;
+        if (modelName != null && !modelName.isBlank() && environment != null) {
+            url = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.endpoint", String.class);           
+        }
+        if(url == null || url.isBlank()) {
+            url = this.endpoint;
+        }
+        return url;     
+    }
+    public String getProvider(String modelName) {
+        String provider = null;
+        if (modelName != null && !modelName.isBlank() && environment != null) {
+            provider = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.provider", String.class);           
+        }        
+        return provider;     
+    }
 }
