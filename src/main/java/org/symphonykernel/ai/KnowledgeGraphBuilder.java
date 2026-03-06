@@ -28,6 +28,7 @@ import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.providers.SessionProvider;
+import org.symphonykernel.steps.AgenticStep;
 import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
@@ -223,6 +224,9 @@ public class KnowledgeGraphBuilder {
     
     @Autowired
     VelocityStep velocityTemplateEngine;
+
+    @Autowired
+    AgenticStep agenticStep;
 
     @Autowired
     SessionProvider sessionManager;
@@ -1050,7 +1054,9 @@ public class KnowledgeGraphBuilder {
             case SHAREPOINT -> {
                 throw new UnsupportedOperationException("SHAREPOINT QueryType is not implemented");
             }
-           
+            case AGENTIC -> {
+                return agenticStep;
+            }
             default -> {
                 logger.warn("Unhandled QueryType: " + knowledge.getType());
                 return null;

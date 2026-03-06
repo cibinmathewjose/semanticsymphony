@@ -232,6 +232,23 @@
             <artifactId>velocity-tools-generic</artifactId>
             <version>3.1</version>
         </dependency>
+        <!-- MCP Server: Expose Symphony steps as MCP tools -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webflux</artifactId>
+            <version>1.1.2</version>
+        </dependency>
+        <!-- MCP Client: Consume external MCP tool servers -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+            <version>1.1.2</version>
+        </dependency>
+        <!-- Reactive support for streaming -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
 
     </dependencies>	
 

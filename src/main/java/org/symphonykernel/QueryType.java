@@ -25,5 +25,7 @@ public enum QueryType {
      /** Represents a text-based query for sharepoint */
      SHAREPOINT,
     /** Represents an SAP RFC */
-     RFC
+     RFC,
+    /** Represents an agentic workflow where the LLM dynamically plans and executes steps */
+     AGENTIC
 }

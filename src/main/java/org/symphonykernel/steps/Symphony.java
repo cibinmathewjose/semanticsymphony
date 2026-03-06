@@ -73,6 +73,8 @@ public class Symphony extends BaseStep {
     @Autowired
     ToolStep toolStep;
     @Autowired
+    AgenticStep agenticStep;
+    @Autowired
     VelocityStep velocityTemplateEngine;
     
     @Autowired
@@ -431,6 +433,8 @@ public class Symphony extends BaseStep {
             result = toolStep.executeQueryByName(newCtx);
         } else if (kb.getType() == QueryType.VELOCITY) {
             result = velocityTemplateEngine.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.AGENTIC) {
+            result = agenticStep.executeQueryByName(newCtx);
         }
         return result;
     }   
