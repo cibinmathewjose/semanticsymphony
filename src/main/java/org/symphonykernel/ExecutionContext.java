@@ -8,6 +8,7 @@
  */
 package org.symphonykernel;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -17,7 +18,8 @@ import org.symphonykernel.config.Constants;
 import org.symphonykernel.core.IHttpHeaderProvider;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
+
+import org.springframework.ai.chat.messages.Message;
 
 /**
  * Represents the execution context for operations.
@@ -56,7 +58,7 @@ public class ExecutionContext {
     boolean convert;
 
     /** The chat history associated with the execution context. */
-    ChatHistory chatHistory;
+    List<Message> chatHistory;
 
     /** The user session information. */
     UserSession info;
@@ -242,7 +244,7 @@ public class ExecutionContext {
      * 
      * @return the chat history
      */
-    public ChatHistory getChatHistory() {
+    public List<Message> getChatHistory() {
         return chatHistory;
     }
 
@@ -421,7 +423,7 @@ public class ExecutionContext {
      * @param chatHistory the chat history to set
      * @return the updated execution context
      */
-    public ExecutionContext setChatHistory(ChatHistory chatHistory) {
+    public ExecutionContext setChatHistory(List<Message> chatHistory) {
         this.chatHistory = chatHistory;
         return this;
     }

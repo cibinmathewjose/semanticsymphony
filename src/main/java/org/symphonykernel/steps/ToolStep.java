@@ -16,7 +16,6 @@ import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.TemplateResolver;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.microsoft.semantickernel.services.chatcompletion.ChatCompletionService;
 
 import reactor.core.publisher.Flux;
 
@@ -36,8 +35,6 @@ public class ToolStep extends BaseStep {
     @Autowired
     IknowledgeBase knowledgeBase;
 
-    ChatCompletionService chat;
-    
     @Autowired
     IAIClient azureOpenAIHelper;
 

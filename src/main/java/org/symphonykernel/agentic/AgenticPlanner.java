@@ -68,6 +68,9 @@ public class AgenticPlanner {
 
     /**
      * Executes the agentic loop synchronously and returns the final result.
+     *
+     * @param ctx the execution context containing the user query and resolved values
+     * @return the chat response with the final answer or partial results
      */
     public ChatResponse execute(ExecutionContext ctx) {
         String userQuery = ctx.getUsersQuery();
@@ -129,6 +132,9 @@ public class AgenticPlanner {
 
     /**
      * Executes the agentic loop as a reactive stream, emitting progress updates.
+     *
+     * @param ctx the execution context containing the user query and resolved values
+     * @return a Flux emitting progress messages and the final answer
      */
     public Flux<String> executeStream(ExecutionContext ctx) {
         return Flux.create(sink -> {

@@ -1,5 +1,6 @@
 package org.symphonykernel.providers;
 
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +17,10 @@ import org.symphonykernel.UserSessionStepDetails;
 import org.symphonykernel.core.IUserSessionBase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
+
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 
 @Component
 /**
@@ -93,19 +97,19 @@ public class SessionProvider {
      * @param request the chat request for which history is to be retrieved
      * @return the chat history containing user and system messages
      */
-    public ChatHistory getChatHistory(ChatRequest request) {
+    public List<Message> getChatHistory(ChatRequest request) {
         List<UserSession> sessions = userSessionsBase.getSession(request.getSession());
-        ChatHistory chatHistory = new ChatHistory();
+        List<Message> chatHistory = new ArrayList<>();
         if (sessions != null && !sessions.isEmpty()) {
             int start = Math.max(0, sessions.size() - maxHistory);
             for (UserSession session : sessions.subList(start, sessions.size())) {
                 if (session.getUserInput() != null && session.getBotResponse() != null) {
-                    chatHistory.addUserMessage(session.getUserInput());
-                    chatHistory.addSystemMessage(session.getBotResponse());
+                    chatHistory.add(new UserMessage(session.getUserInput()));
+                    chatHistory.add(new AssistantMessage(session.getBotResponse()));
                 }
             }
         }
-        chatHistory.addUserMessage(request.getQuery());
+        chatHistory.add(new UserMessage(request.getQuery()));
         return chatHistory;
     }
 

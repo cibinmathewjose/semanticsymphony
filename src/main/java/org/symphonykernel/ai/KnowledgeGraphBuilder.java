@@ -46,7 +46,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
+
+import org.springframework.ai.chat.messages.Message;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -258,7 +259,7 @@ public class KnowledgeGraphBuilder {
         }
         ctx.setUsersQuery(request.getQuery());
         ctx.setHttpHeaderProvider(request.getHeaderProvider());
-        ChatHistory chatHistory = sessionManager.getChatHistory(request);
+        java.util.List<Message> chatHistory = sessionManager.getChatHistory(request);
         ctx.setChatHistory(chatHistory);
         UserSession info = null;
         info = sessionManager.createUserSession(request);

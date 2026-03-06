@@ -26,14 +26,13 @@ import jakarta.annotation.PreDestroy;
  * MCP Client service that connects to external MCP servers and discovers
  * their tools. These external tools can be used by the AgenticPlanner
  * alongside built-in Symphony steps.
- * <p>
- * Configure external MCP servers via:
+ *
+ * <p>Configure external MCP servers via:
  * <pre>
  * symphony.mcp.client.servers[0].name=my-server
  * symphony.mcp.client.servers[0].url=http://localhost:8080
  * </pre>
  * Enabled via: symphony.mcp.client.enabled=true
- * </p>
  */
 @Service
 @ConditionalOnProperty(value = "symphony.mcp.client.enabled", havingValue = "true", matchIfMissing = false)
