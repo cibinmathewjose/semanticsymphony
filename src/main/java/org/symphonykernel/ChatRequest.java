@@ -155,6 +155,12 @@ public class ChatRequest {
         this.payload = payload;
     }
 
+    /**
+     * Extracts a parameter value from the URL-encoded payload.
+     *
+     * @param paramName the parameter name to look up
+     * @return the decoded parameter value, or null if not found
+     */
     public String getPayloadParam(String paramName) {
         if (paramName == null || paramName.isEmpty()) {
             return null;
@@ -297,6 +303,7 @@ public class ChatRequest {
         this.conversationId = conversationId;
     }
 
+    /** @return the context information map */
     public Map<String, String> getContextInfo() {
         return contextInfo;
     }

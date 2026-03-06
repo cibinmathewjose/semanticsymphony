@@ -24,7 +24,7 @@ public class TemplateResolver {
      * Constant used as a default value when no data is found for a placeholder.
      */
     public static final String NO_DATA_FOUND = "{NO_DATA_FOUND}";
-     public static final JsonTransformer transformer = new JsonTransformer();
+     private static final JsonTransformer transformer = new JsonTransformer();
     /**
      * Prefix used to indicate that the resolved value is in JSON format.
      */
@@ -43,6 +43,12 @@ public class TemplateResolver {
         Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
         return matcher.find();
     }
+    /**
+     * Resolves placeholders in the given text using environment properties.
+     *
+     * @param text the text containing placeholders
+     * @return the text with placeholders resolved
+     */
     public String resolvePlaceholders(String text)
     {
         return  resolvePlaceholders(text, null);
@@ -67,7 +73,7 @@ public class TemplateResolver {
                     envValue = NO_DATA_FOUND;
                 }
                 matcher.appendReplacement(result, Matcher.quoteReplacement(envValue));
-                logger.info("Resolved environment variable: " + envVar + " with value: " + envValue);
+                logger.info("Resolved environment variable: {} with value: {}", envVar, envValue);
             }
             else
             {

@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -44,6 +45,9 @@ public class AgenticPlanner {
 
     private static final Logger logger = LoggerFactory.getLogger(AgenticPlanner.class);
     private static final int DEFAULT_MAX_ITERATIONS = 10;
+    private static final int MAX_CONCURRENT_LLM_CALLS = 5;
+
+    private final Semaphore llmSemaphore = new Semaphore(MAX_CONCURRENT_LLM_CALLS);
 
     @Value("${symphony.agentic.max-iterations:10}")
     private int maxIterations;
@@ -81,7 +85,20 @@ public class AgenticPlanner {
             logger.info("Agentic iteration {}/{}", iteration + 1, maxIterations);
 
             String planPrompt = buildPlanningPrompt(userQuery, resolvedValues, conversationHistory);
-            String planResponse = aiClient.evaluatePrompt(planPrompt);
+            String planResponse;
+            try {
+                llmSemaphore.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                ChatResponse response = new ChatResponse();
+                response.setMessage("Agent interrupted while waiting for LLM access");
+                return response;
+            }
+            try {
+                planResponse = aiClient.evaluatePrompt(planPrompt);
+            } finally {
+                llmSemaphore.release();
+            }
 
             AgentPlan plan = parsePlan(planResponse);
             if (plan == null) {
@@ -149,7 +166,13 @@ public class AgenticPlanner {
                     logger.info("Agentic stream iteration {}/{}", iteration + 1, maxIterations);
 
                     String planPrompt = buildPlanningPrompt(userQuery, resolvedValues, conversationHistory);
-                    String planResponse = aiClient.evaluatePrompt(planPrompt);
+                    String planResponse;
+                    llmSemaphore.acquire();
+                    try {
+                        planResponse = aiClient.evaluatePrompt(planPrompt);
+                    } finally {
+                        llmSemaphore.release();
+                    }
                     AgentPlan plan = parsePlan(planResponse);
 
                     if (plan == null) {

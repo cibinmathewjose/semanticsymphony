@@ -37,7 +37,12 @@ public interface IknowledgeBase extends IDelta<KnowledgeDescription> {
      */
     Map<String, String> getAllKnowledgeDescriptions();
     
-    
+    /**
+     * Retrieves the description for a specific knowledge entry.
+     *
+     * @param name the knowledge entry name
+     * @return the description string
+     */
     String getKnowledgeDescriptions(String name);
 
     /**

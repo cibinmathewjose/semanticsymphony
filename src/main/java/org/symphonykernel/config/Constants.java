@@ -9,5 +9,6 @@ public class Constants {
 	 */
 	public final static String CACHE_NAME = "cSCPCache";
 	
+    /** MDC key for logger trace ID. */
     public static final String LOGGER_TRACE_ID = "LoggerTraceId";
 }

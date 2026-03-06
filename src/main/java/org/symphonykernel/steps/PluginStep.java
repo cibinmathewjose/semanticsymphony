@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 
 import reactor.core.publisher.Flux;
 
+/** Step that executes Knowledge entries via plugin loading and optional LLM processing. */
 @Component
 public class PluginStep extends BaseStep {
 
@@ -41,6 +42,7 @@ public class PluginStep extends BaseStep {
     @Autowired
     IknowledgeBase knowledgeBase;
 
+    /** Default constructor. */
     public PluginStep() {
 
     }

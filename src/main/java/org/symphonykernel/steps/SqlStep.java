@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-@Service
 /**
  * The SqlStep class implements the IStep interface and provides
  * functionality for executing SQL queries and processing their results.
@@ -42,6 +41,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * @version 1.0
  * @since 1.0
  */
+@Service
 public class SqlStep extends  BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlStep.class);
@@ -70,7 +70,7 @@ public class SqlStep extends  BaseStep {
                  PreparedStatement stm = connection.prepareStatement(query);
                  ResultSet resultSet = stm.executeQuery()) {
     
-                logger.info("Executing Query : {}", query);
+                logger.debug("Executing Query : {}", query);
     
                 data = getJSON(resultSet); // Assuming getJson processes the resultSet
                 logger.info("Result: {}, data={}", (data != null ? "Success" : "Failure"), (data != null ? data.toString() : "null"));
@@ -142,9 +142,7 @@ public class SqlStep extends  BaseStep {
      * @throws SQLException if an error occurs during conversion
      */
     public ArrayNode getJSON(ResultSet rs) throws SQLException {
-        // Create an ObjectMapper for JSON conversion
-        ObjectMapper mapper = new ObjectMapper();
-        ArrayNode jsonArray = mapper.createArrayNode();
+        ArrayNode jsonArray = objectMapper.createArrayNode();
 
         // Get metadata about the result set
         ResultSetMetaData metaData = rs.getMetaData();
@@ -153,8 +151,8 @@ public class SqlStep extends  BaseStep {
         // Iterate through the ResultSet and create JSON objects
         try
         {
-        while (rs.next() || --c <= 0) {
-            ObjectNode jsonObject = mapper.createObjectNode();
+        while (rs.next() && --c > 0) {
+            ObjectNode jsonObject = objectMapper.createObjectNode();
 
             // Use column names or indices for key-value pairs
             for (int i = 1; i <= columnCount; i++) {

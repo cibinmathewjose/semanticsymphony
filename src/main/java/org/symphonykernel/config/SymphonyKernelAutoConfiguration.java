@@ -1,8 +1,5 @@
 package org.symphonykernel.config;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -29,27 +26,6 @@ public class SymphonyKernelAutoConfiguration {
     private static final Logger LOGGER = LoggerFactory.getLogger(
             SymphonyKernelAutoConfiguration.class);
 
-
-    /**
-     * Creates a database connection using the provided {@link DBConnectionProperties}.
-     *
-     * @param con the {@link DBConnectionProperties} containing database connection details
-     * @return the {@link Connection}
-     */
-    @Bean
-    @ConditionalOnClass(Connection.class)
-    @ConditionalOnMissingBean
-    public Connection getConnection(DBConnectionProperties con) {       
-        try {
-            // Load JDBC driver
-            Class.forName(con.getDriverClassName());
-            // Get connection
-            return DriverManager.getConnection(con.getUrl(), con.getUsername(), con.getPassword());
-        } catch (Exception e) {
-            LOGGER.error("JDBC Driver class not found: {}", con.getDriverClassName(), e);
-            throw new RuntimeException("Failed to load JDBC driver", e);
-        }
-    }
 
     /**
      * Creates a {@link UnifiedJedis} instance for Redis operations using the provided

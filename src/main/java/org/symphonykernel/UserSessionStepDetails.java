@@ -69,10 +69,20 @@ public class UserSessionStepDetails {
         this.data = data;
     }
 
+    /**
+     * Sets the creation date of this step detail.
+     *
+     * @param createDt the creation date to set
+     */
     public void setCreateDt(Date createDt) {
         this.createDt = createDt;
     }
 
+    /**
+     * Returns the creation date of this step detail.
+     *
+     * @return the creation date
+     */
     public Date getCreateDt() {
         return createDt;
     }

@@ -80,10 +80,23 @@ public class Agent {
     }
 
     // ==================== FOLLOWUP / ASYNC ====================
+    /**
+     * Retrieves asynchronous results for a previous request.
+     *
+     * @param requestId the ID of the previous request
+     * @return a {@link ChatResponse} with the async results
+     */
     public ChatResponse getAsyncResults(String requestId) {   
                 
         return knowledgeGraphBuilder.getAsyncResponse(requestId);
     }
+    /**
+     * Processes a follow-up query for a previous request.
+     *
+     * @param requestId the ID of the previous request
+     * @param query the follow-up question
+     * @return a {@link ChatResponse} containing the follow-up response
+     */
     public ChatResponse processFollowUp(String requestId, String query)
     {       
         return knowledgeGraphBuilder.getFollowupResponse(requestId,query);       

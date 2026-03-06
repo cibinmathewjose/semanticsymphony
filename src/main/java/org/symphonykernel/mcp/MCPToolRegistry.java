@@ -36,8 +36,10 @@ public class MCPToolRegistry {
     @Autowired
     private ObjectMapper objectMapper;
 
+    /** Internal registry mapping tool names to descriptors. */
     private final ConcurrentHashMap<String, MCPToolDescriptor> toolRegistry = new ConcurrentHashMap<>();
 
+    /** Initializes the tool registry on application startup. */
     @PostConstruct
     public void init() {
         refreshRegistry();
@@ -72,6 +74,8 @@ public class MCPToolRegistry {
 
     /**
      * Returns all registered tool descriptors.
+     *
+     * @return list of all tool descriptors
      */
     public List<MCPToolDescriptor> listTools() {
         return new ArrayList<>(toolRegistry.values());
@@ -79,6 +83,9 @@ public class MCPToolRegistry {
 
     /**
      * Returns a specific tool descriptor by name.
+     *
+     * @param name the tool name
+     * @return the tool descriptor, or null if not found
      */
     public MCPToolDescriptor getTool(String name) {
         return toolRegistry.get(name);
@@ -86,6 +93,8 @@ public class MCPToolRegistry {
 
     /**
      * Returns the registry as an unmodifiable map.
+     *
+     * @return unmodifiable map of tool names to descriptors
      */
     public Map<String, MCPToolDescriptor> getRegistry() {
         return Collections.unmodifiableMap(toolRegistry);
@@ -93,6 +102,8 @@ public class MCPToolRegistry {
 
     /**
      * Registers an external (e.g. MCP client-discovered) tool into the registry.
+     *
+     * @param descriptor the tool descriptor to register
      */
     public void registerExternalTool(MCPToolDescriptor descriptor) {
         toolRegistry.put(descriptor.getName(), descriptor);

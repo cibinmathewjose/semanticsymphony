@@ -51,7 +51,9 @@ import reactor.core.publisher.Flux;
  */
 public abstract class BaseStep  implements IStep {
 
+    /** Logger instance. */
     protected static final Logger logger = LoggerFactory.getLogger(BaseStep.class);
+    /** Jackson ObjectMapper for JSON processing. */
     @Autowired
     protected ObjectMapper objectMapper;
 
@@ -60,6 +62,12 @@ public abstract class BaseStep  implements IStep {
        
     @Autowired
     IUserSessionBase sessionBase;
+    /**
+     * Gets the response data from this step.
+     *
+     * @param ctx the execution context
+     * @return the response data as an ArrayNode
+     */
     protected ArrayNode getData(ExecutionContext ctx) {
         return getResponse(ctx).getData();	
     }
@@ -97,6 +105,12 @@ public abstract class BaseStep  implements IStep {
         }
         return array[0];
     }
+    /**
+     * Saves step data as a JsonNode to the session store.
+     *
+     * @param context the execution context
+     * @param data the data to save
+     */
     public void saveStepData(ExecutionContext context,JsonNode data)
     {
         try {
@@ -105,6 +119,12 @@ public abstract class BaseStep  implements IStep {
                 logger.error("Error saving step data", e);
             }
     }
+    /**
+     * Saves step data as a String to the session store.
+     *
+     * @param context the execution context
+     * @param data the data to save
+     */
     public void saveStepData(ExecutionContext context,String data)
     {
         try {
@@ -113,6 +133,12 @@ public abstract class BaseStep  implements IStep {
                 logger.error("Error saving step data", e);
             }
     }
+     /**
+      * Parses a plugin definition JSON string into a JsonNode.
+      *
+      * @param plugindef the plugin definition JSON
+      * @return the parsed JsonNode
+      */
      protected JsonNode getParamNode(String plugindef) {
         JsonNode paramNode;
         try {
@@ -124,6 +150,12 @@ public abstract class BaseStep  implements IStep {
         return paramNode;
     }
     
+    /**
+     * Creates a JSON object node with a TextOutput field.
+     *
+     * @param jsonString the text value
+     * @return an ObjectNode containing the TextOutput field
+     */
     protected JsonNode createTextNode(String jsonString) {
         ObjectNode objectNode = objectMapper.createObjectNode();
         objectNode.put("TextOutput", jsonString);
@@ -157,6 +189,12 @@ public abstract class BaseStep  implements IStep {
             return createTextNode(jsonString);
         }
     }
+     /**
+      * Wraps a string result into a ChatResponse with a single-element data array.
+      *
+      * @param result the result string
+      * @return a ChatResponse containing the result
+      */
      protected ChatResponse makeResponseObject(String result) {
         ArrayNode jsonArray = objectMapper.createArrayNode();
         jsonArray.add(new TextNode(result));

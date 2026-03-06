@@ -29,6 +29,9 @@ import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.providers.SessionProvider;
 import org.symphonykernel.steps.AgenticStep;
+import org.symphonykernel.steps.AuthenticationStep;
+import org.symphonykernel.steps.DatabaseStep;
+import org.symphonykernel.steps.DocumentStep;
 import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
@@ -37,6 +40,9 @@ import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
 import org.symphonykernel.steps.ToolStep;
 import org.symphonykernel.steps.VelocityStep;
+import org.symphonykernel.steps.WebSearchStep;
+import org.symphonykernel.steps.EmailStep;
+import org.symphonykernel.steps.HumanInLoopStep;
 import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
 import org.symphonykernel.transformer.TemplateResolver;
@@ -230,11 +236,36 @@ public class KnowledgeGraphBuilder {
     AgenticStep agenticStep;
 
     @Autowired
+    DocumentStep documentStep;
+
+    @Autowired
+    DatabaseStep databaseStep;
+
+    @Autowired
+    @Qualifier("AuthenticationStep")
+    AuthenticationStep authenticationStep;
+
+    @Autowired
+    @Qualifier("WebSearchStep")
+    WebSearchStep webSearchStep;
+
+    @Autowired
+    @Qualifier("EmailStep")
+    EmailStep emailStep;
+
+    @Autowired
+    @Qualifier("HumanInLoopStep")
+    HumanInLoopStep humanInLoopStep;
+
+    @Autowired
     SessionProvider sessionManager;
     @Autowired
     VectorSearchHelper vector;
     @Autowired
     private FileContentProvider fileContentProvider;
+
+    @Autowired(required = false)
+    private InMemoryVectorIntentMatcher vectorMatcher;
 
     /**
      * Creates a new execution context for a given chat request.
@@ -268,10 +299,23 @@ public class KnowledgeGraphBuilder {
         return ctx;
     }
 
+    /**
+     * Registers a parameter translation mapping.
+     *
+     * @param priorityParamName the priority parameter name
+     * @param translateFromParamName the parameter name to translate from
+     */
     public static void registerParameterTranslation(String priorityParamName, String translateFromParamName) {
         parameterTranslationMap.put(priorityParamName, translateFromParamName);
     }
 
+    /**
+     * Loads an execution context from a previous request.
+     *
+     * @param requestId the request ID
+     * @param key the key for context loading
+     * @return the loaded execution context
+     */
     public ExecutionContext loadContext(String requestId, String key) {
         ExecutionContext ctx = new ExecutionContext();
         ChatRequest req = new ChatRequest();
@@ -312,6 +356,12 @@ public class KnowledgeGraphBuilder {
         return ctx;
 
     }
+    /**
+     * Processes a chat request end-to-end and returns the response.
+     *
+     * @param request the chat request
+     * @return the chat response
+     */
     public ChatResponse process(ChatRequest request) {      
         long start = System.nanoTime();
         logger.debug("Processing request: {}", request != null ? request.getQuery() : "Received null request");       
@@ -641,6 +691,12 @@ public class KnowledgeGraphBuilder {
         }
         return response;
     }
+    /**
+     * Streams the response for a prepared execution context.
+     *
+     * @param ctx the execution context
+     * @return a Flux emitting response chunks
+     */
     public Flux<String> streamResponse(ExecutionContext ctx) {
 
 		Knowledge knowledge = ctx.getKnowledge();
@@ -665,6 +721,12 @@ public class KnowledgeGraphBuilder {
 		}
 	}
 
+    /**
+     * Checks whether the request has context info from a previous conversation.
+     *
+     * @param request the chat request
+     * @return true if context information exists
+     */
     public boolean hasContextInfo(ChatRequest request) {
     	if (request == null || request.getQuery() == null || request.getSession() == null) {
             return false;
@@ -676,11 +738,23 @@ public class KnowledgeGraphBuilder {
         return true;
 	}
     
+    /**
+     * Retrieves a follow-up response for the given request.
+     *
+     * @param request the chat request containing the follow-up query
+     * @return a ChatResponse with the follow-up answer
+     */
     public ChatResponse getFollowupResponse(ChatRequest request) {
     	String rId = sessionManager.getLastRequestId(request.getSession());
         return getFollowupResponse(rId, request.getQuery());
 
     }
+    /**
+     * Streams a follow-up response for the given request.
+     *
+     * @param request the chat request
+     * @return a Flux emitting follow-up response chunks
+     */
     public Flux<String> streamFollowupResponse(ChatRequest request) {
 		if (request == null || request.getQuery() == null || request.getSession() == null) {
 			return Flux.just("Sorry, I am unable to process the question, please check the FAQ for more information about my capabilities.");
@@ -694,6 +768,13 @@ public class KnowledgeGraphBuilder {
 
 	}
 
+    /**
+     * Streams a follow-up response for a given request ID and query.
+     *
+     * @param requestId the request ID
+     * @param query the follow-up query
+     * @return a Flux emitting follow-up response chunks
+     */
 	 public Flux<String> streamFollowupResponse(String requestId, String query) {
 		
 		 if (requestId == null || requestId.isEmpty() || query == null || query.isEmpty()) {
@@ -907,6 +988,12 @@ public class KnowledgeGraphBuilder {
         response.setStatusCode(Status.PROCESSING);
         return response;
     }
+    /**
+     * Updates the user session for a given request.
+     *
+     * @param requestId the request ID
+     * @param response the chat response to update with
+     */
     public void updateUserSession(String requestId, ChatResponse response) {
     	UserSession reqDetails = sessionManager.getRequest(requestId);
     	if(reqDetails!=null)
@@ -961,13 +1048,45 @@ public class KnowledgeGraphBuilder {
             }
             long now = System.currentTimeMillis();
             String jsonString;
+            boolean cacheRefreshed = false;
             synchronized (cacheLock) {
                 if (knowledgeDescJsonCache == null || now - knowledgeDescCacheTimestamp > cacheTtlMs) {
                     knowledgeDescCache = knowledgeBaserepo.getActiveKnowledgeDescriptions();
                     knowledgeDescJsonCache = objectMapper.writeValueAsString(knowledgeDescCache);
                     knowledgeDescCacheTimestamp = now;
+                    cacheRefreshed = true;
                 }
                 jsonString = knowledgeDescJsonCache;
+            }
+            // Refresh vector index when knowledge cache refreshes
+            if (cacheRefreshed && vectorMatcher != null) {
+                vectorMatcher.refreshIndex(knowledgeDescCache);
+            }
+            // Try vector-based intent matching first (avoids LLM call)
+            if (vectorMatcher != null) {
+                List<InMemoryVectorIntentMatcher.MatchResult> vectorMatches = vectorMatcher.findMatches(question);
+                if (!vectorMatches.isEmpty()) {
+                    for (InMemoryVectorIntentMatcher.MatchResult match : vectorMatches) {
+                        Knowledge knowledge = knowledgeBaserepo.GetByName(match.getKnowledgeName());
+                        if (knowledge != null) {
+                            if (vectorMatches.size() > 1 && knowledge.getParams() != null && params != null) {
+                                String matchPrompt = fileContentProvider.prepareMatchParamsPrompt(
+                                        knowledge.getParams(), params.toString(), question);
+                                String isMatch = openAI.evaluatePrompt(matchPrompt);
+                                if ("YES".equalsIgnoreCase(isMatch)) {
+                                    logger.info("Vector intent match validated: {} (score: {})",
+                                            match.getKnowledgeName(), String.format("%.3f", match.getScore()));
+                                    return knowledge;
+                                }
+                            } else {
+                                logger.info("Vector intent match: {} (score: {})",
+                                        match.getKnowledgeName(), String.format("%.3f", match.getScore()));
+                                return knowledge;
+                            }
+                        }
+                    }
+                    logger.debug("Vector matches not validated against params, falling back to LLM matching");
+                }
             }
             String prompt = fileContentProvider.prepareMatchKnowledgePrompt(jsonString, question, params.toString());
             String response = openAI.evaluatePrompt(prompt);
@@ -1034,7 +1153,7 @@ public class KnowledgeGraphBuilder {
             case GRAPHQL -> {
                 return graphQLHelper;
             }
-            case SYMPHNOY -> {
+            case SYMPHONY -> {
                 return symphony;
             }
             case PLUGIN -> {
@@ -1058,6 +1177,24 @@ public class KnowledgeGraphBuilder {
             case AGENTIC -> {
                 return agenticStep;
             }
+            case DOCUMENT -> {
+                return documentStep;
+            }
+            case DATABASE -> {
+                return databaseStep;
+            }
+            case AUTH -> {
+                return authenticationStep;
+            }
+            case WEBSEARCH -> {
+                return webSearchStep;
+            }
+            case EMAIL -> {
+                return emailStep;
+            }
+            case HUMANLOOP -> {
+                return humanInLoopStep;
+            }
             default -> {
                 logger.warn("Unhandled QueryType: " + knowledge.getType());
                 return null;
@@ -1070,7 +1207,10 @@ public class KnowledgeGraphBuilder {
     /**
      * Creates and prepares ExecutionContext from ChatRequest.
      * Handles intent identification and parameter setting.
-     * Throws Exception if any step fails.
+     *
+     * @param request the chat request
+     * @return the prepared execution context
+     * @throws Exception if any step fails
      */
     public ExecutionContext prepareContext(ChatRequest request) throws Exception {
         ExecutionContext ctx = createContext(request);

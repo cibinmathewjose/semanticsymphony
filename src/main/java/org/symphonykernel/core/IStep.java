@@ -20,6 +20,13 @@ public interface IStep {
      * @return a ChatResponse object containing the generated response
      */
     ChatResponse getResponse(ExecutionContext context);
+
+    /**
+     * Generates a streaming response based on the provided execution context.
+     *
+     * @param context the execution context containing input data and parameters
+     * @return a Flux emitting response chunks as strings
+     */
     Flux<String> getResponseStream(ExecutionContext context);
 
     /**

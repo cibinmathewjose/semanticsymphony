@@ -154,17 +154,21 @@ public class Knowledge extends KnowledgeDescription  {
 		this.data = val;
 	}
 
+	/** @return the tools definition */
 	public String getTools() {
 		return tools;
 	}
 	
+	/** @param tools the tools definition to set */
 	public void setTools(String tools) {
 		this.tools = tools;
 	}
+	/** @return the system prompt */
 	public String getSystemPrompt() {
         return systemPrompt;
     }
 
+    /** @param systemPrompt the system prompt to set */
     public void setSystemPrompt(String systemPrompt) {
         this.systemPrompt = systemPrompt;
     }

@@ -41,11 +41,19 @@ public class ExecutionContext {
     /** The name of the execution context. */
     String name;
       
+    /** The model name for LLM execution. */
     String modelName;
+    /** @return the model name */
     public String getModelName() {
         return modelName;
     }
 
+    /**
+     * Sets the model name.
+     *
+     * @param modelName the model name
+     * @return this context for chaining
+     */
     public ExecutionContext setModelName(String modelName) {
         this.modelName = modelName;
         return this;
@@ -103,7 +111,7 @@ public class ExecutionContext {
         setHttpHeaderProvider(ctx.getHttpHeaderProvider());
         setUsersQuery(ctx.getUsersQuery());
         setChatHistory(ctx.getChatHistory());
-        resolvedValues=ctx.getResolvedValues();
+        resolvedValues=new java.util.HashMap<>(ctx.getResolvedValues());
         if(ctx.getCurrentFlowItem()!=null)
         	setCurrentFlowItem(ctx.getCurrentFlowItem().copy());
         setUserSession(ctx.getUserSession());

@@ -75,12 +75,27 @@ public class Symphony extends BaseStep {
     @Autowired
     AgenticStep agenticStep;
     @Autowired
+    DocumentStep documentStep;
+    @Autowired
+    DatabaseStep databaseStep;
+    @Autowired
+    @Qualifier("AuthenticationStep")
+    AuthenticationStep authenticationStep;
+    @Autowired
+    @Qualifier("WebSearchStep")
+    WebSearchStep webSearchStep;
+    @Autowired
+    @Qualifier("EmailStep")
+    EmailStep emailStep;
+    @Autowired
+    @Qualifier("HumanInLoopStep")
+    HumanInLoopStep humanInLoopStep;
+    @Autowired
     VelocityStep velocityTemplateEngine;
     
     @Autowired
     IAIClient azureOpenAIHelper;
 
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
     
 
     @Override
@@ -88,13 +103,13 @@ public class Symphony extends BaseStep {
         JsonNode input = ctx.getVariables();
         Knowledge _symphony = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
-        logger.info("Executing Symphony " + _symphony.getName() + " with " + input);
+        logger.info("Executing Symphony {} with {}", _symphony.getName(), input);
         ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
             processFlowItemsByOrder(parsed, ctx, resolvedValues)
-            .doOnNext(item -> logger.info("Processing item: " + item))
+            .doOnNext(item -> logger.info("Processing item: {}", item))
             .onErrorContinue((e, o) -> logger.error("Error in processFlowItemsByOrder: {}", e.getMessage()))
             .then()
             .block();
@@ -103,7 +118,7 @@ public class Symphony extends BaseStep {
         } catch (JsonProcessingException e) {
             handleJsonProcessingException(e, jsonArray);
         }
-        logger.info("Data " + jsonArray); // Consider removing if sensitive
+        logger.info("Data {}", jsonArray); // Consider removing if sensitive
         ChatResponse a = new ChatResponse();
         a.setData(jsonArray);
         saveStepData(ctx, jsonArray);
@@ -169,7 +184,7 @@ public class Symphony extends BaseStep {
                 } else {
                     // PARALLEL PROCESSING (for items within the same order group)
                     return Flux.fromIterable(items)
-                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues));
+                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues), 8);
                 }
             });
     }
@@ -323,7 +338,7 @@ public class Symphony extends BaseStep {
             }
             String result = null;
             if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
-                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
+                (userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0)) {
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
                     result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
                 } else {
@@ -360,7 +375,7 @@ public class Symphony extends BaseStep {
             }
            
             if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
-                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
+                (userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0)) {
                 Flux<String> generatingMsg = Flux.just("Generating output:");
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
                     return generatingMsg.concatWith(
@@ -395,14 +410,14 @@ public class Symphony extends BaseStep {
         {           
             if(item.isRequired())
             {                    
-                logger.error("No data found for step: " + item.getKey());
+                logger.error("No data found for step: {}", item.getKey());
                 throw new RuntimeException("No data found for step: " + item.getKey());
             }
             else
             {
                 resultNode= objectMapper.createObjectNode();
                 ((ObjectNode) resultNode).put(item.getKey(), "No data found" );
-                logger.warn("No data found for step: " + item.getKey());
+                logger.warn("No data found for step: {}", item.getKey());
             }          
         }        
         else if(item.getJsonPath()!=null&&!item.getJsonPath().isEmpty())
@@ -425,7 +440,7 @@ public class Symphony extends BaseStep {
             result = graphQLHelper.executeQueryByName(newCtx);
         } else if (kb.getType() == QueryType.REST) {
             result = restHelper.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.SYMPHNOY) { // fixed typo
+        } else if (kb.getType() == QueryType.SYMPHONY) { // fixed typo
             result = executeQueryByName(newCtx);
         } else if (kb.getType() == QueryType.PLUGIN) {
             result = pluginStep.executeQueryByName(newCtx);
@@ -435,6 +450,18 @@ public class Symphony extends BaseStep {
             result = velocityTemplateEngine.executeQueryByName(newCtx);
         } else if (kb.getType() == QueryType.AGENTIC) {
             result = agenticStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.DOCUMENT) {
+            result = documentStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.DATABASE) {
+            result = databaseStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.AUTH) {
+            result = authenticationStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.WEBSEARCH) {
+            result = webSearchStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.EMAIL) {
+            result = emailStep.executeQueryByName(newCtx);
+        } else if (kb.getType() == QueryType.HUMANLOOP) {
+            result = humanInLoopStep.executeQueryByName(newCtx);
         }
         return result;
     }   
@@ -491,11 +518,15 @@ public class Symphony extends BaseStep {
         long startTime = System.currentTimeMillis();
         JsonNode result;
         ExecutionContext newCtx = new ExecutionContext(ctx);
-        ctx.setCurrentFlowItem(item);
+        newCtx.setCurrentFlowItem(item);
         newCtx.setName(kb.getName());
         newCtx.setVariables(idNode);
         newCtx.setConvert(true);
         result = getResult(kb, newCtx);
+        // Propagate header provider back so auth tokens are available to subsequent steps
+        if (newCtx.getHttpHeaderProvider() != null) {
+            ctx.setHttpHeaderProvider(newCtx.getHttpHeaderProvider());
+        }
         long endTime = System.currentTimeMillis();
         logger.info("Processing time for {} = {} ms", kb.getName(), (endTime - startTime));
         return result;

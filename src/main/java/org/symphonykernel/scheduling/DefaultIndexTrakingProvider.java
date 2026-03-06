@@ -25,17 +25,6 @@ import org.symphonykernel.core.IknowledgeBase;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.scheduling.support.CronTrigger;
 
-@Component
-@Configuration
-@EnableScheduling
-/**
- * Provides default implementation for index tracking and scheduling.
- * 
- * <p>This class implements {@link IIndexTraker} and {@link SchedulingConfigurer}.
- * 
- * @version 1.0
- * @since 1.0
- */
 /**
  * DefaultIndexTrakingProvider is responsible for managing index tracking and scheduling tasks.
  * <p>
@@ -46,6 +35,9 @@ import org.springframework.scheduling.support.CronTrigger;
  * @version 1.0
  * @since 1.0
  */
+@Component
+@Configuration
+@EnableScheduling
 public class DefaultIndexTrakingProvider implements IIndexTraker, SchedulingConfigurer {
 	
 	private static final Logger logger = LoggerFactory.getLogger(DefaultIndexTrakingProvider.class);

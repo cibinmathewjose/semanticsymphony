@@ -22,7 +22,6 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 
-@Component
 /**
  * SessionProvider is responsible for managing user sessions and chat histories.
  * <p>
@@ -33,10 +32,7 @@ import org.springframework.ai.chat.messages.UserMessage;
  * @version 1.0
  * @since 1.0
  */
-/**
- * Provides methods to manage user sessions and chat histories.
- * This includes creating, retrieving, and updating user sessions.
- */
+@Component
 public class SessionProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(SessionProvider.class);
@@ -135,16 +131,34 @@ public class SessionProvider {
         return userSessionsBase.findById(requestId);
     }
 
+    /**
+     * Retrieves step details for a request.
+     *
+     * @param requestId the request ID
+     * @return the list of step details
+     */
     public List<UserSessionStepDetails> getRequestDetails(String requestId) {
         if(requestId == null)
             return null;
         return userSessionsBase.getRequestDetails(requestId);
     }
+    /**
+     * Retrieves follow-up details for a request.
+     *
+     * @param requestId the request ID
+     * @return the follow-up step details
+     */
     public UserSessionStepDetails getFollowUpDetails(String requestId) {
         if(requestId == null)
             return null;
         return userSessionsBase.getFollowUpDetails(requestId);
     }
+    /**
+     * Gets the last request ID for a session.
+     *
+     * @param sessionId the session ID
+     * @return the last request ID
+     */
     public String getLastRequestId(String sessionId) {
         if(sessionId == null)
             return null;
@@ -169,6 +183,13 @@ public class SessionProvider {
         session.setModifyDt(Calendar.getInstance().getTime());
         userSessionsBase.save(session);
     }
+    /**
+     * Updates the user session with a response string and status.
+     *
+     * @param session the user session to update
+     * @param response the response text
+     * @param status the status to set
+     */
     public void updateUserSession(UserSession session, String response,String status) {
 
         if(response!=null)
@@ -188,6 +209,13 @@ public class SessionProvider {
         session.setModifyDt(Calendar.getInstance().getTime());
         userSessionsBase.save(session);
     }
+    /**
+     * Saves step details for a request.
+     *
+     * @param id the request ID
+     * @param stepName the step name
+     * @param data the data to save
+     */
     public void saveRequestDetails(String id,String stepName,String data) {
 		if(stepName==null || id==null|| data==null)
 			return;

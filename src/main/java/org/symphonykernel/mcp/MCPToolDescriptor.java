@@ -13,9 +13,18 @@ public class MCPToolDescriptor {
     private Map<String, Object> inputSchema;
     private String queryType;
 
+    /** Default constructor. */
     public MCPToolDescriptor() {
     }
 
+    /**
+     * Constructs an MCPToolDescriptor with all fields.
+     *
+     * @param name the tool name
+     * @param description the tool description
+     * @param inputSchema the input JSON schema
+     * @param queryType the query type
+     */
     public MCPToolDescriptor(String name, String description, Map<String, Object> inputSchema, String queryType) {
         this.name = name;
         this.description = description;
@@ -23,34 +32,42 @@ public class MCPToolDescriptor {
         this.queryType = queryType;
     }
 
+    /** @return the tool name */
     public String getName() {
         return name;
     }
 
+    /** @param name the tool name to set */
     public void setName(String name) {
         this.name = name;
     }
 
+    /** @return the tool description */
     public String getDescription() {
         return description;
     }
 
+    /** @param description the tool description to set */
     public void setDescription(String description) {
         this.description = description;
     }
 
+    /** @return the input JSON schema */
     public Map<String, Object> getInputSchema() {
         return inputSchema;
     }
 
+    /** @param inputSchema the input schema to set */
     public void setInputSchema(Map<String, Object> inputSchema) {
         this.inputSchema = inputSchema;
     }
 
+    /** @return the query type */
     public String getQueryType() {
         return queryType;
     }
 
+    /** @param queryType the query type to set */
     public void setQueryType(String queryType) {
         this.queryType = queryType;
     }

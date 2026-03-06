@@ -49,8 +49,10 @@ public class MCPClientService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    /** Map of connected MCP sync clients keyed by server name. */
     private final ConcurrentHashMap<String, McpSyncClient> clients = new ConcurrentHashMap<>();
 
+    /** Initializes connections to all configured MCP servers. */
     @PostConstruct
     public void init() {
         if (clientProperties.getServers() == null || clientProperties.getServers().isEmpty()) {
@@ -62,6 +64,7 @@ public class MCPClientService {
         }
     }
 
+    /** Closes all MCP client connections. */
     @PreDestroy
     public void cleanup() {
         for (McpSyncClient client : clients.values()) {
@@ -102,6 +105,10 @@ public class MCPClientService {
 
     /**
      * Calls an external MCP tool by its full name (serverName/toolName).
+     *
+     * @param fullToolName the tool name in format serverName/toolName
+     * @param arguments the tool arguments
+     * @return the tool execution result
      */
     public String callTool(String fullToolName, Map<String, Object> arguments) {
         String[] parts = fullToolName.split("/", 2);
@@ -131,6 +138,8 @@ public class MCPClientService {
 
     /**
      * Returns the list of connected server names.
+     *
+     * @return list of connected server names
      */
     public List<String> getConnectedServers() {
         return new ArrayList<>(clients.keySet());

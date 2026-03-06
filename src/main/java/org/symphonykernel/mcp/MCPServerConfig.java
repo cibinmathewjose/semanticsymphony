@@ -52,6 +52,8 @@ public class MCPServerConfig {
     /**
      * Registers all Symphony knowledge entries as MCP tool specifications.
      * Each knowledge entry becomes a callable tool via the MCP protocol.
+     *
+     * @return the list of MCP tool specifications
      */
     @Bean
     public List<SyncToolSpecification> symphonyMcpTools() {

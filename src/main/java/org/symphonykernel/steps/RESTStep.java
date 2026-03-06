@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
@@ -32,6 +33,15 @@ public class RESTStep extends BaseStep {
 
     private static final Logger logger = LoggerFactory.getLogger(RESTStep.class);
 
+    private final RestTemplate restTemplate;
+
+    /** Constructs a RESTStep with a default RestTemplate. */
+    public RESTStep() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(30000);
+        factory.setReadTimeout(60000);
+        this.restTemplate = new RestTemplate(factory);
+    }
 
     @Autowired
     IknowledgeBase knowledgeBase;
@@ -134,7 +144,6 @@ public class RESTStep extends BaseStep {
     
 	private JsonNode call(String url, String body, HttpHeaders headers, HttpMethod method) {
 		final HttpEntity<String> requestEntity = new HttpEntity<>(body,headers );
-        RestTemplate restTemplate = new RestTemplate();
         ResponseEntity<JsonNode> response;
         ;
         if (method == HttpMethod.POST) {
