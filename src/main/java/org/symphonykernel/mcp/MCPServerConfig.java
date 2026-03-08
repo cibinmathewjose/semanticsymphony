@@ -24,11 +24,11 @@ import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 
 /**
- * Configures a Spring AI MCP Server that exposes all Symphony knowledge
- * steps as MCP tools. External agents (Claude Desktop, Cursor, any MCP
- * client) can discover and call these tools over SSE/stdio transport.
+ * Configures a Spring AI MCP Server that exposes all Symphony knowledge steps as MCP tools.
  * <p>
- * Enabled via: symphony.mcp.server.enabled=true
+ * External agents (Claude Desktop, Cursor, any MCP client) can discover and call these tools over SSE/stdio transport.
+ * <br>
+ * Enabled via: {@code symphony.mcp.server.enabled=true}
  * </p>
  */
 @Configuration
@@ -47,14 +47,14 @@ public class MCPServerConfig {
     private ObjectMapper objectMapper;
 
     @Autowired
-    private org.symphonykernel.ai.KnowledgeGraphBuilder knowledgeGraphBuilder;
+    private org.symphonykernel.ai.KnowledgeExecuterFactory factory;
 
-    /**
-     * Registers all Symphony knowledge entries as MCP tool specifications.
-     * Each knowledge entry becomes a callable tool via the MCP protocol.
-     *
-     * @return the list of MCP tool specifications
-     */
+        /**
+         * Registers all Symphony knowledge entries as MCP tool specifications.
+         * Each knowledge entry becomes a callable tool via the MCP protocol.
+         *
+         * @return the list of MCP tool specifications
+         */
     @Bean
     public List<SyncToolSpecification> symphonyMcpTools() {
         List<SyncToolSpecification> tools = new ArrayList<>();
@@ -76,6 +76,12 @@ public class MCPServerConfig {
         return tools;
     }
 
+    /**
+     * Builds a JSON schema for the given MCP tool descriptor.
+     *
+     * @param descriptor the MCP tool descriptor
+     * @return the JSON schema for the tool's input
+     */
     private McpSchema.JsonSchema buildJsonSchema(MCPToolDescriptor descriptor) {
         Map<String, Object> schema = descriptor.getInputSchema();
         String type = schema != null && schema.containsKey("type") ? schema.get("type").toString() : "object";
@@ -88,6 +94,10 @@ public class MCPServerConfig {
 
     /**
      * Executes a Symphony step by its knowledge name with the provided arguments.
+     *
+     * @param knowledgeName the name of the Symphony knowledge step/tool
+     * @param args the arguments to pass to the tool
+     * @return the result of the tool execution as a {@link McpSchema.CallToolResult}
      */
     private McpSchema.CallToolResult executeTool(String knowledgeName, Map<String, Object> args) {
         try {
@@ -99,7 +109,7 @@ public class MCPServerConfig {
                 );
             }
 
-            IStep step = knowledgeGraphBuilder.getExecuter(kb);
+            IStep step = factory.getExecuter(kb);
             if (step == null) {
                 return new McpSchema.CallToolResult(
                     List.of(new McpSchema.TextContent("No executor found for: " + knowledgeName)),
