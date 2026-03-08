@@ -10,7 +10,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
@@ -18,9 +17,10 @@ import org.symphonykernel.FlowItem;
 import org.symphonykernel.FlowJson;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.LLMRequest;
-import org.symphonykernel.QueryType;
+import org.symphonykernel.ai.KnowledgeExecuterFactory;
 import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IPluginLoader;
+import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
@@ -52,50 +52,17 @@ public class Symphony extends BaseStep {
     IPluginLoader pluginLoader;
     
     @Autowired
-    @Qualifier("GraphQLStep")
-    GraphQLStep graphQLHelper;
-        
-    @Autowired
     TemplateResolver templateResolver;
     
-    @Autowired
-    @Qualifier("RESTStep")
-    RESTStep restHelper;
-    
-    @Autowired
-    SqlStep sqlAssistant;
 
     @Autowired
     PlatformHelper platformHelper;
 
     @Autowired
-    PluginStep pluginStep;
-    @Autowired
-    ToolStep toolStep;
-    @Autowired
-    AgenticStep agenticStep;
-    @Autowired
-    DocumentStep documentStep;
-    @Autowired
-    DatabaseStep databaseStep;
-    @Autowired
-    @Qualifier("AuthenticationStep")
-    AuthenticationStep authenticationStep;
-    @Autowired
-    @Qualifier("WebSearchStep")
-    WebSearchStep webSearchStep;
-    @Autowired
-    @Qualifier("EmailStep")
-    EmailStep emailStep;
-    @Autowired
-    @Qualifier("HumanInLoopStep")
-    HumanInLoopStep humanInLoopStep;
-    @Autowired
-    VelocityStep velocityTemplateEngine;
+    private KnowledgeExecuterFactory knowledgeExecuterFactory;
     
     @Autowired
     IAIClient azureOpenAIHelper;
-
     
 
     @Override
@@ -433,36 +400,13 @@ public class Symphony extends BaseStep {
         resolvedValues.put(item.getKey().toLowerCase(), resultNode);
     }
     private JsonNode getResult(Knowledge kb, ExecutionContext newCtx) {
-        JsonNode result = null;
-        if (kb.getType() == QueryType.SQL) {
-            result = sqlAssistant.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.GRAPHQL) {
-            result = graphQLHelper.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.REST) {
-            result = restHelper.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.SYMPHONY) { // fixed typo
-            result = executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.PLUGIN) {
-            result = pluginStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.TOOL) {
-            result = toolStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.VELOCITY) {
-            result = velocityTemplateEngine.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.AGENTIC) {
-            result = agenticStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.DOCUMENT) {
-            result = documentStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.DATABASE) {
-            result = databaseStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.AUTH) {
-            result = authenticationStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.WEBSEARCH) {
-            result = webSearchStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.EMAIL) {
-            result = emailStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.HUMANLOOP) {
-            result = humanInLoopStep.executeQueryByName(newCtx);
+       
+        IStep step = knowledgeExecuterFactory.getExecuter(kb);
+        if (step == null) {
+            logger.error("No executer found for knowledge type: {}", kb.getType());
+            throw new RuntimeException("No executer found for knowledge type: " + kb.getType());
         }
+        JsonNode result = step.executeQueryByName(newCtx);       
         return result;
     }   
 
