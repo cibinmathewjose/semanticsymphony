@@ -17,6 +17,8 @@ import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.LLMRequest;
+import org.symphonykernel.ai.KnowledgeExecuterFactory;
+import org.symphonykernel.ai.KnowledgeGraphBuilder;
 import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
@@ -64,8 +66,12 @@ public class AgenticPlanner {
     @Autowired
     private IknowledgeBase knowledgeBase;
 
+   
     @Autowired
-    private org.symphonykernel.ai.KnowledgeGraphBuilder knowledgeGraphBuilder;
+    private KnowledgeExecuterFactory knowledgeExecuterFactory;
+    
+    @Autowired
+    private KnowledgeGraphBuilder knowledgeGraphBuilder;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -307,7 +313,7 @@ public class AgenticPlanner {
             // Try as a Symphony knowledge step
             Knowledge kb = knowledgeBase.GetByName(toolName);
             if (kb != null) {
-                IStep step = knowledgeGraphBuilder.getExecuter(kb);
+                IStep step = knowledgeExecuterFactory.getExecuter(kb);
                 if (step != null) {
                     ExecutionContext stepCtx = new ExecutionContext(ctx);
                     stepCtx.setKnowledge(kb);
