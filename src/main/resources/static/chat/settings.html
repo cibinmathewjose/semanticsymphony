@@ -611,6 +611,134 @@ kbd {
   font-size: 13px;
 }
 
+/* Create Knowledge Form – modal body variant */
+.modal-body-form {
+  min-height: auto;
+  padding: 24px 20px;
+}
+.modal-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.modal-form-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #24292f;
+}
+.modal-form-hint {
+  font-size: 12px;
+  color: #57606a;
+  margin: 0 0 4px 0;
+  line-height: 1.5;
+}
+.modal-form-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  outline: none;
+  background: #fff;
+  color: #24292f;
+  resize: vertical;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+.modal-form-textarea:focus {
+  border-color: #0969da;
+  box-shadow: 0 0 0 3px rgba(9,105,218,0.12);
+}
+.modal-form-textarea::placeholder {
+  color: #8b949e;
+}
+.modal-form-error {
+  color: #cf222e;
+  font-size: 12px;
+  margin-top: 8px;
+  display: none;
+}
+.modal-form-footer-hint {
+  font-size: 12px;
+  color: #57606a;
+}
+.modal-form-actions {
+  display: flex;
+  gap: 8px;
+}
+.modal-form-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid #d0d7de;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.modal-form-btn-secondary {
+  background: #fff;
+  color: #24292f;
+}
+.modal-form-btn-secondary:hover {
+  background: #f6f8fa;
+  border-color: #0969da;
+  color: #0969da;
+}
+.modal-form-btn-primary {
+  background: #0969da;
+  color: #fff;
+  border-color: #0969da;
+}
+.modal-form-btn-primary:hover {
+  background: #0860ca;
+}
+
+/* Dark mode – Create Knowledge Form */
+[data-theme="dark"] .modal-form-label {
+  color: #e6edf3;
+}
+[data-theme="dark"] .modal-form-hint {
+  color: #8b949e;
+}
+[data-theme="dark"] .modal-form-textarea {
+  background: #0d1117;
+  border-color: #30363d;
+  color: #e6edf3;
+}
+[data-theme="dark"] .modal-form-textarea:focus {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88,166,255,0.15);
+}
+[data-theme="dark"] .modal-form-textarea::placeholder {
+  color: #484f58;
+}
+[data-theme="dark"] .modal-form-error {
+  color: #f85149;
+}
+[data-theme="dark"] .modal-form-footer-hint {
+  color: #8b949e;
+}
+[data-theme="dark"] .modal-form-btn-secondary {
+  background: #21262d;
+  border-color: #30363d;
+  color: #e6edf3;
+}
+[data-theme="dark"] .modal-form-btn-secondary:hover {
+  background: #30363d;
+  border-color: #58a6ff;
+  color: #58a6ff;
+}
+[data-theme="dark"] .modal-form-btn-primary {
+  background: #238636;
+  border-color: #238636;
+  color: #fff;
+}
+[data-theme="dark"] .modal-form-btn-primary:hover {
+  background: #2ea043;
+  border-color: #2ea043;
+}
+
 /* Pagination */
 .pagination {
   display: flex;
@@ -1995,19 +2123,25 @@ select.edit-modal-input:focus {
         <button class="btn-knowledge" id="create-knowledge-btn" title="Create a new knowledge entry">➕ New Knowledge</button>
         <!-- Modal for creating knowledge from description -->
         <div class="modal-overlay" id="create-knowledge-modal" tabindex="-1">
-          <div class="modal-dialog" style="max-width:420px;">
+          <div class="modal-dialog">
             <div class="modal-header">
-              <h3>Create Knowledge Entry</h3>
-              <button class="modal-close" id="close-create-knowledge-modal" title="Close">×</button>
+              <h3>➕ Create Knowledge Entry</h3>
+              <button class="modal-close" id="close-create-knowledge-modal" title="Close">✕</button>
             </div>
-            <div class="modal-body" style="padding:24px 20px;">
-              <label for="knowledge-desc-input" style="font-weight:600;">Describe what you want to generate:</label>
-              <textarea id="knowledge-desc-input" rows="4" style="width:100%;margin-top:8px;resize:vertical;"></textarea>
-              <div style="margin-top:18px;display:flex;gap:10px;justify-content:flex-end;">
-                <button class="btn" id="btn-ai-generate">Use AI to Generate</button>
-                <button class="btn" id="btn-manual-generate">Manual</button>
+            <div class="modal-body modal-body-form">
+              <div class="modal-form-group">
+                <label class="modal-form-label" for="knowledge-desc-input">Describe what you want to generate</label>
+                <p class="modal-form-hint">Provide a clear description of the knowledge entry you need. Use AI to auto-generate the YAML, or create a manual template to fill in yourself.</p>
+                <textarea class="modal-form-textarea" id="knowledge-desc-input" rows="6" placeholder="e.g. A REST API step that fetches customer orders by ID from the orders service…"></textarea>
               </div>
-              <div id="create-knowledge-error" style="color:#cf222e;margin-top:10px;display:none;"></div>
+              <div id="create-knowledge-error" class="modal-form-error"></div>
+            </div>
+            <div class="modal-footer">
+              <span class="modal-form-footer-hint">Choose how to create your entry</span>
+              <div class="modal-form-actions">
+                <button class="modal-form-btn modal-form-btn-secondary" id="btn-manual-generate">📝 Manual Template</button>
+                <button class="modal-form-btn modal-form-btn-primary" id="btn-ai-generate">✨ Generate with AI</button>
+              </div>
             </div>
           </div>
         </div>
@@ -2842,13 +2976,21 @@ async function saveSettings() {
         // Handler for creating a new knowledge entry
         document.getElementById('create-knowledge-btn').addEventListener('click', function() {
           document.getElementById('knowledge-desc-input').value = '';
-          document.getElementById('create-knowledge-error').style.display = 'none';
+          const errorDiv = document.getElementById('create-knowledge-error');
+          errorDiv.style.display = 'none';
           document.getElementById('create-knowledge-modal').classList.add('visible');
           setTimeout(() => document.getElementById('knowledge-desc-input').focus(), 100);
         });
 
         document.getElementById('close-create-knowledge-modal').addEventListener('click', function() {
           document.getElementById('create-knowledge-modal').classList.remove('visible');
+        });
+
+        // Close create modal on overlay click
+        document.getElementById('create-knowledge-modal').addEventListener('click', function(e) {
+          if (e.target === e.currentTarget) {
+            document.getElementById('create-knowledge-modal').classList.remove('visible');
+          }
         });
 
         // Helper: switch to Designer view
@@ -2866,6 +3008,11 @@ async function saveSettings() {
             errorDiv.style.display = 'block';
             return;
           }
+          // Disable buttons during generation
+          const aiBtn = document.getElementById('btn-ai-generate');
+          const manualBtn = document.getElementById('btn-manual-generate');
+          aiBtn.disabled = true;
+          manualBtn.disabled = true;
           try {
             const headers = buildHeaders('text/plain; charset=utf-8');
             setStatus('','Generating YAML from description...');
@@ -2894,6 +3041,9 @@ async function saveSettings() {
             errorDiv.textContent = e.message;
             errorDiv.style.display = 'block';
             setStatus('error', 'Failed to generate YAML');
+          } finally {
+            aiBtn.disabled = false;
+            manualBtn.disabled = false;
           }
         });
 
@@ -2902,11 +3052,6 @@ async function saveSettings() {
           const desc = document.getElementById('knowledge-desc-input').value.trim();
           const errorDiv = document.getElementById('create-knowledge-error');
           errorDiv.style.display = 'none';
-          if (!desc) {
-            errorDiv.textContent = 'Please enter a description.';
-            errorDiv.style.display = 'block';
-            return;
-          }
           // Insert sample YAML with description
           const sampleYaml = `# Example knowledgeBase YAML\nknowledgeBase:\n  name: # <name>\n  type: # <type>\n  description: |\n    ${desc.replace(/\n/g,'\n    ')}\n  status: A\n  module: # <module>\n  service: # <service>\n  parameters: # <parameters>\n    # - param_name:\n    #     type: string\n  systemPrompt: |\n    # <system prompt>\n  data: |\n    # <data block>\n  flow: # <flow steps>\n    # - name: <step_name>\n    #   type: SQL\n    #   description: |\n    #     <step description>\n    #   status: S\n    #   module: null\n    #   service: <service>\n    #   parameters:\n    #     param_name:\n    #       - type: number\n    #   systemPrompt: ""\n    #   data: |\n    #     <SQL or other data>\n`;
           editor.value = sampleYaml;
@@ -2974,7 +3119,10 @@ async function saveSettings() {
           if (currentPage < totalPages - 1) fetchKnowledgePage(currentPage + 1);
         });
         document.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape') closeModal();
+          if (e.key === 'Escape') {
+            closeModal();
+            document.getElementById('create-knowledge-modal').classList.remove('visible');
+          }
         });
       }
 

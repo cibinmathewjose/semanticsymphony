@@ -1338,7 +1338,12 @@ let renderMarkdownTab = () => {
   activeMarkdownEl.textContent = currentMarkdown;
   activeMarkdownEl.scrollTop = activeMarkdownEl.scrollHeight;
   const container = document.querySelector('#chat-messages');
-  if (container) container.scrollTop = container.scrollHeight;
+  if (container) {
+    // Use requestAnimationFrame to scroll after the DOM has updated
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+  }
 };
 
 let renderHtmlTab = () => {

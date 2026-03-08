@@ -4,15 +4,18 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.imageio.ImageIO;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
@@ -34,6 +37,7 @@ import org.symphonykernel.transformer.TemplateResolver;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 
+import jakarta.annotation.PreDestroy;
 import reactor.core.publisher.Flux;
 
 /**
@@ -80,6 +84,25 @@ public class DocumentStep extends BaseStep {
     @Value("${symphony.document.pdf-image-dpi:150}")
     private int defaultPdfImageDpi;
 
+    @Value("${symphony.document.parallel-threads:4}")
+    private int parallelThreads;
+
+    private ExecutorService executor;
+
+    private ExecutorService getExecutor() {
+        if (executor == null) {
+            executor = Executors.newFixedThreadPool(parallelThreads);
+        }
+        return executor;
+    }
+
+    @PreDestroy
+    void shutdown() {
+        if (executor != null) {
+            executor.shutdownNow();
+        }
+    }
+
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
         Knowledge kb = ctx.getKnowledge();
@@ -109,22 +132,20 @@ public class DocumentStep extends BaseStep {
             return response;
         }
 
-        // PDF → try text extraction, fall back to vision if scanned
+        // PDF — single load for text extraction + page count (avoids 3x parsing)
         if (isPdfContent(fetchResult)) {
             int threshold = getIntConfig(config, "ScannedTextThreshold", defaultScannedTextThreshold);
             int dpi = getIntConfig(config, "PdfImageDpi", defaultPdfImageDpi);
-            String pdfText = extractTextFromPdf(fetchResult.bytes);
-            int pageCount = getPdfPageCount(fetchResult.bytes);
-            if (isScannedPdf(pdfText, pageCount, threshold)) {
+            PdfExtraction extraction = extractPdfInOnePass(fetchResult.bytes);
+            if (isScannedPdf(extraction.text, extraction.pageCount, threshold)) {
                 logger.info("DocumentStep: PDF appears scanned ({} chars, {} pages), using vision model",
-                        pdfText.length(), pageCount);
+                        extraction.text.length(), extraction.pageCount);
                 String answer = processScannedPdf(fetchResult.bytes, systemPrompt, userQuestion, dpi);
                 ChatResponse response = makeResponseObject(answer);
                 saveStepData(ctx, response.getData());
                 return response;
             }
-            // Text-based PDF — proceed with chunk processing
-            return processTextDocument(pdfText, chunkSize, chunkOverlap, systemPrompt, userQuestion, ctx);
+            return processTextDocument(extraction.text, chunkSize, chunkOverlap, systemPrompt, userQuestion, ctx);
         }
 
         // Other document types (DOCX, Excel, plain text)
@@ -160,19 +181,18 @@ public class DocumentStep extends BaseStep {
             return Flux.just(answer);
         }
 
-        // PDF → try text extraction, fall back to vision if scanned
+        // PDF — single load for text + page count
         if (isPdfContent(fetchResult)) {
             int threshold = getIntConfig(config, "ScannedTextThreshold", defaultScannedTextThreshold);
             int dpi = getIntConfig(config, "PdfImageDpi", defaultPdfImageDpi);
-            String pdfText = extractTextFromPdf(fetchResult.bytes);
-            int pageCount = getPdfPageCount(fetchResult.bytes);
-            if (isScannedPdf(pdfText, pageCount, threshold)) {
+            PdfExtraction extraction = extractPdfInOnePass(fetchResult.bytes);
+            if (isScannedPdf(extraction.text, extraction.pageCount, threshold)) {
                 logger.info("DocumentStep (stream): scanned PDF, using vision model");
                 String answer = processScannedPdf(fetchResult.bytes, systemPrompt, userQuestion, dpi);
                 saveStepData(ctx, answer);
                 return Flux.just(answer);
             }
-            return streamTextDocument(pdfText, chunkSize, chunkOverlap, systemPrompt, userQuestion, ctx);
+            return streamTextDocument(extraction.text, chunkSize, chunkOverlap, systemPrompt, userQuestion, ctx);
         }
 
         // Other document types
@@ -196,14 +216,10 @@ public class DocumentStep extends BaseStep {
         List<String> chunks = splitIntoChunks(documentText, chunkSize, chunkOverlap);
         logger.info("DocumentStep (stream): {} chunks", chunks.size());
 
-        StringBuilder chunkSummaries = new StringBuilder();
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunkPrompt = buildChunkPrompt(systemPrompt, chunks.get(i), userQuestion, i + 1, chunks.size());
-            String chunkResult = aiClient.execute(new LLMRequest(chunkPrompt, userQuestion, null, ctx.getModelName()));
-            chunkSummaries.append("--- Chunk ").append(i + 1).append(" ---\n").append(chunkResult).append("\n");
-        }
+        // Process all chunks in parallel
+        String chunkSummaries = processChunksInParallel(chunks, systemPrompt, userQuestion, ctx.getModelName());
 
-        String synthesisPrompt = buildSynthesisPrompt(systemPrompt, chunkSummaries.toString(), userQuestion);
+        String synthesisPrompt = buildSynthesisPrompt(systemPrompt, chunkSummaries, userQuestion);
         StringBuilder responseAccumulator = new StringBuilder();
         return aiClient.streamExecute(new LLMRequest(synthesisPrompt, userQuestion, null, ctx.getModelName()))
                 .doOnNext(responseAccumulator::append)
@@ -219,6 +235,32 @@ public class DocumentStep extends BaseStep {
         FetchResult(byte[] bytes, String contentType) {
             this.bytes = bytes;
             this.contentType = contentType;
+        }
+    }
+
+    private static class PdfExtraction {
+        final String text;
+        final int pageCount;
+
+        PdfExtraction(String text, int pageCount) {
+            this.text = text;
+            this.pageCount = pageCount;
+        }
+    }
+
+    /**
+     * Extracts text and page count from a PDF in a single load — avoids
+     * loading the PDF 2-3 times (which was the main PDF bottleneck).
+     */
+    private PdfExtraction extractPdfInOnePass(byte[] bytes) {
+        try (PDDocument doc = Loader.loadPDF(bytes)) {
+            int pageCount = doc.getNumberOfPages();
+            PDFTextStripper stripper = new PDFTextStripper();
+            String text = stripper.getText(doc);
+            return new PdfExtraction(text, pageCount);
+        } catch (IOException e) {
+            logger.error("Error extracting PDF in one pass: {}", e.getMessage());
+            return new PdfExtraction("", 0);
         }
     }
 
@@ -238,7 +280,7 @@ public class DocumentStep extends BaseStep {
             connection.setReadTimeout(60000);
             connection.connect();
 
-            byte[] fileBytes = IOUtils.toByteArray(connection.getInputStream());
+            byte[] fileBytes = readAllBytes(connection.getInputStream(), connection.getContentLength());
             String contentType = connection.getContentType();
             return new FetchResult(fileBytes, contentType);
         } catch (Exception e) {
@@ -249,6 +291,31 @@ public class DocumentStep extends BaseStep {
                 connection.disconnect();
             }
         }
+    }
+
+    /**
+     * Reads all bytes from an InputStream using a pre-sized buffer when
+     * Content-Length is known, avoiding repeated array resizing.
+     */
+    private byte[] readAllBytes(InputStream in, int contentLength) throws IOException {
+        if (contentLength > 0) {
+            byte[] buf = new byte[contentLength];
+            int offset = 0;
+            while (offset < contentLength) {
+                int read = in.read(buf, offset, contentLength - offset);
+                if (read < 0) break;
+                offset += read;
+            }
+            return buf;
+        }
+        // Unknown length — read in 8KB blocks
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(8192);
+        byte[] tmp = new byte[8192];
+        int n;
+        while ((n = in.read(tmp)) != -1) {
+            baos.write(tmp, 0, n);
+        }
+        return baos.toByteArray();
     }
 
     private boolean isImageContentType(String contentType) {
@@ -266,7 +333,7 @@ public class DocumentStep extends BaseStep {
     private String extractText(byte[] fileBytes, String contentType) {
         if (contentType != null) {
             if (contentType.contains("pdf")) {
-                return extractTextFromPdf(fileBytes);
+                return extractPdfInOnePass(fileBytes).text;
             } else if (contentType.contains("wordprocessingml.document") || contentType.contains("msword")) {
                 return extractTextFromDocx(fileBytes);
             } else if (contentType.contains("spreadsheetml.sheet") || contentType.contains("excel")) {
@@ -276,7 +343,7 @@ public class DocumentStep extends BaseStep {
             }
         }
         // Fallback: detect by magic bytes
-        if (isPdf(fileBytes)) return extractTextFromPdf(fileBytes);
+        if (isPdf(fileBytes)) return extractPdfInOnePass(fileBytes).text;
         if (isDocx(fileBytes)) return extractTextFromDocx(fileBytes);
         // Default: treat as text
         return new String(fileBytes);
@@ -290,29 +357,39 @@ public class DocumentStep extends BaseStep {
         return trimmed.length() < (long) pageCount * thresholdPerPage;
     }
 
-    private int getPdfPageCount(byte[] bytes) {
-        try (PDDocument doc = Loader.loadPDF(bytes)) {
-            return doc.getNumberOfPages();
-        } catch (IOException e) {
-            logger.error("Error getting PDF page count: {}", e.getMessage());
-            return 0;
-        }
-    }
-
     private List<String> renderPdfPagesToBase64(byte[] pdfBytes, int dpi) {
-        List<String> pages = new ArrayList<>();
         try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            int pageCount = doc.getNumberOfPages();
             PDFRenderer renderer = new PDFRenderer(doc);
-            for (int i = 0; i < doc.getNumberOfPages(); i++) {
-                BufferedImage image = renderer.renderImageWithDPI(i, dpi);
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ImageIO.write(image, "png", baos);
-                pages.add(Base64.getEncoder().encodeToString(baos.toByteArray()));
+            // Render pages in parallel using CompletableFuture
+            List<CompletableFuture<String>> futures = new ArrayList<>(pageCount);
+            for (int i = 0; i < pageCount; i++) {
+                final int pageIndex = i;
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    try {
+                        BufferedImage image;
+                        synchronized (renderer) {
+                            image = renderer.renderImageWithDPI(pageIndex, dpi);
+                        }
+                        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                        ImageIO.write(image, "png", baos);
+                        return Base64.getEncoder().encodeToString(baos.toByteArray());
+                    } catch (IOException e) {
+                        logger.error("Error rendering PDF page {}: {}", pageIndex, e.getMessage());
+                        return null;
+                    }
+                }, getExecutor()));
             }
+            List<String> pages = new ArrayList<>(pageCount);
+            for (CompletableFuture<String> f : futures) {
+                String result = f.join();
+                if (result != null) pages.add(result);
+            }
+            return pages;
         } catch (IOException e) {
             logger.error("Error rendering PDF pages to images: {}", e.getMessage());
+            return new ArrayList<>();
         }
-        return pages;
     }
 
     private String processScannedPdf(byte[] pdfBytes, String systemPrompt, String userQuestion, int dpi) {
@@ -326,16 +403,26 @@ public class DocumentStep extends BaseStep {
             return aiClient.processImage(visionPrompt, pageImages.get(0));
         }
 
-        // Multi-page: extract info from each page, then synthesize
+        // Multi-page: process all pages in parallel via vision model
+        int totalPages = pageImages.size();
+        List<CompletableFuture<String>> futures = new ArrayList<>(totalPages);
+        for (int i = 0; i < totalPages; i++) {
+            final int pageNum = i + 1;
+            final String pageImage = pageImages.get(i);
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                String pagePrompt = systemPrompt
+                        + "\n\nYou are processing page " + pageNum + " of " + totalPages + " from a scanned document."
+                        + "\nExtract all text and relevant information from this page image."
+                        + "\nIf this page does not contain relevant information, respond with 'No relevant information on this page.'"
+                        + "\n\n--- User Question ---\n" + userQuestion;
+                return aiClient.processImage(pagePrompt, pageImage);
+            }, getExecutor()));
+        }
+
         StringBuilder pageSummaries = new StringBuilder();
-        for (int i = 0; i < pageImages.size(); i++) {
-            String pagePrompt = systemPrompt
-                    + "\n\nYou are processing page " + (i + 1) + " of " + pageImages.size() + " from a scanned document."
-                    + "\nExtract all text and relevant information from this page image."
-                    + "\nIf this page does not contain relevant information, respond with 'No relevant information on this page.'"
-                    + "\n\n--- User Question ---\n" + userQuestion;
-            String pageResult = aiClient.processImage(pagePrompt, pageImages.get(i));
-            pageSummaries.append("--- Page ").append(i + 1).append(" of ").append(pageImages.size()).append(" ---\n")
+        for (int i = 0; i < futures.size(); i++) {
+            String pageResult = futures.get(i).join();
+            pageSummaries.append("--- Page ").append(i + 1).append(" of ").append(totalPages).append(" ---\n")
                     .append(pageResult).append("\n\n");
         }
 
@@ -345,16 +432,6 @@ public class DocumentStep extends BaseStep {
     }
 
     // ==================== TEXT EXTRACTION ====================
-
-    private String extractTextFromPdf(byte[] bytes) {
-        try (PDDocument doc = Loader.loadPDF(bytes)) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            return stripper.getText(doc);
-        } catch (IOException e) {
-            logger.error("Error extracting text from PDF: {}", e.getMessage());
-            return "";
-        }
-    }
 
     private String extractTextFromDocx(byte[] bytes) {
         try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(bytes));
@@ -468,18 +545,39 @@ public class DocumentStep extends BaseStep {
             return aiClient.execute(new LLMRequest(prompt, userQuestion, null, modelName));
         }
 
-        // Multiple chunks: map-reduce approach
-        StringBuilder chunkSummaries = new StringBuilder();
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunkPrompt = buildChunkPrompt(systemPrompt, chunks.get(i), userQuestion, i + 1, chunks.size());
-            String chunkResult = aiClient.execute(new LLMRequest(chunkPrompt, userQuestion, null, modelName));
-            chunkSummaries.append("--- Chunk ").append(i + 1).append(" of ").append(chunks.size()).append(" ---\n")
-                    .append(chunkResult).append("\n\n");
-        }
+        // Multiple chunks: parallel map-reduce
+        String chunkSummaries = processChunksInParallel(chunks, systemPrompt, userQuestion, modelName);
 
         // Synthesis step: combine chunk results into final answer
-        String synthesisPrompt = buildSynthesisPrompt(systemPrompt, chunkSummaries.toString(), userQuestion);
+        String synthesisPrompt = buildSynthesisPrompt(systemPrompt, chunkSummaries, userQuestion);
         return aiClient.execute(new LLMRequest(synthesisPrompt, userQuestion, null, modelName));
+    }
+
+    /**
+     * Processes all document chunks in parallel using CompletableFuture,
+     * collecting results in order.
+     */
+    private String processChunksInParallel(List<String> chunks, String systemPrompt,
+                                            String userQuestion, String modelName) {
+        int totalChunks = chunks.size();
+        List<CompletableFuture<String>> futures = new ArrayList<>(totalChunks);
+
+        for (int i = 0; i < totalChunks; i++) {
+            final int chunkNum = i + 1;
+            final String chunk = chunks.get(i);
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                String chunkPrompt = buildChunkPrompt(systemPrompt, chunk, userQuestion, chunkNum, totalChunks);
+                return aiClient.execute(new LLMRequest(chunkPrompt, userQuestion, null, modelName));
+            }, getExecutor()));
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < futures.size(); i++) {
+            String chunkResult = futures.get(i).join();
+            sb.append("--- Chunk ").append(i + 1).append(" of ").append(totalChunks).append(" ---\n")
+                    .append(chunkResult).append("\n\n");
+        }
+        return sb.toString();
     }
 
     private String buildChunkPrompt(String systemPrompt, String chunkText,
