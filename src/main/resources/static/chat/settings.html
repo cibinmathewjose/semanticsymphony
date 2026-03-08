@@ -4329,7 +4329,11 @@ async function saveSettings() {
               if (inp.classList.contains('multiselect-wrapper')) {
                 vals[inp.dataset.fieldKey] = inp.dataset.msValues || '';
               } else {
-                vals[inp.dataset.fieldKey] = inp.value;
+                let v = inp.value;
+                if (inp.tagName === 'TEXTAREA') {
+                  v = v.replace(/\\r\\n|\\r|\\n/g, '').replace(/\r/g, '');
+                }
+                vals[inp.dataset.fieldKey] = v;
               }
             });
             _editModalOnSave(vals);
