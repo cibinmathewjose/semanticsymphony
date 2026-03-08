@@ -1,0 +1,2359 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <meta http-equiv="content-language" content="en">
+    <meta http-equiv="content-script-type" content="text/javascript">
+    <meta http-equiv="content-style-type" content="text/css">
+    <meta name="description" content="Chat to HTML preview with streaming.">
+
+    <!-- Boot theme from localStorage before paint -->
+    <script>
+      (function(){
+        try {
+          var BOOT_THEME_KEY = 'com.markdownlivepreview_theme';
+          var raw = localStorage.getItem(BOOT_THEME_KEY);
+          var useDark = raw === 'dark';
+          document.documentElement.setAttribute('data-theme', useDark ? 'dark' : 'light');
+
+          var PREVIEW_CSS_LIGHT = 'css/github-markdown-light.css?v=1.11.0';
+          var PREVIEW_CSS_DARK = 'css/github-markdown-dark_dimmed.css?v=1.11.0';
+          var href = useDark ? PREVIEW_CSS_DARK : PREVIEW_CSS_LIGHT;
+
+          var link = document.createElement('link');
+          link.id = 'gh-markdown-link';
+          link.rel = 'stylesheet';
+          link.type = 'text/css';
+          link.href = href;
+          document.head.appendChild(link);
+        } catch (e) {
+          // ignore — app will correct theme after load
+        }
+      })();
+    </script>
+
+    <style>
+html {
+  height: 100%;
+  overflow: hidden;
+}
+
+html, body {
+  color: #333;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  font-family: Helvetica, arial, freesans, clean, sans-serif;
+  font-size: 1em;
+  line-height: 1.5em;
+  background-color: #fff;
+  overscroll-behavior-y: none;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  width: 100%;
+  background-color: #444;
+  font-size: 12px;
+  color: #fff;
+}
+
+header a:link, header a:hover, header a:visited, header a:active {
+  color: #fff;
+}
+
+#menu-items {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+header input[type="checkbox"] {
+  vertical-align: middle;
+  margin-right: 6px;
+  margin-top: 0px;
+}
+
+header label[for="theme-checkbox"] {
+  margin-right: 25px;
+}
+
+footer {
+  padding: 8px;
+  width: 100%;
+  background-color: #fff;
+  color: #fff;
+  text-align: center;
+}
+
+#chat-layout {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+#chat-preview-wrapper {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 8px 16px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+#chat-input-wrapper {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  padding: 8px 16px 12px 16px;
+  border-top: 1px solid #e8e8e8;
+  background-color: #f6f8fa;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#chat-input-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #57606a;
+}
+
+#chat-disclaimer-inline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+#chat-input {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+#chat-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#chat-send {
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#chat-status {
+  font-size: 12px;
+  color: #57606a;
+}
+
+/* Dark theme overrides */
+[data-theme="dark"] html, [data-theme="dark"] body {
+  background-color: #212830;
+  color: #e6edf3;
+}
+
+[data-theme="dark"] header {
+  background-color: #333;
+  color: #e6edf3;
+}
+
+#chat-tabs {
+  display: flex;
+  border-bottom: 1px solid #e1e4e8;
+  margin-bottom: 8px;
+}
+
+.chat-tab-button {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.chat-tab-button.active {
+  border-bottom-color: #0969da;
+  font-weight: 600;
+  color: #0969da;
+}
+
+#chat-tab-content {
+  flex: 1 1 auto;
+  display: flex;
+}
+
+#chat-markdown-output,
+#chat-html-output {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#chat-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-message {
+  max-width: 80%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.chat-message .chat-timestamp {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6e7781;
+  text-align: right;
+}
+
+.chat-message.user {
+  align-self: flex-end;
+  background-color: #0969da;
+  color: #ffffff;
+}
+
+.chat-message.user a {
+  color: #d0e7ff;
+  text-decoration: underline;
+}
+
+.chat-message.user a:visited {
+  color: #c4d9ff;
+}
+
+.chat-message.user .chat-timestamp {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.chat-message.bot {
+  align-self: flex-start;
+  background-color: #f6f8fa;
+  color: #24292f;
+  max-width: 100%;
+}
+
+.bot-tabs {
+  display: flex;
+  border-bottom: 1px solid #e1e4e8;
+  margin-bottom: 4px;
+}
+
+.bot-tab-button {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.bot-tab-button.active {
+  border-bottom-color: #0969da;
+  font-weight: 600;
+  color: #0969da;
+}
+
+.bot-print-button {
+  margin-left: auto;
+  padding: 2px 6px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #57606a;
+}
+
+.bot-print-button:hover {
+  text-decoration: underline;
+}
+
+.bot-tab-content {
+  max-height: 100%;
+}
+
+.bot-markdown,
+.bot-html {
+  max-height: none;
+  overflow-y: visible; /* avoid inner scrollbars; outer chat-messages scrolls */
+}
+
+/* In bot bubbles, let Markdown/HTML content use full width with a 50px right margin */
+.chat-message.bot .bot-markdown {
+  margin-right: 80px; /* 50px + 30px extra as requested */
+}
+
+.chat-message.bot .markdown-body {
+  max-width: none;
+  margin-left: 0;
+  margin-right: 80px; /* 50px + 30px extra as requested */
+}
+
+[data-theme="dark"] .chat-message.bot {
+  background-color: #161b22;
+  color: #e6edf3;
+}
+
+[data-theme="dark"] .chat-message .chat-timestamp {
+  color: #8b949e;
+}
+
+[data-theme="dark"] .bot-tabs {
+  border-bottom-color: #30363d;
+}
+
+[data-theme="dark"] .bot-tab-button.active {
+  color: #58a6ff;
+  border-bottom-color: #58a6ff;
+}
+
+[data-theme="dark"] .bot-print-button {
+  color: #8b949e;
+}
+
+[data-theme="dark"] #chat-input-wrapper {
+  background-color: #161b22;
+  border-top-color: #30363d;
+}
+
+[data-theme="dark"] #chat-input {
+  background-color: #0d1117;
+  color: #e6edf3;
+  border-color: #30363d;
+}
+
+[data-theme="dark"] #chat-tabs {
+  border-bottom-color: #30363d;
+}
+
+[data-theme="dark"] .chat-tab-button.active {
+  color: #58a6ff;
+  border-bottom-color: #58a6ff;
+}
+
+#chat-stream-wrapper {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#chat-stream-toggle {
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+#chat-model-wrapper {
+  margin-left: auto;
+}
+
+/* Basic markdown content styling (same as standalone) */
+.markdown-body {
+  box-sizing: border-box;
+  max-width: 980px;
+  margin: 0 auto;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.75em;
+}
+
+.markdown-body h1 { font-size: 2em; }
+.markdown-body h2 { font-size: 1.5em; }
+.markdown-body h3 { font-size: 1.25em; }
+
+.markdown-body p {
+  margin: 0.75em 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0 0.75em;
+}
+
+.markdown-body blockquote {
+  margin: 0.75em 0;
+  padding: 0.5em 1em;
+  border-left: 4px solid #d0d7de;
+  color: #57606a;
+  background-color: #f6f8fa;
+}
+
+.markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9em;
+  padding: 0.15em 0.3em;
+  border-radius: 3px;
+  background-color: rgba(175, 184, 193, 0.2);
+}
+
+.markdown-body pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9em;
+  padding: 0.85em 1em;
+  margin: 0.75em 0;
+  border-radius: 6px;
+  overflow: auto;
+  background-color: #0d1117;
+  color: #e6edf3;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin: 1em 0;
+  width: 100%;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+  border: 1px solid #d0d7de;
+  padding: 6px 13px;
+}
+
+.markdown-body table th {
+  background-color: #f6f8fa;
+  font-weight: 600;
+  text-align: left;
+  padding-right: 28px; /* space for sort + filter icons on the right */
+}
+
+.markdown-body table tr:nth-child(2n) {
+  background-color: #f6f8fa;
+}
+
+.markdown-body table th {
+  position: relative;
+}
+
+.markdown-body table th.sortable {
+  cursor: pointer;
+}
+
+.table-sort-indicator {
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  transform: translateY(-50%);
+  font-size: 11px;
+  opacity: 0.7;
+  color: #57606a;
+}
+
+.table-sort-indicator.active {
+  color: #0969da;
+  opacity: 1;
+}
+
+.table-filter-icon {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: #57606a;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.table-filter-icon.active {
+  color: #0969da;
+  opacity: 1;
+}
+
+.table-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  background-color: transparent;
+}
+
+/* Show a visible resize handle when hovering the header or resizer */
+.markdown-body table th:hover .table-resizer,
+.markdown-body table th .table-resizer:hover {
+  background-color: #d0d7de;
+}
+
+.table-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+
+.table-filter-dropdown {
+  position: absolute;
+  z-index: 9999;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+  padding: 4px 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.table-filter-dropdown label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+}
+
+
+[data-theme="dark"] .markdown-body table th:hover .table-resizer,
+[data-theme="dark"] .markdown-body table th .table-resizer:hover {
+  background-color: #30363d;
+}
+[data-theme="dark"] .markdown-body blockquote {
+  border-color: #3b434d;
+  color: #8b949e;
+  background-color: #161b22;
+}
+
+[data-theme="dark"] .markdown-body table th,
+[data-theme="dark"] .markdown-body table td {
+  border-color: #30363d;
+}
+
+[data-theme="dark"] .markdown-body table th {
+  background-color: #161b22;
+}
+
+[data-theme="dark"] .markdown-body table tr:nth-child(2n) {
+  background-color: #161b22;
+}
+
+[data-theme="dark"] .markdown-body a {
+  color: #58a6ff;
+}
+
+[data-theme="dark"] .markdown-body a:visited {
+  color: #79c0ff;
+}
+
+[data-theme="dark"] .markdown-body a:hover {
+  color: #79c0ff;
+  text-decoration: underline;
+}
+
+[data-theme="dark"] .chat-message.bot a {
+  color: #58a6ff;
+}
+
+[data-theme="dark"] .chat-message.bot a:visited {
+  color: #79c0ff;
+}
+
+/* Sidebar toggle button - fixed position */
+#sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  background: linear-gradient(135deg, #0969da 0%, #0550ae 100%);
+  color: #fff;
+  border-radius: 6px;
+  border: none;
+  outline: none;
+  box-shadow: 0 1px 4px rgba(9, 105, 218, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+#sidebar-toggle:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(9, 105, 218, 0.4);
+}
+#sidebar-toggle.sidebar-open {
+  background: linear-gradient(135deg, #cf222e 0%, #a40e26 100%);
+  box-shadow: 0 1px 4px rgba(207, 34, 46, 0.3);
+}
+
+#settings-toggle {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  background: linear-gradient(135deg, #2da44e 0%, #1a7f37 100%);
+  color: #fff;
+  border-radius: 6px;
+  border: none;
+  outline: none;
+  box-shadow: 0 1px 4px rgba(45, 164, 78, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  flex-shrink: 0;
+}
+#settings-toggle:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(45, 164, 78, 0.4);
+}
+
+/* Sidebar container */
+#sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 360px;
+  height: 100%;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border-left: 1px solid #e2e8f0;
+  z-index: 150;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.08);
+}
+#sidebar.open {
+  transform: translateX(0);
+}
+
+/* Sidebar header */
+#sidebar-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(135deg, #0969da 0%, #0550ae 100%);
+  color: #fff;
+}
+#sidebar-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+#sidebar-header p {
+  margin: 4px 0 0 0;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+/* Chat history list */
+#chat-history-list {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+#chat-history-list::-webkit-scrollbar {
+  width: 6px;
+}
+#chat-history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+#chat-history-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+#chat-history-list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* History items */
+#chat-history-list .history-item {
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: #fff;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid #e2e8f0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #334155;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#chat-history-list .history-item:hover {
+  background: #f0f9ff;
+  border-color: #0969da;
+  transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(9, 105, 218, 0.12);
+}
+#chat-history-list .history-item:active {
+  transform: translateX(2px);
+  background: #e0f2fe;
+}
+
+/* Loading and empty states */
+#chat-history-list .history-loading,
+#chat-history-list .history-empty,
+#chat-history-list .history-error {
+  padding: 20px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+}
+#chat-history-list .history-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+#chat-history-list .history-loading::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #0969da;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Dark mode - Sidebar toggle */
+[data-theme="dark"] #sidebar-toggle {
+  background: linear-gradient(135deg, #58a6ff 0%, #388bfd 100%);
+  box-shadow: 0 1px 4px rgba(88, 166, 255, 0.3);
+}
+[data-theme="dark"] #sidebar-toggle:hover {
+  box-shadow: 0 2px 8px rgba(88, 166, 255, 0.4);
+}
+[data-theme="dark"] #sidebar-toggle.sidebar-open {
+  background: linear-gradient(135deg, #f85149 0%, #da3633 100%);
+  box-shadow: 0 1px 4px rgba(248, 81, 73, 0.3);
+}
+
+[data-theme="dark"] #settings-toggle {
+  background: linear-gradient(135deg, #3fb950 0%, #238636 100%);
+  box-shadow: 0 1px 4px rgba(63, 185, 80, 0.3);
+}
+[data-theme="dark"] #settings-toggle:hover {
+  box-shadow: 0 2px 8px rgba(63, 185, 80, 0.4);
+}
+
+/* Dark mode - Sidebar */
+[data-theme="dark"] #sidebar {
+  background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+  border-left: 1px solid #30363d;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Dark mode - Sidebar header */
+[data-theme="dark"] #sidebar-header {
+  background: linear-gradient(135deg, #238636 0%, #1a7f37 100%);
+  border-bottom: 1px solid #30363d;
+}
+
+/* Dark mode - Scrollbar */
+[data-theme="dark"] #chat-history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-theme="dark"] #chat-history-list::-webkit-scrollbar-thumb {
+  background: #30363d;
+}
+[data-theme="dark"] #chat-history-list::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+/* Dark mode - History items */
+[data-theme="dark"] #chat-history-list .history-item {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+[data-theme="dark"] #chat-history-list .history-item:hover {
+  background: #30363d;
+  border-color: #58a6ff;
+  box-shadow: 0 2px 8px rgba(88, 166, 255, 0.15);
+}
+[data-theme="dark"] #chat-history-list .history-item:active {
+  background: #388bfd22;
+}
+
+/* Dark mode - Loading and empty states */
+[data-theme="dark"] #chat-history-list .history-loading,
+[data-theme="dark"] #chat-history-list .history-empty,
+[data-theme="dark"] #chat-history-list .history-error {
+  color: #8b949e;
+}
+[data-theme="dark"] #chat-history-list .history-loading::before {
+  border-color: #30363d;
+  border-top-color: #58a6ff;
+}
+
+/* Sidebar overlay for mobile */
+#sidebar-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 140;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+#sidebar-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
+[data-theme="dark"] #sidebar-overlay {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+@media (max-width: 300px) {
+  #chat-disclaimer-inline  {
+    display: none !important;
+  } 
+}
+@media print {
+  @page {
+    margin: 10mm;
+    size: auto;
+  }
+
+  * {
+    box-sizing: border-box !important;
+  }
+
+  header,
+  #chat-input-wrapper,
+  #chat-status,
+  #chat-send,
+  #chat-stream-wrapper,
+  #chat-input {
+    display: none !important;
+  }
+
+  #chat-messages {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .chat-message.user {
+    display: none !important;
+  }
+
+  .chat-message.bot {
+    display: none !important;
+    max-width: 100% !important;
+    align-self: stretch !important;
+  }
+
+  .chat-message.bot.print-target {
+    display: block !important;
+  }
+
+  /* For the printed bubble, show only the rendered HTML tab content */
+  .chat-message.bot.print-target .bot-markdown {
+    display: none !important;
+  }
+
+  .chat-message.bot.print-target .bot-html {
+    display: block !important;
+  }
+
+  .bot-print-button {
+    display: none !important;
+  }
+
+  /* Hide tab bar (Markdown / HTML buttons) in print */
+  .bot-tabs {
+    display: none !important;
+  }
+
+  html, body {
+    background: transparent !important;
+    color: #24292f !important;
+    margin: 0;
+    padding: 0;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  body::before {
+    content: 'Cornerstone Copilot - AI generated document';
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-30deg);
+    font-size: 48px;
+    color: rgba(150, 150, 150, 0.2);
+    z-index: 0;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  #chat-layout,
+  #chat-preview-wrapper,
+  #chat-messages,
+  .chat-message.bot.print-target {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  #chat-layout {
+    flex-direction: column !important;
+  }
+
+  .chat-message.bot.print-target {
+    padding: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    background: none !important;
+    border-radius: 0 !important;
+  }
+
+  .markdown-body {
+    max-width: 100% !important;
+    width: 100% !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .markdown-body table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    font-size: 10pt !important;
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+
+  .markdown-body table th,
+  .markdown-body table td {
+    padding: 4px 6px !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    overflow: hidden !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .markdown-body table tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .markdown-body pre,
+  .markdown-body blockquote {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  #sidebar {
+    display: none !important;
+  }
+
+  #sidebar-overlay {
+    display: none !important;
+  }
+
+  .table-download-button,
+  .table-download-link,
+  .table-filter-row,
+  .table-filter-input,
+  .table-resizer,
+  .table-filter-dropdown {
+    display: none !important;
+  }
+
+  footer {
+    display: block !important;
+    text-align: center;
+    font-size: 10px;
+    color: #57606a !important;
+    padding-top: 4px;
+    border-top: 1px solid #e1e4e8;
+  }
+}
+    </style>
+
+      <!-- Font Awesome for table sort/filter icons -->
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+    <link rel="icon" type="image/png" href="favicon.png">
+
+    <script type="module">
+import { marked } from 'https://cdn.jsdelivr.net/npm/marked@15.0.7/+esm';
+import DOMPurify from 'https://cdn.jsdelivr.net/npm/dompurify@3.2.5/+esm';
+
+const localStorageNamespace = 'com.markdownlivepreview';
+const localStorageThemeKey = 'theme_settings';
+const JWT_TOKEN_STORAGE_KEY = 'jwttknkey';
+let currentMarkdown = '';
+let currentController = null;
+let isStreaming = false;
+let activeMarkdownEl = null;
+let activeHtmlEl = null;
+let activeBotTimestampEl = null;
+
+// ----- preview CSS loader (switch github-markdown css) -----
+const PREVIEW_CSS_LIGHT = 'css/github-markdown-light.css?v=1.11.0';
+const PREVIEW_CSS_DARK = 'css/github-markdown-dark_dimmed.css?v=1.11.0';
+
+let setPreviewCss = (useDark) => {
+  const link = document.getElementById('gh-markdown-link');
+  if (!link) {
+    const newLink = document.createElement('link');
+    newLink.id = 'gh-markdown-link';
+    newLink.rel = 'stylesheet';
+    newLink.href = useDark ? PREVIEW_CSS_DARK : PREVIEW_CSS_LIGHT;
+    document.head.appendChild(newLink);
+    return;
+  }
+
+  const desired = useDark ? PREVIEW_CSS_DARK : PREVIEW_CSS_LIGHT;
+  if (link.getAttribute('href') !== desired) {
+    link.setAttribute('href', desired);
+  }
+};
+
+// ----- theme toggle (dark/light) -----
+let setTheme = (enabled) => {
+  document.documentElement.setAttribute('data-theme', enabled ? 'dark' : 'light');
+};
+
+const storageGetItem = (namespace, key) => {
+  try {
+    const raw = localStorage.getItem(namespace + ':' + key);
+    if (raw == null) return null;
+    return JSON.parse(raw).value;
+  } catch (e) {
+    return null;
+  }
+};
+
+const storageSetItem = (namespace, key, value) => {
+  try {
+    const payload = { value: value };
+    localStorage.setItem(namespace + ':' + key, JSON.stringify(payload));
+  } catch (e) {
+    // ignore
+  }
+};
+
+const getJwtToken = () => {
+  try {
+    return localStorage.getItem(JWT_TOKEN_STORAGE_KEY) || null;
+  } catch (e) {
+    return null;
+  }
+};
+
+const getSelectedModel = () => {
+  const select = document.querySelector('#chat-model-select');
+  if (!select) return null;
+  const value = select.value;
+  if (!value) return null;
+  return 'model=' + value;
+};
+
+const formatTimestamp = (date) => {
+  try {
+    return date.toLocaleString();
+  } catch (e) {
+    return '';
+  }
+};
+
+let loadThemeSettings = () => {
+  let last = storageGetItem(localStorageNamespace, localStorageThemeKey);
+  if (last === null || last === undefined) {
+    try {
+      const raw = localStorage.getItem('com.markdownlivepreview_theme');
+      if (raw === 'dark') return true;
+      if (raw === 'light') return false;
+    } catch (e) {
+      // ignore
+    }
+  }
+  return last;
+};
+
+let saveThemeSettings = (settings) => {
+  storageSetItem(localStorageNamespace, localStorageThemeKey, settings);
+  try {
+    localStorage.setItem('com.markdownlivepreview_theme', settings ? 'dark' : 'light');
+  } catch (e) {
+    // ignore
+  }
+};
+
+let initThemeToggle = (settings) => {
+  let checkbox = document.querySelector('#theme-checkbox');
+  if (!checkbox) return;
+  checkbox.checked = settings;
+  setTheme(settings);
+  setPreviewCss(settings);
+
+  checkbox.addEventListener('change', (event) => {
+    let checked = event.currentTarget.checked;
+    setTheme(checked);
+    saveThemeSettings(checked);
+    setPreviewCss(checked);
+  });
+};
+
+// Ensure preview area (markdown/html tabs) never hides the input box
+let adjustContentHeights = () => {
+  const header = document.querySelector('header');
+  const footer = document.querySelector('footer');
+  const inputWrapper = document.querySelector('#chat-input-wrapper');
+  const messages = document.querySelector('#chat-messages');
+
+  if (!inputWrapper || !messages) return;
+
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const headerHeight = header ? header.offsetHeight : 0;
+  const footerHeight = footer ? footer.offsetHeight : 0;
+  const inputHeight = inputWrapper.offsetHeight;
+
+  // Leave a larger safety margin (58px) so controls never get cut off
+  let max = viewportHeight - headerHeight - footerHeight - inputHeight - 58;
+  if (max < 100) max = 100;
+
+  messages.style.maxHeight = max + 'px';
+};
+
+// Common request config (headers + payload)
+let buildRequestConfig = (prompt, model) => {
+  const headers = {
+    'Content-Type': 'application/json; charset=utf-8'
+  };
+  const jwt = getJwtToken();
+  if (jwt) {
+    headers['jwttknckey'] = jwt; // jwttknckey is the correct header name
+  }
+
+  let user = '';
+  user= extractUserFromJwt(jwt);
+  
+
+  let fromUrl = window.location.href;
+  try {
+    if (window.parent !== window) {
+      fromUrl = window.parent.location.href;
+    }
+  } catch (e) {
+    console.warn('Cannot access parent URL (cross-origin), using iframe URL', e);
+  }
+
+  const payload = {
+    key: 'CHAT',
+    user,
+    fromUrl: fromUrl,
+    query: prompt
+  };
+
+  if (model) {
+    payload.payload = model;
+  }
+
+  return { headers, payload };
+};
+
+// Message bubble and per-response tabs
+let createUserMessage = (text) => {
+  const container = document.querySelector('#chat-messages');
+  if (!container) return;
+  const timestamp = formatTimestamp(new Date());
+  const msg = document.createElement('div');
+  msg.className = 'chat-message user';
+  const body = document.createElement('div');
+  body.textContent = text;
+  const meta = document.createElement('div');
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'chat-timestamp';
+  tsSpan.textContent = 'Sent: ' + timestamp;
+  meta.appendChild(tsSpan);
+  msg.appendChild(body);
+  msg.appendChild(meta);
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+};
+
+let createBotMessage = () => {
+  const container = document.querySelector('#chat-messages');
+  if (!container) {
+    activeMarkdownEl = null;
+    activeHtmlEl = null;
+    return;
+  }
+
+  const msg = document.createElement('div');
+  msg.className = 'chat-message bot';
+
+  const tabs = document.createElement('div');
+  tabs.className = 'bot-tabs';
+
+  const mdBtn = document.createElement('button');
+  mdBtn.type = 'button';
+  mdBtn.className = 'bot-tab-button active';
+  mdBtn.dataset.tab = 'markdown';
+  mdBtn.textContent = 'Markdown';
+
+  const htmlBtn = document.createElement('button');
+  htmlBtn.type = 'button';
+  htmlBtn.className = 'bot-tab-button';
+  htmlBtn.dataset.tab = 'html';
+  htmlBtn.textContent = 'HTML';
+
+  tabs.appendChild(mdBtn);
+  tabs.appendChild(htmlBtn);
+
+  const printBtn = document.createElement('button');
+  printBtn.type = 'button';
+  printBtn.className = 'bot-print-button';
+  printBtn.textContent = 'Print';
+  tabs.appendChild(printBtn);
+
+  const content = document.createElement('div');
+  content.className = 'bot-tab-content';
+
+  const mdEl = document.createElement('pre');
+  mdEl.className = 'bot-markdown';
+
+  const htmlEl = document.createElement('div');
+  htmlEl.className = 'bot-html markdown-body';
+  htmlEl.hidden = true;
+
+  content.appendChild(mdEl);
+  content.appendChild(htmlEl);
+
+  msg.appendChild(tabs);
+  msg.appendChild(content);
+  const meta = document.createElement('div');
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'chat-timestamp';
+  meta.appendChild(tsSpan);
+  msg.appendChild(meta);
+  container.appendChild(msg);
+
+  const activate = (tab) => {
+    const isMarkdown = tab === 'markdown';
+    mdBtn.classList.toggle('active', isMarkdown);
+    htmlBtn.classList.toggle('active', !isMarkdown);
+    mdEl.hidden = !isMarkdown;
+    htmlEl.hidden = isMarkdown;
+  };
+
+  mdBtn.addEventListener('click', () => activate('markdown'));
+  htmlBtn.addEventListener('click', () => activate('html'));
+
+  printBtn.addEventListener('click', () => {
+    printBubble(htmlEl);
+  });
+
+  // default to markdown visible
+  activate('markdown');
+
+  activeMarkdownEl = mdEl;
+  activeHtmlEl = htmlEl;
+  activeBotTimestampEl = tsSpan;
+  container.scrollTop = container.scrollHeight;
+};
+
+let printBubble = (htmlEl) => {
+  if (!htmlEl) return;
+
+  const messageEl = htmlEl.closest('.chat-message.bot');
+  if (!messageEl) return;
+
+  messageEl.classList.add('print-target');
+  try {
+    window.print();
+  } finally {
+    setTimeout(() => {
+      messageEl.classList.remove('print-target');
+    }, 500);
+  }
+};
+
+let renderMarkdownTab = () => {
+  if (!activeMarkdownEl) return;
+  activeMarkdownEl.textContent = currentMarkdown;
+  activeMarkdownEl.scrollTop = activeMarkdownEl.scrollHeight;
+  const container = document.querySelector('#chat-messages');
+  if (container) container.scrollTop = container.scrollHeight;
+};
+
+let renderHtmlTab = () => {
+  if (!activeHtmlEl) return;
+  let options = {
+    headerIds: false,
+    mangle: false
+  };
+  let html = marked.parse(currentMarkdown, options);
+  let sanitized = DOMPurify.sanitize(html);
+  activeHtmlEl.innerHTML = sanitized;
+
+  // Force all links to open in a new window (needed for iframe embedding)
+  activeHtmlEl.querySelectorAll('a').forEach(a => {
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer');
+  });
+
+  // Add per-table download buttons (CSV for Excel) within this bubble only
+  enhanceTablesInBubble(activeHtmlEl);
+  // After rendering, show the top of the HTML content
+  activeHtmlEl.scrollTop = 0;
+
+  // Automatically switch the active tab for this bubble to HTML
+  const messageEl = activeHtmlEl.closest('.chat-message.bot');
+  if (messageEl) {
+    const mdBtn = messageEl.querySelector('.bot-tab-button[data-tab="markdown"]');
+    const htmlBtn = messageEl.querySelector('.bot-tab-button[data-tab="html"]');
+    const mdEl = messageEl.querySelector('.bot-markdown');
+
+    if (mdBtn && htmlBtn) {
+      mdBtn.classList.remove('active');
+      htmlBtn.classList.add('active');
+    }
+    if (mdEl) mdEl.hidden = true;
+    activeHtmlEl.hidden = false;
+
+    // Scroll the chat container so the top of this bubble is visible
+    const container = document.querySelector('#chat-messages');
+    if (container) {
+      const bubbleTop = messageEl.offsetTop;
+      container.scrollTop = bubbleTop;
+    }
+  }
+};
+
+let enhanceTablesInBubble = (root) => {
+  if (!root) return;
+  const tables = root.querySelectorAll('table');
+  tables.forEach((table, index) => {
+    if (table.dataset.enhanced === 'true') return;
+    table.dataset.enhanced = 'true';
+
+    const wrapper = document.createElement('div');
+    wrapper.style.marginBottom = '1.5em';
+
+    const link = document.createElement('a');
+    link.textContent = 'Download table';
+    link.href = '#';
+    link.className = 'table-download-link';
+    link.style.display = 'inline-block';
+    link.style.marginBottom = '0.25em';
+    link.style.fontSize = '12px';
+    link.style.cursor = 'pointer';
+
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const rows = Array.from(table.rows).map((row) => {
+        const cells = Array.from(row.cells).map((cell) => {
+          let text = cell.innerText.replace(/\r?\n|\r/g, ' ').trim();
+          text = '"' + text.replace(/"/g, '""') + '"';
+          return text;
+        });
+        return cells.join(',');
+      });
+
+      const csvContent = rows.join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `markdown-table-${index + 1}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    const parent = table.parentNode;
+    if (!parent) return;
+    parent.insertBefore(wrapper, table);
+    wrapper.appendChild(link);
+    wrapper.appendChild(table);
+
+    // Add sorting, filtering, and column resizing
+    enhanceTableInteractions(table);
+  });
+};
+
+let enhanceTableInteractions = (table) => {
+  const thead = table.tHead || table.createTHead();
+  const headerRow = thead.rows[0];
+  if (!headerRow) return;
+
+  const tbody = table.tBodies[0] || table;
+  const rows = Array.from(tbody.rows);
+  const valueFilters = {}; // colIdx -> Set of allowed values
+  const rangeFilters = {}; // colIdx -> { kind: 'numeric'|'date', op: 'gt'|'lt'|'ge'|'le'|'between', value1, value2? }
+
+  const getCellText = (row, idx) => {
+    const cell = row.cells[idx];
+    if (!cell) return '';
+    return (cell.innerText || cell.textContent || '').trim();
+  };
+
+  const parseNumeric = (value) => {
+    if (value === null || value === undefined) return NaN;
+    const cleaned = String(value).replace(/,/g, '').trim();
+    if (!cleaned) return NaN;
+    const n = Number(cleaned);
+    return isNaN(n) ? NaN : n;
+  };
+
+  const parseDateValue = (value) => {
+    if (!value) return NaN;
+    const t = Date.parse(value);
+    return isNaN(t) ? NaN : t;
+  };
+
+  const applyFilter = () => {
+    rows.forEach((row) => {
+      let visible = true;
+
+      // Discrete value filters
+      Object.keys(valueFilters).forEach((key) => {
+        if (!visible) return;
+        const colIdxFilter = parseInt(key, 10);
+        const allowed = valueFilters[colIdxFilter];
+        if (!allowed || allowed.size === 0) return;
+        const text = getCellText(row, colIdxFilter);
+        if (!allowed.has(text)) {
+          visible = false;
+        }
+      });
+
+      // Range filters (numeric/date)
+      Object.keys(rangeFilters).forEach((key) => {
+        if (!visible) return;
+        const colIdxFilter = parseInt(key, 10);
+        const cfg = rangeFilters[colIdxFilter];
+        if (!cfg || !cfg.op) return;
+        const text = getCellText(row, colIdxFilter);
+        let v = NaN;
+        if (cfg.kind === 'numeric') {
+          v = parseNumeric(text);
+        } else if (cfg.kind === 'date') {
+          v = parseDateValue(text);
+        }
+        if (isNaN(v)) {
+          visible = false;
+          return;
+        }
+        const v1 = cfg.value1;
+        const v2 = cfg.value2;
+        if (cfg.op === 'gt' && !(v > v1)) visible = false;
+        else if (cfg.op === 'ge' && !(v >= v1)) visible = false;
+        else if (cfg.op === 'lt' && !(v < v1)) visible = false;
+        else if (cfg.op === 'le' && !(v <= v1)) visible = false;
+        else if (cfg.op === 'between') {
+          const low = Math.min(v1, v2);
+          const high = Math.max(v1, v2);
+          if (!(v >= low && v <= high)) visible = false;
+        }
+      });
+
+      row.style.display = visible ? '' : 'none';
+    });
+  };
+
+  let openDropdown = null;
+  let openFilterIcon = null;
+
+  const closeDropdown = () => {
+    if (openDropdown && openDropdown.parentNode) {
+      openDropdown.parentNode.removeChild(openDropdown);
+    }
+    openDropdown = null;
+    openFilterIcon = null;
+  };
+
+  document.addEventListener('click', (e) => {
+    if (!openDropdown) return;
+    if (openDropdown.contains(e.target) || (openFilterIcon && openFilterIcon.contains(e.target))) {
+      return;
+    }
+    closeDropdown();
+  });
+
+  Array.from(headerRow.cells).forEach((th, colIdx) => {
+    // Ensure a sort indicator icon exists on each header
+    let sortIndicator = th.querySelector('.table-sort-indicator');
+    if (!sortIndicator) {
+      sortIndicator = document.createElement('i');
+      sortIndicator.className = 'table-sort-indicator fa-solid fa-sort';
+      th.appendChild(sortIndicator);
+    }
+
+    // Sorting
+    th.classList.add('sortable');
+    th.addEventListener('click', (e) => {
+      // Ignore clicks on filter inputs or resizer handles
+      const target = e.target;
+      if (target.classList.contains('table-resizer') || target.classList.contains('table-filter-input') || target.classList.contains('table-filter-icon')) {
+        return;
+      }
+
+      const currentDir = th.dataset.sortDirection === 'asc' ? 'asc' : th.dataset.sortDirection === 'desc' ? 'desc' : null;
+      const newDir = currentDir === 'asc' ? 'desc' : 'asc';
+
+      // Reset sort state on other headers
+      Array.from(headerRow.cells).forEach((cell) => {
+        if (cell !== th) {
+          delete cell.dataset.sortDirection;
+          const ind = cell.querySelector('.table-sort-indicator');
+          if (ind) {
+            ind.className = 'table-sort-indicator fa-solid fa-sort';
+            ind.classList.remove('active');
+          }
+        }
+      });
+
+      // Apply new sort direction on this column
+      th.dataset.sortDirection = newDir;
+
+      const sortedRows = Array.from(tbody.rows);
+      sortedRows.sort((a, b) => {
+        const aText = getCellText(a, colIdx).toLowerCase();
+        const bText = getCellText(b, colIdx).toLowerCase();
+        if (aText < bText) return newDir === 'asc' ? -1 : 1;
+        if (aText > bText) return newDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      sortedRows.forEach((row) => tbody.appendChild(row));
+
+      // Update sort indicator on the active column
+      let indicator = th.querySelector('.table-sort-indicator');
+      if (!indicator) {
+        indicator = document.createElement('i');
+        indicator.className = 'table-sort-indicator fa-solid fa-sort';
+        th.appendChild(indicator);
+      }
+
+      indicator.classList.add('active');
+      indicator.classList.remove('fa-sort', 'fa-sort-up', 'fa-sort-down');
+      if (newDir === 'asc') {
+        indicator.classList.add('fa-solid', 'fa-sort-up');
+      } else {
+        indicator.classList.add('fa-solid', 'fa-sort-down');
+      }
+    });
+
+    // Filter icon + dropdown
+    const filterIcon = document.createElement('i');
+    filterIcon.className = 'table-filter-icon fa-solid fa-filter';
+    filterIcon.title = 'Filter';
+    filterIcon.textContent = '';
+    th.appendChild(filterIcon);
+
+    const openFilterDropdown = () => {
+      if (openDropdown && openFilterIcon === filterIcon) {
+        closeDropdown();
+        return;
+      }
+      closeDropdown();
+
+      const dropdown = document.createElement('div');
+      dropdown.className = 'table-filter-dropdown';
+
+      const uniqueValues = Array.from(new Set(rows.map((row) => getCellText(row, colIdx)).filter((v) => v !== '')));
+      uniqueValues.sort((a, b) => a.localeCompare(b));
+
+      const existingValues = valueFilters[colIdx];
+      const existingRange = rangeFilters[colIdx];
+
+      const nonEmptyValues = uniqueValues;
+      const isNumericCol = nonEmptyValues.length > 0 && nonEmptyValues.every((v) => !isNaN(parseNumeric(v)));
+      const isDateCol = !isNumericCol && nonEmptyValues.length > 0 && nonEmptyValues.every((v) => !isNaN(parseDateValue(v)));
+
+      const labelAll = document.createElement('label');
+      const allCheckbox = document.createElement('input');
+      allCheckbox.type = 'checkbox';
+      allCheckbox.checked = !existingValues || existingValues.size === 0;
+      labelAll.appendChild(allCheckbox);
+      labelAll.appendChild(document.createTextNode('Select all'));
+      dropdown.appendChild(labelAll);
+
+      const valueCheckboxes = [];
+
+      uniqueValues.forEach((value) => {
+        const label = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !existingValues || existingValues.size === 0 || existingValues.has(value);
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(value));
+        dropdown.appendChild(label);
+        valueCheckboxes.push({ cb, value });
+      });
+
+      const hasAnyFilter = () => {
+        const vf = valueFilters[colIdx];
+        const rf = rangeFilters[colIdx];
+        const hasV = vf && vf.size > 0;
+        const hasR = !!(rf && rf.op);
+        return hasV || hasR;
+      };
+
+      const updateFiltersFromDropdown = () => {
+        const selected = valueCheckboxes.filter(({ cb }) => cb.checked).map(({ value }) => value);
+        if (selected.length === 0 || selected.length === valueCheckboxes.length) {
+          delete valueFilters[colIdx];
+        } else {
+          valueFilters[colIdx] = new Set(selected);
+        }
+        allCheckbox.checked = selected.length === valueCheckboxes.length;
+        filterIcon.classList.toggle('active', hasAnyFilter());
+        applyFilter();
+      };
+
+      allCheckbox.addEventListener('change', () => {
+        const checked = allCheckbox.checked;
+        valueCheckboxes.forEach(({ cb }) => {
+          cb.checked = checked;
+        });
+        updateFiltersFromDropdown();
+      });
+
+      valueCheckboxes.forEach(({ cb }) => {
+        cb.addEventListener('change', updateFiltersFromDropdown);
+      });
+
+      // Range filter section for numeric/date columns
+      if (isNumericCol || isDateCol) {
+        const hr = document.createElement('hr');
+        hr.style.margin = '4px 0';
+        dropdown.appendChild(hr);
+
+        const rangeLabel = document.createElement('div');
+        rangeLabel.textContent = isNumericCol ? 'Numeric filter' : 'Date filter';
+        rangeLabel.style.fontSize = '11px';
+        rangeLabel.style.marginBottom = '2px';
+        dropdown.appendChild(rangeLabel);
+
+        const rangeRow = document.createElement('div');
+        rangeRow.style.display = 'flex';
+        rangeRow.style.flexDirection = 'column';
+        rangeRow.style.gap = '2px';
+
+        const opSelect = document.createElement('select');
+        opSelect.style.fontSize = '11px';
+        const ops = [
+          { value: '', label: 'No range filter' },
+          { value: 'gt', label: '>' },
+          { value: 'ge', label: '>=' },
+          { value: 'lt', label: '<' },
+          { value: 'le', label: '<=' },
+          { value: 'between', label: 'Between' }
+        ];
+        ops.forEach((o) => {
+          const opt = document.createElement('option');
+          opt.value = o.value;
+          opt.textContent = o.label;
+          opSelect.appendChild(opt);
+        });
+
+        const inputRow = document.createElement('div');
+        inputRow.style.display = 'flex';
+        inputRow.style.gap = '2px';
+
+        const inputType = isDateCol ? 'date' : 'number';
+        const input1 = document.createElement('input');
+        input1.type = inputType;
+        input1.style.fontSize = '11px';
+        input1.style.width = '100%';
+        const input2 = document.createElement('input');
+        input2.type = inputType;
+        input2.style.fontSize = '11px';
+        input2.style.width = '100%';
+        input2.style.display = 'none';
+
+        inputRow.appendChild(input1);
+        inputRow.appendChild(input2);
+
+        rangeRow.appendChild(opSelect);
+        rangeRow.appendChild(inputRow);
+        dropdown.appendChild(rangeRow);
+
+        // Initialize from existing range filter if present
+        if (existingRange && existingRange.op) {
+          opSelect.value = existingRange.op;
+          if (isDateCol) {
+            if (existingRange.value1) input1.value = new Date(existingRange.value1).toISOString().slice(0, 10);
+            if (existingRange.value2 && existingRange.op === 'between') input2.value = new Date(existingRange.value2).toISOString().slice(0, 10);
+          } else {
+            if (existingRange.value1 !== undefined) input1.value = existingRange.value1;
+            if (existingRange.value2 !== undefined && existingRange.op === 'between') input2.value = existingRange.value2;
+          }
+          if (existingRange.op === 'between') {
+            input2.style.display = '';
+          }
+        }
+
+        const updateRangeFilter = () => {
+          const op = opSelect.value;
+          if (!op) {
+            delete rangeFilters[colIdx];
+            filterIcon.classList.toggle('active', hasAnyFilter());
+            applyFilter();
+            return;
+          }
+
+          let v1 = input1.value;
+          let v2 = input2.value;
+          if (isDateCol) {
+            v1 = parseDateValue(v1);
+            v2 = op === 'between' ? parseDateValue(v2) : undefined;
+          } else {
+            v1 = parseNumeric(v1);
+            v2 = op === 'between' ? parseNumeric(v2) : undefined;
+          }
+
+          if (isNaN(v1) || (op === 'between' && (v2 === undefined || isNaN(v2)))) {
+            delete rangeFilters[colIdx];
+          } else {
+            rangeFilters[colIdx] = {
+              kind: isNumericCol ? 'numeric' : 'date',
+              op,
+              value1: v1,
+              value2: op === 'between' ? v2 : undefined
+            };
+          }
+          filterIcon.classList.toggle('active', hasAnyFilter());
+          applyFilter();
+        };
+
+        opSelect.addEventListener('change', () => {
+          if (opSelect.value === 'between') {
+            input2.style.display = '';
+          } else {
+            input2.style.display = 'none';
+          }
+          updateRangeFilter();
+        });
+
+        input1.addEventListener('change', updateRangeFilter);
+        input2.addEventListener('change', updateRangeFilter);
+      }
+
+      document.body.appendChild(dropdown);
+      const rect = filterIcon.getBoundingClientRect();
+      dropdown.style.left = rect.left + window.scrollX + 'px';
+      dropdown.style.top = rect.bottom + window.scrollY + 'px';
+
+      openDropdown = dropdown;
+      openFilterIcon = filterIcon;
+      filterIcon.classList.toggle('active', hasAnyFilter());
+    };
+
+    filterIcon.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      openFilterDropdown();
+    });
+
+    // Column resizer
+    const resizer = document.createElement('span');
+    resizer.className = 'table-resizer';
+    let startX = 0;
+    let startWidth = 0;
+
+    const onMouseMove = (e) => {
+      const dx = e.clientX - startX;
+      const newWidth = Math.max(startWidth + dx, 40);
+      th.style.width = newWidth + 'px';
+      Array.from(tbody.rows).forEach((row) => {
+        const cell = row.cells[colIdx];
+        if (cell) {
+          cell.style.width = newWidth + 'px';
+        }
+      });
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    resizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startX = e.clientX;
+      startWidth = th.getBoundingClientRect().width;
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    th.appendChild(resizer);
+  });
+};
+
+// Stream chat response from API and render progressively
+let startChatStream = async (prompt) => {
+  const status = document.querySelector('#chat-status');
+  const input = document.querySelector('#chat-input');
+  const sendBtn = document.querySelector('#chat-send');
+  const streamToggle = document.querySelector('#chat-stream-toggle');
+
+  status.textContent = 'Sending…';
+  input.disabled = true;
+  sendBtn.disabled = false;
+  sendBtn.textContent = 'Stop';
+  isStreaming = true;
+  if (streamToggle) streamToggle.disabled = true;
+
+  currentMarkdown = '';
+
+  try {
+    const controller = new AbortController();
+    currentController = controller;
+    const model = getSelectedModel();
+    const { headers, payload } = buildRequestConfig(prompt, model);
+
+    const response = await fetch('/copilot/api/v1/directchat/stream', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    if (!response.body) {
+      throw new Error('Streaming response body is not available');
+    }
+
+    if (!response.ok) {
+      throw new Error('Request failed with status ' + response.status);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    status.textContent = 'Streaming response…';
+    let isGenerating = false; // The "gate" to start rendering only after we see the first "data:" chunk
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let chunk = decoder.decode(value, { stream: true });
+    
+      // 1. Split by the standard SSE delimiter (double newline or data: prefix)
+     const lines = chunk.split('\n\n');
+      lines.forEach(line => {
+        // Only process lines that actually start with "data:"
+
+        // Remove ONLY the "data:" prefix, keep the rest of the string exactly as is
+        let content = line.replace('data:', '');
+
+        // 2. Logic to skip logs and start capturing the report
+        if (!isGenerating) {
+            if (content.includes("Generating output:")) {
+                isGenerating = true;                
+                console.log(currentMarkdown);
+                currentMarkdown = ""; // Clear any pre-generation logs from the markdown content
+                status.textContent = 'Generating output…';
+                // Capture everything AFTER the trigger phrase
+                content = content.split("Generating output:")[1] || "";
+            }  
+            else if (content.length > 0) {
+               currentMarkdown += content+ "\n"; // Capture any logs that come before generation starts, if needed      
+               status.textContent = "Thinking..."; // Update status with any pre-generation messages (like "Analyzing query..." etc.)
+               
+              renderMarkdownTab();
+            }
+        }else {
+            // We use trimEnd() or keep spaces based on how your Flux sends them
+             const dataBlocks = content.split('data:');
+            dataBlocks.forEach(block => {
+               currentMarkdown += block;
+            });
+          
+            // Add a newline if the data line was effectively empty to preserve spacing
+           // if (content === "" ) {
+            //    currentMarkdown += "\n";
+          //  } 
+            renderMarkdownTab();
+        }
+    });
+  
+    }
+
+    // After streaming completes, render the HTML tab from the accumulated markdown
+    renderHtmlTab();
+
+    status.textContent = 'Done';
+    if (activeBotTimestampEl) {
+      activeBotTimestampEl.textContent = 'Received: ' + formatTimestamp(new Date());
+    }
+  } catch (e) {
+    console.error(e);
+    if (e && e.name === 'AbortError') {
+      status.textContent = 'Stopped.';
+    } else {
+      status.textContent = 'Error: ' + (e && e.message ? e.message : 'Failed to fetch response');
+    }
+  } finally {
+    isStreaming = false;
+    currentController = null;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+    if (streamToggle) streamToggle.disabled = false;
+  }
+};
+
+// Non-streaming request: single response
+let startChatOnce = async (prompt) => {
+  const status = document.querySelector('#chat-status');
+  const input = document.querySelector('#chat-input');
+  const sendBtn = document.querySelector('#chat-send');
+  const streamToggle = document.querySelector('#chat-stream-toggle');
+
+  status.textContent = 'Sending…';
+  input.disabled = true;
+  sendBtn.disabled = false;
+  sendBtn.textContent = 'Stop';
+  isStreaming = true;
+  if (streamToggle) streamToggle.disabled = true;
+
+  currentMarkdown = '';
+
+  try {
+    const controller = new AbortController();
+    currentController = controller;
+    const model = getSelectedModel();
+    const { headers, payload } = buildRequestConfig(prompt, model);
+
+    const response = await fetch('/copilot/api/v1/directchat', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error('Request failed with status ' + response.status);
+    }
+
+    status.textContent = 'Waiting for response…';
+    const data = await response.json();
+    currentMarkdown = (data && typeof data.message === 'string') ? data.message : '';
+    renderMarkdownTab();
+    renderHtmlTab();
+
+    status.textContent = 'Done';
+    if (activeBotTimestampEl) {
+      activeBotTimestampEl.textContent = 'Received: ' + formatTimestamp(new Date());
+    }
+  } catch (e) {
+    console.error(e);
+    if (e && e.name === 'AbortError') {
+      status.textContent = 'Stopped.';
+    } else {
+      status.textContent = 'Error: ' + (e && e.message ? e.message : 'Failed to fetch response');
+    }
+  } finally {
+    isStreaming = false;
+    currentController = null;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+    if (streamToggle) streamToggle.disabled = false;
+  }
+};
+
+let setupChat = () => {
+  const formInput = document.querySelector('#chat-input');
+  const sendBtn = document.querySelector('#chat-send');
+  const status = document.querySelector('#chat-status');
+  const streamToggle = document.querySelector('#chat-stream-toggle');
+
+  const send = () => {
+    // If currently streaming, act as Stop: abort the ongoing request
+    if (isStreaming) {
+      if (currentController) {
+        currentController.abort();
+      }
+      return;
+    }
+
+    const text = formInput.value.trim();
+    if (!text) {
+      status.textContent = 'Please enter a prompt.';
+      return;
+    }
+    formInput.value = '';
+    currentMarkdown = '';
+    // Append user bubble and a fresh bot bubble for this turn
+    createUserMessage(text);
+    createBotMessage();
+    if (streamToggle && streamToggle.checked) {
+      startChatStream(text);
+    } else {
+      startChatOnce(text);
+    }
+  };
+
+  sendBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    send();
+  });
+
+  formInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      // Shift+Enter keeps the default behavior (newline)
+      if (e.shiftKey) {
+        return;
+      }
+      e.preventDefault();
+      send();
+    }
+  });
+};
+
+let initModelDropdown = async () => {
+  const select = document.querySelector('#chat-model-select');
+  if (!select) return;
+
+  select.disabled = true;
+  select.innerHTML = '';
+  const loadingOpt = document.createElement('option');
+  loadingOpt.value = '';
+  loadingOpt.textContent = 'Loading models…';
+  select.appendChild(loadingOpt);
+
+  try {
+    const headers = {
+      'Content-Type': 'application/json; charset=utf-8'
+    };
+    const jwt = getJwtToken();
+    if (jwt) {
+      headers['jwttknckey'] = jwt;
+    }
+
+    const response = await fetch('/copilot/api/v1/models', {
+      method: 'GET',
+      headers
+    });
+
+    if (!response.ok) {
+      throw new Error('Request failed with status ' + response.status);
+    }
+
+    const data = await response.json();
+
+    const extractArray = (d) => {
+      if (Array.isArray(d)) return d;
+      if (d && Array.isArray(d.models)) return d.models;
+      if (d && typeof d === 'object') {
+        return Object.keys(d).map((key) => ({ id: key, name: d[key] }));
+      }
+      return [];
+    };
+
+    const models = extractArray(data);
+    select.innerHTML = '';
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'Default';
+    select.appendChild(defaultOpt);
+
+    if (models && models.length > 0) {
+      models.forEach((item, idx) => {
+        let value = '';
+        let label = '';
+        if (typeof item === 'string') {
+          value = item;
+          label = item;
+        } else if (item && typeof item === 'object') {
+          value = item.id || item.name || item.model || '';
+          label = item.displayName || item.name || item.id || item.model || value || ('Model ' + (idx + 1));
+        }
+        if (!value) return;
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = label;
+        select.appendChild(opt);
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load models', e);
+    select.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'Default';
+    select.appendChild(opt);
+  } finally {
+    select.disabled = false;
+  }
+};
+
+function extractUserFromJwt(jwt) {
+  if (jwt && jwt.endsWith('~RDS')) {
+    const dashIndex = jwt.lastIndexOf('-');
+    const tildeIndex = jwt.lastIndexOf('~');
+    if (dashIndex !== -1 && tildeIndex > dashIndex + 1) {
+      const extracted = jwt.substring(dashIndex + 1, tildeIndex).trim();
+      if (extracted) {
+        return extracted;
+      }
+    }
+  }
+  return null;
+}
+
+window.addEventListener('load', () => {
+  // Hide title by default; show only if hideTitle=false is explicitly passed
+  const urlParams = new URLSearchParams(window.location.search);
+  const hideTitle = urlParams.get('hideTitle');
+  if (hideTitle !== 'false') {
+    const header = document.querySelector('header');
+    if (header) {
+      header.style.display = 'none';
+    }
+  }
+
+  let themeSettings = loadThemeSettings();
+  if (themeSettings === 'true' || themeSettings === true) {
+    themeSettings = true;
+  } else {
+    themeSettings = false;
+  }
+  
+  // Check for darkMode query parameter to override theme settings
+  const darkModeParam = urlParams.get('darkMode');
+  if (darkModeParam === 'true') {
+    themeSettings = true;
+  } else if (darkModeParam === 'false') {
+    themeSettings = false;
+  }
+  
+  initThemeToggle(themeSettings);
+  setupChat();
+  initModelDropdown();
+  adjustContentHeights();
+
+  // Sidebar toggle logic
+  const sidebar = document.getElementById('sidebar');
+  const sidebarToggle = document.getElementById('sidebar-toggle');
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
+  let sidebarOpen = false;
+
+  function toggleSidebar(open) {
+    sidebarOpen = open !== undefined ? open : !sidebarOpen;
+    
+    if (sidebarOpen) {
+      sidebar.classList.add('open');
+      sidebarToggle.classList.add('sidebar-open');
+      sidebarOverlay.classList.add('visible');
+      loadChatHistory();
+    } else {
+      sidebar.classList.remove('open');
+      sidebarToggle.classList.remove('sidebar-open');
+      sidebarOverlay.classList.remove('visible');
+    }
+  }
+
+  sidebarToggle.addEventListener('click', () => toggleSidebar());
+  sidebarOverlay.addEventListener('click', () => toggleSidebar(false));
+
+  // Close sidebar on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sidebarOpen) {
+      toggleSidebar(false);
+    }
+  });
+
+  // Fetch and render chat history
+  const chatHistoryList = document.getElementById('chat-history-list');
+  async function loadChatHistory() {
+    chatHistoryList.innerHTML = '<div class="history-loading">Loading...</div>';
+    const jwt = getJwtToken();
+
+	let user = extractUserFromJwt(jwt);
+
+    try {
+      const headers = {
+      'Content-Type': 'application/json; charset=utf-8'
+      };    
+      headers['jwttknckey'] = jwt;      
+
+      const url = '/copilot/api/v1/chat/history?userId=' + encodeURIComponent(user);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers
+      });
+      if (!response.ok) {
+        chatHistoryList.innerHTML = '<div class="history-error">Error loading history</div>';
+        return;
+      }
+      const history = await response.json();
+      if (!Array.isArray(history) || history.length === 0) {
+        chatHistoryList.innerHTML = '<div class="history-empty">No history found</div>';
+        return;
+      }
+      chatHistoryList.innerHTML = '';
+      history.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        // Display queryText as the title of the card
+        const queryText = item.queryText || item.query || 'No query';
+        div.textContent = queryText.length > 50 ? queryText.substring(0, 50) + '...' : queryText;
+        div.title = queryText;
+        div.addEventListener('click', () => {
+          // Load the query and response into the chat window
+          const container = document.querySelector('#chat-messages');
+          if (container) {
+            // Clear existing messages
+            container.innerHTML = '';
+            
+            // Create user message for the query
+            createUserMessage(queryText);
+            
+            // Create bot message for the response
+            const botResponse = item.botResponse || '';
+            if (botResponse) {
+              createBotMessage();
+              var content = botResponse.split("Generating output:")[1] || "";
+              currentMarkdown = content;
+              renderMarkdownTab();
+              renderHtmlTab();
+              if (activeBotTimestampEl && item.createDt) {
+                activeBotTimestampEl.textContent = 'Received: ' + formatTimestamp(new Date(item.createDt));
+              }
+            }
+          }
+          // Close sidebar after selection
+          toggleSidebar(false);
+        });
+        chatHistoryList.appendChild(div);
+      });
+    } catch (e) {
+      chatHistoryList.innerHTML = '<div class="history-error">Error loading history</div>';
+    }
+  }
+});
+    </script>
+
+    <title>Cornerstone Copilot</title>
+  </head>
+
+  <body>
+    <header>
+      <div id="menu-items">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div>Cornerstone Copilot</div>
+        </div>
+      </div>
+      <div>
+        <input type="checkbox" id="theme-checkbox"><label for="theme-checkbox">Dark mode</label>
+      </div>
+    </header>
+
+    <!-- Sidebar overlay for click-outside-to-close -->
+    <div id="sidebar-overlay"></div>
+
+    <!-- Sidebar -->
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <h3>Chat History</h3>
+        <p>Your recent conversations</p>
+      </div>
+      <div id="chat-history-list"></div>
+    </div>
+
+    <div id="chat-layout">
+      <div style="flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+        <div id="chat-preview-wrapper">
+          <div id="chat-messages"></div>
+        </div>
+        <div id="chat-input-wrapper">
+          <div id="chat-input-top-row">
+            <span id="chat-disclaimer-inline">AI-generated output – please review before use.</span>
+            <label id="chat-model-wrapper" style="font-size: 12px; display: flex; align-items: center; gap: 4px;">
+              <span>Model:</span>
+              <select id="chat-model-select" style="font-size: 12px;">
+                <option value="">Loading models…</option>
+              </select>
+            </label>
+            <label id="chat-stream-wrapper">
+              <input type="checkbox" id="chat-stream-toggle" checked>Stream
+            </label>
+          </div>
+          <textarea id="chat-input" placeholder="Type your question here. Press Enter to send, Shift+Enter for a new line."></textarea>
+          <div id="chat-controls">
+            <button id="chat-send">Send</button>
+            <span id="chat-status"></span>
+            <button id="sidebar-toggle" title="Toggle chat history">
+              🕓
+            </button>
+            <button id="settings-toggle" title="Open settings" onclick="window.open('settings.html', '_blank')">
+              ⚙
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
