@@ -23,6 +23,7 @@ import org.symphonykernel.QueryType;
 import org.symphonykernel.UserSession;
 import org.symphonykernel.UserSessionStepDetails;
 import org.symphonykernel.config.Constants;
+import org.symphonykernel.config.SymphonyConfig;
 import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
@@ -115,8 +116,7 @@ import reactor.core.publisher.Flux;
  * the execution context.</li>
  * <li>{@link #matchKnowledge(String, JsonNode)} - Matches a query to a
  * knowledge description or SQL query.</li>
- * <li>{@link #getExecuter(Knowledge)} - Retrieves the appropriate execution
- * step based on the knowledge type.</li>
+ * <!-- Removed invalid reference to getExecuter(Knowledge) as it does not exist in this class. -->
  * </ul>
  *
  * <h2>Logging:</h2>
@@ -144,10 +144,8 @@ public class KnowledgeGraphBuilder {
 		static final String ERROR = "ERROR";
     }
 
-    @Value("${symphony.threadpool.size:25}")
-    private int threadPoolSize;
-    @Value("${symphony.knowledge.cache.ttl.ms:60000}")
-    private long cacheTtlMs;
+    @Autowired
+    private SymphonyConfig symphonyConfig;
 
     private ExecutorService executorService;
 
@@ -162,8 +160,8 @@ public class KnowledgeGraphBuilder {
      */
     @PostConstruct
     public void init() {
-        executorService = Executors.newFixedThreadPool(threadPoolSize);
-        logger.info("Initialized thread pool with size: {}", threadPoolSize);
+        executorService = Executors.newFixedThreadPool(symphonyConfig.getThreadPoolSize());
+        logger.info("Initialized thread pool with size: {}", symphonyConfig.getThreadPoolSize());
     }
 
     /**
@@ -205,62 +203,18 @@ public class KnowledgeGraphBuilder {
     @Autowired
     QueryHandler queryHandler;
 
-    @Autowired
-    Symphony symphony;
-
-    @Autowired
-    @Qualifier("GraphQLStep")
-    GraphQLStep graphQLHelper;
-
-    @Autowired
-    @Qualifier("RESTStep")
-    RESTStep restHelper;
 
     @Autowired
     SqlStep sqlAssistant;
 
 
-    @Autowired
-    FileStep fileUrlHelper;
-
-    @Autowired
-    PluginStep pluginStep;
-
-    @Autowired
-    ToolStep toolStep;
     
     @Autowired
-    VelocityStep velocityTemplateEngine;
-
-    @Autowired
-    AgenticStep agenticStep;
-
-    @Autowired
-    DocumentStep documentStep;
-
-    @Autowired
-    DatabaseStep databaseStep;
-
-    @Autowired
-    @Qualifier("AuthenticationStep")
-    AuthenticationStep authenticationStep;
-
-    @Autowired
-    @Qualifier("WebSearchStep")
-    WebSearchStep webSearchStep;
-
-    @Autowired
-    @Qualifier("EmailStep")
-    EmailStep emailStep;
-
-    @Autowired
-    @Qualifier("HumanInLoopStep")
-    HumanInLoopStep humanInLoopStep;
+    private KnowledgeExecuterFactory knowledgeExecuterFactory;
 
     @Autowired
     SessionProvider sessionManager;
-    @Autowired
-    VectorSearchHelper vector;
+   
     @Autowired
     private FileContentProvider fileContentProvider;
 
@@ -270,9 +224,8 @@ public class KnowledgeGraphBuilder {
     /**
      * Creates a new execution context for a given chat request.
      *
-     * @param request the {@link ChatRequest} containing user query and
-     * metadata.
-     * @return a new {@link ExecutionContext} initialized with the request data.
+     * @param request the {@link ChatRequest} containing user query and metadata
+     * @return a new {@link ExecutionContext} initialized with the request data
      */
     public ExecutionContext createContext(ChatRequest request) {
         //TODO: set model name from request if any
@@ -328,12 +281,11 @@ public class KnowledgeGraphBuilder {
     }
 
     /**
-     * Identifies the intent of the user's query by matching it with knowledge
-     * descriptions. Throws a RuntimeException if no matching knowledge is
-     * found.
+     * Identifies the intent of the user's query by matching it with knowledge descriptions.
+     * Throws a RuntimeException if no matching knowledge is found.
      *
-     * @param ctx the {@link ExecutionContext} containing the user's query.
-     * @return the updated {@link ExecutionContext} with identified knowledge.
+     * @param ctx the {@link ExecutionContext} containing the user's query
+     * @return the updated {@link ExecutionContext} with identified knowledge
      */
     public ExecutionContext identifyIntent(ExecutionContext ctx) {
         var request = ctx.getRequest();
@@ -381,23 +333,38 @@ public class KnowledgeGraphBuilder {
 			}
             else
             {
-            	ChatResponse resp= new ChatResponse("Unexpected error occurred: " + ex.getMessage());
-            	resp.setRequestId(request.getConversationId());
-            	resp.setStatusCode(Status.ERROR);
-            	updateUserSession(request.getConversationId(), resp);
-            	return resp;
+            	throw new RuntimeException("Error processing request and no context info for followup", ex);
             }
         } 
     }
-
     /**
-     * Sets parameters for the query using OpenAI prompt evaluation. Updates the
-     * request payload and variables in the execution context.
+     * Processes a chat request and returns a streaming response.
      *
-     * @param ctx the {@link ExecutionContext} containing the query and
-     * knowledge.
-     * @return the updated {@link ExecutionContext} with parameters set.
-     * @throws RuntimeException if the request object is not set in the context.
+     * @param request the chat request
+     * @return a Flux stream of response strings
+     */
+    public Flux<String> streamProcess(ChatRequest request) {      
+        if (request == null) {
+            return Flux.just("Request is null");
+        }
+        try {
+            ExecutionContext ctx = prepareContext(request);
+            return streamResponse(ctx);
+        } catch (Exception ex) {
+            logger.warn("Error setting parameters or processing request, try to process as followup Question", ex);
+            if(hasContextInfo(request)) {
+                return streamFollowupResponse(request);
+            } else{
+                throw new RuntimeException("Error processing request and no context info for followup", ex);
+            }
+        } 
+    }
+    /**
+     * Sets parameters for the query using OpenAI prompt evaluation. Updates the request payload and variables in the execution context.
+     *
+     * @param ctx the {@link ExecutionContext} containing the query and knowledge
+     * @return the updated {@link ExecutionContext} with parameters set
+     * @throws RuntimeException if the request object is not set in the context
      */
     public ExecutionContext setParameters(ExecutionContext ctx) {
         ChatRequest request = ctx.getRequest();
@@ -426,13 +393,12 @@ public class KnowledgeGraphBuilder {
     }
 
     /**
-     * Maps missing variables from the available variables using the provided
-     * parameters . If the parameters are invalid JSON, the method skips
-     * parameter parsing.
+     * Maps missing variables from the available variables using the provided parameters.
+     * If the parameters are invalid JSON, the method skips parameter parsing.
      *
-     * @param availableVariables the existing variables to be updated.
-     * @param params the JSON string containing the parameters to map.
-     * @return a {@link JsonNode} with the updated variables.
+     * @param availableVariables the existing variables to be updated
+     * @param params the JSON string containing the parameters to map
+     * @return a {@link JsonNode} with the updated variables
      */
     JsonNode mapMissingVariables(JsonNode availableVariables, String params) {
         if (params != null && !params.isEmpty()) {
@@ -658,7 +624,7 @@ public class KnowledgeGraphBuilder {
     private ChatResponse process(ExecutionContext ctx) {
 
         Knowledge knowledge = ctx.getKnowledge();
-        IStep step = getExecuter(knowledge);
+        IStep step =  knowledgeExecuterFactory.getExecuter(knowledge);
         ChatResponse response = null;
         if (step == null) {
             response = invalidRequestHandler(ctx);
@@ -700,7 +666,7 @@ public class KnowledgeGraphBuilder {
     public Flux<String> streamResponse(ExecutionContext ctx) {
 
 		Knowledge knowledge = ctx.getKnowledge();
-		IStep step = getExecuter(knowledge);
+		IStep step =  knowledgeExecuterFactory.getExecuter(knowledge);
 		if (step == null) {
 			return Flux.just("No knowledge found for the query");
 		} else {
@@ -757,11 +723,11 @@ public class KnowledgeGraphBuilder {
      */
     public Flux<String> streamFollowupResponse(ChatRequest request) {
 		if (request == null || request.getQuery() == null || request.getSession() == null) {
-			return Flux.just("Sorry, I am unable to process the question, please check the FAQ for more information about my capabilities.");
+			throw new RuntimeException("Sorry, I am unable to process the question, please check the FAQ for more information about my capabilities.");
 		}
 		String rId = sessionManager.getLastRequestId(request.getSession());
 		if (rId == null || rId.isEmpty()) {
-			return Flux.just("No previous session found for the given conversation id");
+			throw new RuntimeException("No previous session found for the given conversation id");
 		}
 
 		return streamFollowupResponse(rId, request.getQuery());
@@ -778,17 +744,17 @@ public class KnowledgeGraphBuilder {
 	 public Flux<String> streamFollowupResponse(String requestId, String query) {
 		
 		 if (requestId == null || requestId.isEmpty() || query == null || query.isEmpty()) {
-			 	return Flux.just("Conversation id and followup question required");
+			 	throw new RuntimeException("Conversation id and followup question required");
 	        }
 	        ExecutionContext ctx = loadContext(requestId, Status.FOLLOWUP);
 
 	        if (ctx == null || ctx.getUserSession() == null) {
-	        	return Flux.just("No previous session found for the given conversation id");
+	        	throw new RuntimeException("No previous session found for the given conversation id");
 	        }
 	        UserSession s = ctx.getUserSession();
 	        List<UserSessionStepDetails> steps = sessionManager.getRequestDetails(requestId);
 	        if (!s.getStatus().equals(Status.SUCCESS) || steps == null || steps.isEmpty() || s.getKnowldgeName() == null) {
-	        	return Flux.just("Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.");
+	        	throw new RuntimeException("Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.");
 	        } else {
 	        	sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), "");
 	        	return Flux.concat(
@@ -1050,7 +1016,7 @@ public class KnowledgeGraphBuilder {
             String jsonString;
             boolean cacheRefreshed = false;
             synchronized (cacheLock) {
-                if (knowledgeDescJsonCache == null || now - knowledgeDescCacheTimestamp > cacheTtlMs) {
+                if (knowledgeDescJsonCache == null || now - knowledgeDescCacheTimestamp > symphonyConfig.getCacheTtlMs()) {
                     knowledgeDescCache = knowledgeBaserepo.getActiveKnowledgeDescriptions();
                     knowledgeDescJsonCache = objectMapper.writeValueAsString(knowledgeDescCache);
                     knowledgeDescCacheTimestamp = now;
@@ -1093,7 +1059,7 @@ public class KnowledgeGraphBuilder {
             int matchCount = -1;
             if(response != null && !response.isEmpty() && !Status.NONE.equalsIgnoreCase(response.trim()))
             {
-                matchCount  = response.indexOf(',')+1;
+                matchCount  = response.split(",").length;
             }
             if (matchCount>=0 && matchCount < 5) {
                 Knowledge knowledge = null;
@@ -1117,7 +1083,14 @@ public class KnowledgeGraphBuilder {
                     logger.debug("question matched with knowledge {}", response);
                     return knowledgeBaserepo.GetByName(response.trim());
                 }
-            } else {
+            } else if (symphonyConfig.isAutonomous()) {
+                    logger.info("Agentic mode enabled via property file for knowledge: {}", response.trim());
+                    Knowledge agenticKnowledge = new Knowledge();
+                    agenticKnowledge.setType(QueryType.AGENTIC);
+                    agenticKnowledge.setName("dynamic-agentic");
+                    agenticKnowledge.setSystemPrompt("Find the appropriate agents and approach to handle the user query. If no agent is suitable, respond with 'Unable to handle the request'.");
+                    return agenticKnowledge;                    
+                } else {
                 String query = queryHandler.matchSelectQuery(question, params);
                 if (query != null) {
                     Knowledge k = new Knowledge();
@@ -1132,75 +1105,8 @@ public class KnowledgeGraphBuilder {
         return null;
     }
 
-    /**
-     * Retrieves the appropriate execution step based on the knowledge type.
-     *
-     * @param knowledge the {@link Knowledge} object containing the query type
-     * and data.
-     * @return the {@link IStep} implementation for executing the query.
-     */
-    public IStep getExecuter(Knowledge knowledge) {
 
-        if (knowledge == null || knowledge.getType() == null) {
-            logger.warn("Knowledge or its type is null");
-            return null;
-        }
-        logger.info("getting executter for " + knowledge.getType());
-        switch (knowledge.getType()) {
-            case SQL -> {
-                return sqlAssistant;
-            }
-            case GRAPHQL -> {
-                return graphQLHelper;
-            }
-            case SYMPHONY -> {
-                return symphony;
-            }
-            case PLUGIN -> {
-                return pluginStep;
-            }
-            case TOOL -> {
-                return toolStep;
-            }  
-            case VELOCITY -> {
-                return velocityTemplateEngine;
-            }
-            case REST -> {
-                return restHelper;
-            }
-            case FILE -> {
-                return fileUrlHelper;
-            }
-            case SHAREPOINT -> {
-                throw new UnsupportedOperationException("SHAREPOINT QueryType is not implemented");
-            }
-            case AGENTIC -> {
-                return agenticStep;
-            }
-            case DOCUMENT -> {
-                return documentStep;
-            }
-            case DATABASE -> {
-                return databaseStep;
-            }
-            case AUTH -> {
-                return authenticationStep;
-            }
-            case WEBSEARCH -> {
-                return webSearchStep;
-            }
-            case EMAIL -> {
-                return emailStep;
-            }
-            case HUMANLOOP -> {
-                return humanInLoopStep;
-            }
-            default -> {
-                logger.warn("Unhandled QueryType: " + knowledge.getType());
-                return null;
-            }
-        }
-    }
+
 
     private static Map<String, String> parameterTranslationMap = new HashMap<>();
 
