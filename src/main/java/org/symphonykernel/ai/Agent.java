@@ -63,20 +63,8 @@ public class Agent {
      * @param request the chat request containing the query
      * @return a Flux containing the streamed response
      */
-    public Flux<String> streamProcess(ChatRequest request) {
-        if (request == null) {
-            return Flux.just("Request is null");
-        }
-        try {
-            ExecutionContext ctx = knowledgeGraphBuilder.prepareContext(request);
-            return knowledgeGraphBuilder.streamResponse(ctx);
-        } catch (Exception ex) {
-            logger.warn("Error setting parameters, try to process as followup Question", ex);
-            return knowledgeGraphBuilder.streamFollowupResponse(request);
-        } catch (Throwable t) {
-            logger.error("Unexpected error during streaming process", t);
-            return Flux.just("Unexpected error occurred");
-        }
+    public Flux<String> streamProcess(ChatRequest request) {    
+    	return knowledgeGraphBuilder.streamProcess(request);
     }
 
     // ==================== FOLLOWUP / ASYNC ====================
