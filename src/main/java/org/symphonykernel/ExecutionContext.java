@@ -10,16 +10,14 @@ package org.symphonykernel;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.symphonykernel.config.Constants;
 import org.symphonykernel.core.IHttpHeaderProvider;
 
 import com.fasterxml.jackson.databind.JsonNode;
-
-import org.springframework.ai.chat.messages.Message;
 
 /**
  * Represents the execution context for operations.
@@ -40,7 +38,11 @@ public class ExecutionContext {
 
     /** The name of the execution context. */
     String name;
-      
+
+    String finalPrompt;
+
+    String tokenCount;
+
     /** The model name for LLM execution. */
     String modelName;
     /** @return the model name */
@@ -522,6 +524,23 @@ public class ExecutionContext {
         if (value != null && key != null && !key.isEmpty())
             resolvedValues.put(key, com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.numberNode(value.doubleValue()));
     }
+
+    public String getFinalPrompt() {
+        return finalPrompt;
+    }
+
+    public void setFinalPrompt(String finalPrompt) {
+        this.finalPrompt = finalPrompt;
+    }
+
+    public String getTokenCount() {
+        return tokenCount;
+    }
+
+    public void setTokenCount(String tokenCount) {
+        this.tokenCount = tokenCount;
+    }
+    
 }
 
 
