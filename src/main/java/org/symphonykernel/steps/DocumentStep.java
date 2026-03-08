@@ -474,20 +474,21 @@ public class DocumentStep extends BaseStep {
      * Splits text into overlapping chunks at sentence/paragraph boundaries when possible.
      */
     private List<String> splitIntoChunks(String text, int chunkSize, int overlap) {
-        List<String> chunks = new ArrayList<>();
         if (text == null || text.isEmpty()) {
-            return chunks;
+            return Collections.emptyList();
         }
-        if (text.length() <= chunkSize) {
-            chunks.add(text);
-            return chunks;
+        int textLen = text.length();
+        if (textLen <= chunkSize) {
+            return Collections.singletonList(text);
         }
 
+        int step = chunkSize - overlap;
+        List<String> chunks = new ArrayList<>((textLen / Math.max(step, 1)) + 1);
+
         int start = 0;
-        while (start < text.length()) {
-            int end = Math.min(start + chunkSize, text.length());
-            // Try to break at a paragraph or sentence boundary
-            if (end < text.length()) {
+        while (start < textLen) {
+            int end = Math.min(start + chunkSize, textLen);
+            if (end < textLen) {
                 int breakPoint = findBreakPoint(text, start, end);
                 if (breakPoint > start) {
                     end = breakPoint;
@@ -496,36 +497,35 @@ public class DocumentStep extends BaseStep {
             chunks.add(text.substring(start, end));
             start = end - overlap;
             if (start < 0) start = 0;
-            // Prevent infinite loop if overlap >= chunk text
             if (start >= end) break;
         }
         return chunks;
     }
 
     private int findBreakPoint(String text, int start, int end) {
-        // Prefer paragraph break
-        int lastParagraph = text.lastIndexOf("\n\n", end);
-        if (lastParagraph > start + (end - start) / 2) {
-            return lastParagraph + 2;
-        }
-        // Then sentence break
-        int lastSentence = -1;
-        for (int i = end; i > start + (end - start) / 2; i--) {
-            char c = text.charAt(i - 1);
-            if (c == '.' || c == '!' || c == '?') {
-                if (i < text.length() && Character.isWhitespace(text.charAt(i))) {
-                    lastSentence = i;
-                    break;
-                }
+        int halfPoint = start + (end - start) / 2;
+        int textLen = text.length();
+
+        // Prefer paragraph break — bounded scan within [halfPoint, end)
+        int scanEnd = Math.min(end, textLen - 2);
+        for (int i = scanEnd; i >= halfPoint; i--) {
+            if (text.charAt(i) == '\n' && text.charAt(i + 1) == '\n') {
+                return i + 2;
             }
         }
-        if (lastSentence > start) {
-            return lastSentence;
+        // Then sentence break — bounded scan within [halfPoint, end)
+        for (int i = end; i > halfPoint; i--) {
+            char c = text.charAt(i - 1);
+            if ((c == '.' || c == '!' || c == '?')
+                    && i < textLen && Character.isWhitespace(text.charAt(i))) {
+                return i;
+            }
         }
-        // Fall back to word boundary
-        int lastSpace = text.lastIndexOf(' ', end);
-        if (lastSpace > start) {
-            return lastSpace + 1;
+        // Fall back to word boundary — bounded scan within [start, end)
+        for (int i = end; i > start; i--) {
+            if (text.charAt(i - 1) == ' ') {
+                return i;
+            }
         }
         return end;
     }
