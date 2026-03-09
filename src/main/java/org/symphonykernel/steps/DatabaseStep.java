@@ -561,24 +561,27 @@ public class DatabaseStep extends BaseStep {
     private void appendTablesMetadata(DatabaseMetaData metaData, String schema,
                                        List<String> filterNames, String tableType,
                                        StringBuilder sb) throws SQLException {
-        try (ResultSet tablesRs = metaData.getTables(null, schema, "%", new String[]{tableType})) {
-            while (tablesRs.next()) {
-                String tableName = tablesRs.getString("TABLE_NAME");
-                String tableSchema = tablesRs.getString("TABLE_SCHEM");
-                String fullName = (tableSchema != null ? tableSchema + "." : "") + tableName;
+        if (filterNames.isEmpty()) {
+            return;
+        }
+        for (String filterName : filterNames) {
+            // Extract just the table name part (strip schema prefix if present)
+            String tableNamePattern = filterName.contains(".")
+                    ? filterName.substring(filterName.lastIndexOf('.') + 1)
+                    : filterName;
+            try (ResultSet tablesRs = metaData.getTables(null, schema, tableNamePattern, new String[]{tableType})) {
+                while (tablesRs.next()) {
+                    String tableName = tablesRs.getString("TABLE_NAME");
+                    String tableSchema = tablesRs.getString("TABLE_SCHEM");
+                    String fullName = (tableSchema != null ? tableSchema + "." : "") + tableName;
 
-                if (!filterNames.isEmpty()
-                        && !containsIgnoreCase(filterNames, tableName)
-                        && !containsIgnoreCase(filterNames, fullName)) {
-                    continue;
+                    sb.append("\n").append(tableType).append(": ").append(fullName).append("\n");
+
+                    appendColumns(metaData, tableSchema, tableName, sb);
+                    appendPrimaryKeys(metaData, tableSchema, tableName, sb);
+                    appendForeignKeys(metaData, tableSchema, tableName, sb);
+                    appendIndexes(metaData, tableSchema, tableName, sb);
                 }
-
-                sb.append("\n").append(tableType).append(": ").append(fullName).append("\n");
-
-                appendColumns(metaData, tableSchema, tableName, sb);
-                appendPrimaryKeys(metaData, tableSchema, tableName, sb);
-                appendForeignKeys(metaData, tableSchema, tableName, sb);
-                appendIndexes(metaData, tableSchema, tableName, sb);
             }
         }
     }
