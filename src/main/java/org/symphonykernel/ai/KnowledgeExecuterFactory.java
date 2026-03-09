@@ -12,7 +12,6 @@ import org.symphonykernel.steps.AuthenticationStep;
 import org.symphonykernel.steps.DatabaseStep;
 import org.symphonykernel.steps.DocumentStep;
 import org.symphonykernel.steps.EmailStep;
-import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.HumanInLoopStep;
 import org.symphonykernel.steps.PluginStep;
@@ -54,8 +53,6 @@ public class KnowledgeExecuterFactory {
     @Qualifier("RESTStep")
     RESTStep restHelper;
 
-    @Autowired
-    FileStep fileUrlHelper;
 
     @Autowired
     DocumentStep documentStep;
@@ -122,7 +119,7 @@ public class KnowledgeExecuterFactory {
                 return restHelper;
             }
             case FILE -> {
-                return fileUrlHelper;
+                return documentStep;
             }
             case SHAREPOINT -> {
                 throw new UnsupportedOperationException("SHAREPOINT QueryType is not implemented");
@@ -132,9 +129,6 @@ public class KnowledgeExecuterFactory {
                    agenticStep = (AgenticStep) initClass(AgenticStep.class);
                }
                return agenticStep;
-            }
-            case DOCUMENT -> {
-                return documentStep;
             }
             case DATABASE -> {
                 return databaseStep;

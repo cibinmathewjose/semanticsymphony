@@ -46,7 +46,8 @@ public class AgenticStep extends BaseStep {
     public Flux<String> getResponseStream(ExecutionContext ctx) {
         logger.info("Executing AgenticStep stream for: {}", ctx.getName());
         StringBuilder responseAccumulator = new StringBuilder();
-        return agenticPlanner.executeStream(ctx)
+        return Flux.just("Agent analyzing request...\n")
+            .concatWith(agenticPlanner.executeStream(ctx))
             .doOnNext(responseAccumulator::append)
             .doFinally(signalType -> {
                 saveStepData(ctx, responseAccumulator.toString());

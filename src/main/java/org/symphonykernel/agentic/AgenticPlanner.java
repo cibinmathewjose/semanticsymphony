@@ -30,6 +30,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * The AgenticPlanner implements a ReAct-style (Reason + Act) loop where the LLM:
@@ -160,78 +162,102 @@ public class AgenticPlanner {
      * @return a Flux emitting progress messages and the final answer
      */
     public Flux<String> executeStream(ExecutionContext ctx) {
-        return Flux.create(sink -> {
+        return Mono.fromCallable(() -> {
+            String userQuery = ctx.getUsersQuery();
+            ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
+            List<Map<String, String>> conversationHistory = new ArrayList<>();
+            return new AgenticLoopState(userQuery, resolvedValues, conversationHistory);
+        })
+        .subscribeOn(Schedulers.boundedElastic())
+        .flatMapMany(state -> runAgenticLoop(state, ctx, 0));
+    }
+
+    /**
+     * Internal state holder for the agentic loop.
+     */
+    private static class AgenticLoopState {
+        final String userQuery;
+        final ConcurrentHashMap<String, JsonNode> resolvedValues;
+        final List<Map<String, String>> conversationHistory;
+
+        AgenticLoopState(String userQuery, ConcurrentHashMap<String, JsonNode> resolvedValues,
+                         List<Map<String, String>> conversationHistory) {
+            this.userQuery = userQuery;
+            this.resolvedValues = resolvedValues;
+            this.conversationHistory = conversationHistory;
+        }
+    }
+
+    /**
+     * Runs one iteration of the agentic loop, emitting progress messages, then
+     * either recurses for the next iteration or streams the final answer.
+     */
+    private Flux<String> runAgenticLoop(AgenticLoopState state, ExecutionContext ctx, int iteration) {
+        if (iteration >= maxIterations) {
+            return Flux.just("Agent reached maximum iterations.\n");
+        }
+
+        return Mono.fromCallable(() -> {
+            logger.info("Agentic stream iteration {}/{}", iteration + 1, maxIterations);
+            String planPrompt = buildPlanningPrompt(state.userQuery, state.resolvedValues, state.conversationHistory);
+            llmSemaphore.acquire();
             try {
-                String userQuery = ctx.getUsersQuery();
-                ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
-                List<Map<String, String>> conversationHistory = new ArrayList<>();
-
-                sink.next("Agent analyzing request...\n");
-
-                for (int iteration = 0; iteration < maxIterations; iteration++) {
-                    logger.info("Agentic stream iteration {}/{}", iteration + 1, maxIterations);
-
-                    String planPrompt = buildPlanningPrompt(userQuery, resolvedValues, conversationHistory);
-                    String planResponse;
-                    llmSemaphore.acquire();
-                    try {
-                        planResponse = aiClient.evaluatePrompt(planPrompt);
-                    } finally {
-                        llmSemaphore.release();
-                    }
-                    AgentPlan plan = parsePlan(planResponse);
-
-                    if (plan == null) {
-                        sink.next(planResponse);
-                        sink.complete();
-                        return;
-                    }
-
-                    if (plan.isComplete() && plan.getFinalAnswer() != null) {
-                        sink.next(plan.getFinalAnswer());
-                        sink.complete();
-                        return;
-                    }
-
-                    if (plan.getActions() == null || plan.getActions().isEmpty()) {
-                        sink.next(plan.getReasoning() != null ? plan.getReasoning() : "No further actions.");
-                        sink.complete();
-                        return;
-                    }
-
-                    if (plan.getReasoning() != null) {
-                        sink.next("Thinking: " + plan.getReasoning() + "\n");
-                    }
-
-                    for (AgentAction action : plan.getActions()) {
-                        sink.next("Executing: " + action.getTool() + " - " + 
-                            (action.getReasoning() != null ? action.getReasoning() : "") + "\n");
-                        
-                        String result = executeAction(action, ctx, resolvedValues);
-                        conversationHistory.add(Map.of(
-                            "tool", action.getTool(),
-                            "reasoning", action.getReasoning() != null ? action.getReasoning() : "",
-                            "result", result
-                        ));
-
-                        try {
-                            JsonNode resultNode = objectMapper.readTree(result);
-                            resolvedValues.put(action.getTool().toLowerCase(), resultNode);
-                        } catch (Exception e) {
-                            resolvedValues.put(action.getTool().toLowerCase(), objectMapper.valueToTree(result));
-                        }
-
-                        sink.next("Completed: " + action.getTool() + "\n");
-                    }
-                }
-
-                sink.next("Agent reached maximum iterations.");
-                sink.complete();
-            } catch (Exception e) {
-                logger.error("Error in agentic stream: {}", e.getMessage(), e);
-                sink.next("Error: " + e.getMessage());
-                sink.complete();
+                return aiClient.evaluatePrompt(planPrompt);
+            } finally {
+                llmSemaphore.release();
             }
+        })
+        .subscribeOn(Schedulers.boundedElastic())
+        .flatMapMany(planResponse -> {
+            AgentPlan plan = parsePlan(planResponse);
+
+            if (plan == null) {
+                return Flux.just("Generating output:").concatWith(Flux.just(planResponse));
+            }
+
+            if (plan.isComplete() && plan.getFinalAnswer() != null) {
+                return Flux.just("Generating output:").concatWith(Flux.just(plan.getFinalAnswer()));
+            }
+
+            if (plan.getActions() == null || plan.getActions().isEmpty()) {
+                String msg = plan.getReasoning() != null ? plan.getReasoning() : "No further actions.";
+                return Flux.just("Generating output:").concatWith(Flux.just(msg));
+            }
+
+            // Emit reasoning
+            Flux<String> progress = Flux.empty();
+            if (plan.getReasoning() != null) {
+                progress = Flux.just("Thinking: " + plan.getReasoning() + "\n");
+            }
+
+            // Execute actions sequentially, emitting status for each
+            Flux<String> actionExecution = Flux.fromIterable(plan.getActions())
+                .concatMap(action -> Mono.fromCallable(() -> {
+                    String status = "Executing: " + action.getTool()
+                        + (action.getReasoning() != null ? " - " + action.getReasoning() : "") + "\n";
+                    String result = executeAction(action, ctx, state.resolvedValues);
+                    state.conversationHistory.add(Map.of(
+                        "tool", action.getTool(),
+                        "reasoning", action.getReasoning() != null ? action.getReasoning() : "",
+                        "result", result
+                    ));
+                    try {
+                        JsonNode resultNode = objectMapper.readTree(result);
+                        state.resolvedValues.put(action.getTool().toLowerCase(), resultNode);
+                    } catch (Exception e) {
+                        state.resolvedValues.put(action.getTool().toLowerCase(), objectMapper.valueToTree(result));
+                    }
+                    return status + "Completed: " + action.getTool() + "\n";
+                }).subscribeOn(Schedulers.boundedElastic()));
+
+            // After all actions, recurse into next iteration
+            return progress
+                .concatWith(actionExecution)
+                .concatWith(Flux.defer(() -> runAgenticLoop(state, ctx, iteration + 1)));
+        })
+        .onErrorResume(e -> {
+            logger.error("Error in agentic stream iteration {}: {}", iteration + 1, e.getMessage(), e);
+            return Flux.just("Error: " + e.getMessage() + "\n");
         });
     }
 

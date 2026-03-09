@@ -393,7 +393,7 @@ public class Symphony extends BaseStep {
                         return resultNode.toString();
                     }).subscribeOn(Schedulers.boundedElastic()).flux());
             }
-            // Result key doesn't match any flow item — return already-resolved value
+            // Result key doesn't match any flow item return already-resolved value
             JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
             return Flux.just("Generating output:" + resultNode.toString());
         } else {

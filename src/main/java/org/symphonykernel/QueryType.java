@@ -27,9 +27,7 @@ public enum QueryType {
     /** Represents an SAP RFC */
      RFC,
     /** Represents an agentic workflow where the LLM dynamically plans and executes steps */
-     AGENTIC,
-    /** Represents a document fetch-chunk-process step */
-     DOCUMENT,
+     AGENTIC,   
     /** Represents a dynamic database introspection and query step */
      DATABASE,
     /** Represents an authentication step to acquire tokens for API calls */

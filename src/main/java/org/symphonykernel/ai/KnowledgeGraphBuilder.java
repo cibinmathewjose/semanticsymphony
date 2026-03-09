@@ -33,7 +33,6 @@ import org.symphonykernel.steps.AgenticStep;
 import org.symphonykernel.steps.AuthenticationStep;
 import org.symphonykernel.steps.DatabaseStep;
 import org.symphonykernel.steps.DocumentStep;
-import org.symphonykernel.steps.FileStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;

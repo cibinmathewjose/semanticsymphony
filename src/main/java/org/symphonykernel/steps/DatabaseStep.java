@@ -64,6 +64,8 @@ public class DatabaseStep extends BaseStep {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseStep.class);
 
     private static final int DEFAULT_MAX_ROWS = 100;
+    private static final int MAX_PLAN_STEPS = 5;
+    private static final int MAX_RETRIES_PER_STEP = 2;
 
     private static final Pattern FORBIDDEN_SQL_PATTERN = Pattern.compile(
             "\\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|MERGE|EXEC|EXECUTE|CALL|GRANT|REVOKE|INTO)\\b",
@@ -106,33 +108,37 @@ public class DatabaseStep extends BaseStep {
             try (Connection connection = createConnection(dbName)) {
                 connection.setReadOnly(true);
 
-                String cacheKey = buildSchemaCacheKey(dbName, schemas, tables, views);
-                String schemaDescription = schemaCache.computeIfAbsent(cacheKey, k -> {
-                    try {
-                        return introspectSchema(connection, schemas, tables, views);
-                    } catch (SQLException e) {
-                        throw new RuntimeException("Schema introspection failed", e);
+                if (!tables.isEmpty() || !views.isEmpty()) {
+                    // Tables/views explicitly specified — single-shot query (no planning needed)
+                    String cacheKey = buildSchemaCacheKey(dbName, schemas, tables, views);
+                    String schemaDescription = schemaCache.computeIfAbsent(cacheKey, k -> {
+                        try {
+                            return introspectSchema(connection, schemas, tables, views);
+                        } catch (SQLException e) {
+                            throw new RuntimeException("Schema introspection failed", e);
+                        }
+                    });
+                    if (!schemaDescription.isBlank()) {
+                        String contextVariables = buildContextVariables(ctx);
+                        String generatedSql = generateQuery(userQuery, schemaDescription, contextVariables, ctx.getModelName());
+                        validateReadOnly(generatedSql);
+                        logger.info("DatabaseStep executing query: {}", generatedSql);
+                        try (PreparedStatement stmt = connection.prepareStatement(generatedSql)) {
+                            stmt.setMaxRows(maxRows);
+                            try (ResultSet rs = stmt.executeQuery()) {
+                                jsonArray.addAll(resultSetToJson(rs));
+                            }
+                        }
                     }
-                });
-                if (schemaDescription.isBlank()) {
-                    logger.warn("No schema metadata found for dbname={}", dbName);
-                    ChatResponse resp = new ChatResponse();
-                    resp.setData(jsonArray);
-                    return resp;
-                }
+                } else {
+                    // No tables/views specified — agentic multi-step planning
+                    List<String> allTableNames = listTableNames(connection, schemas, "TABLE");
+                    List<String> allViewNames = listTableNames(connection, schemas, "VIEW");
+                    logger.info("DatabaseStep discovered {} tables and {} views", allTableNames.size(), allViewNames.size());
 
-                String contextVariables = buildContextVariables(ctx);
-                String generatedSql = generateQuery(userQuery, schemaDescription, contextVariables, ctx.getModelName());
-
-                validateReadOnly(generatedSql);
-                logger.info("DatabaseStep executing generated query: {}", generatedSql);
-
-                try (PreparedStatement stmt = connection.prepareStatement(generatedSql)) {
-                    stmt.setMaxRows(maxRows);
-                    try (ResultSet rs = stmt.executeQuery()) {
-                        ArrayNode results = resultSetToJson(rs);
-                        jsonArray.addAll(results);
-                    }
+                    ArrayNode results = executeAgenticPlan(connection, userQuery, allTableNames,
+                            allViewNames, schemas, dbName, maxRows, ctx);
+                    jsonArray.addAll(results);
                 }
             }
 
@@ -148,6 +154,325 @@ public class DatabaseStep extends BaseStep {
         saveStepData(ctx, jsonArray);
         return response;
     }
+
+    // ==================== AGENTIC QUERY PLANNING ====================
+
+    /**
+     * Asks the LLM to decompose the user’s question into a multi-step query plan,
+     * then iteratively resolves table dependencies and executes each step,
+     * feeding results from earlier steps into later ones.
+     */
+    private ArrayNode executeAgenticPlan(Connection connection, String userQuery,
+                                         List<String> allTableNames, List<String> allViewNames,
+                                         List<String> schemas, String dbName, int maxRows,
+                                         ExecutionContext ctx) throws SQLException {
+        ArrayNode finalResults = objectMapper.createArrayNode();
+        List<StepResult> stepResults = new ArrayList<>();
+
+        // Phase 1: Ask AI for a query plan
+        List<QueryPlanStep> plan = buildQueryPlan(userQuery, allTableNames, allViewNames, ctx.getModelName());
+        logger.info("AI created {} step query plan", plan.size());
+
+        // Phase 2: Execute each step, discovering dependencies as needed
+        for (int stepIdx = 0; stepIdx < plan.size(); stepIdx++) {
+            QueryPlanStep planStep = plan.get(stepIdx);
+            logger.info("Executing plan step {}/{}: {}", stepIdx + 1, plan.size(), planStep.description);
+
+            // Resolve schema for the tables this step needs
+            List<String> neededTables = new ArrayList<>(planStep.tablesNeeded);
+            String schemaDescription = loadSchemaForTables(connection, schemas, dbName, neededTables);
+
+            if (schemaDescription.isBlank()) {
+                logger.warn("No schema found for step {} tables: {}", stepIdx + 1, neededTables);
+                continue;
+            }
+
+            // Build context from previous step results
+            String stepContext = buildStepContext(stepResults, ctx);
+            String sql = null;
+            ArrayNode stepData = null;
+
+            // Retry loop: if query fails, ask AI for additional tables and retry
+            for (int retry = 0; retry <= MAX_RETRIES_PER_STEP; retry++) {
+                try {
+                    sql = generateStepQuery(userQuery, planStep.description, schemaDescription, stepContext, ctx.getModelName());
+                    validateReadOnly(sql);
+                    logger.info("Step {} query (attempt {}): {}", stepIdx + 1, retry + 1, sql);
+
+                    try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+                        stmt.setMaxRows(maxRows);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            stepData = resultSetToJson(rs);
+                        }
+                    }
+                    break; // Success
+                } catch (SQLException e) {
+                    if (retry < MAX_RETRIES_PER_STEP) {
+                        logger.warn("Step {} query failed (attempt {}): {}. Discovering additional tables...",
+                                stepIdx + 1, retry + 1, e.getMessage());
+                        List<String> additionalTables = discoverAdditionalTables(
+                                userQuery, planStep.description, e.getMessage(),
+                                neededTables, allTableNames, allViewNames, ctx.getModelName());
+                        if (!additionalTables.isEmpty()) {
+                            neededTables.addAll(additionalTables);
+                            schemaDescription = loadSchemaForTables(connection, schemas, dbName, neededTables);
+                            logger.info("Expanded to {} tables for retry", neededTables.size());
+                        } else {
+                            throw e; // No new tables to try
+                        }
+                    } else {
+                        throw e;
+                    }
+                }
+            }
+
+            if (stepData != null) {
+                stepResults.add(new StepResult(planStep.description, planStep.resultKey, stepData));
+                if (planStep.isFinal) {
+                    finalResults.addAll(stepData);
+                }
+            }
+        }
+
+        // If no step was marked final, return the last step's results
+        if (finalResults.isEmpty() && !stepResults.isEmpty()) {
+            finalResults.addAll(stepResults.get(stepResults.size() - 1).data);
+        }
+
+        return finalResults;
+    }
+
+    /**
+     * Asks the LLM to decompose the user’s question into query steps.
+     */
+    private List<QueryPlanStep> buildQueryPlan(String userQuery, List<String> tableNames,
+                                                List<String> viewNames, String modelName) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("You are a database query planner. Decompose the user's question into one or more ");
+        prompt.append("sequential SQL query steps. For simple questions, use a single step.\n\n");
+        prompt.append("Available tables:\n");
+        for (String t : tableNames) {
+            prompt.append("  - ").append(t).append("\n");
+        }
+        if (!viewNames.isEmpty()) {
+            prompt.append("Available views:\n");
+            for (String v : viewNames) {
+                prompt.append("  - ").append(v).append("\n");
+            }
+        }
+        prompt.append("\nUser question: ").append(userQuery);
+        prompt.append("\n\nReturn a JSON array of steps. Each step is an object with:");
+        prompt.append("\n- \"description\": what this step does");
+        prompt.append("\n- \"tables_needed\": array of table/view names needed");
+        prompt.append("\n- \"result_key\": a short key name for referencing this step's results in later steps");
+        prompt.append("\n- \"is_final\": true if this step produces the final answer\n");
+        prompt.append("\nReturn ONLY valid JSON array, no explanation. Example:\n");
+        prompt.append("[{\"description\":\"Get orders\",\"tables_needed\":[\"dbo.Orders\",\"dbo.Customers\"],\"result_key\":\"orders\",\"is_final\":true}]");
+
+        String response = aiClient.execute(new LLMRequest(prompt.toString(), userQuery, null, modelName));
+        return parseQueryPlan(response, tableNames, viewNames);
+    }
+
+    private List<QueryPlanStep> parseQueryPlan(String response, List<String> allTables, List<String> allViews) {
+        List<QueryPlanStep> steps = new ArrayList<>();
+        try {
+            if (response != null) {
+                String cleaned = response.trim();
+                // Strip markdown fences if present
+                if (cleaned.startsWith("```")) {
+                    int start = cleaned.indexOf('[');
+                    int end = cleaned.lastIndexOf(']');
+                    if (start >= 0 && end > start) {
+                        cleaned = cleaned.substring(start, end + 1);
+                    }
+                }
+                JsonNode planArray = objectMapper.readTree(cleaned);
+                if (planArray.isArray()) {
+                    for (JsonNode stepNode : planArray) {
+                        QueryPlanStep step = new QueryPlanStep();
+                        step.description = stepNode.has("description") ? stepNode.get("description").asText() : "";
+                        step.resultKey = stepNode.has("result_key") ? stepNode.get("result_key").asText() : "step";
+                        step.isFinal = stepNode.has("is_final") && stepNode.get("is_final").asBoolean();
+                        step.tablesNeeded = new ArrayList<>();
+                        if (stepNode.has("tables_needed") && stepNode.get("tables_needed").isArray()) {
+                            for (JsonNode t : stepNode.get("tables_needed")) {
+                                step.tablesNeeded.add(t.asText());
+                            }
+                        }
+                        steps.add(step);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to parse query plan, falling back to single step: {}", e.getMessage());
+        }
+
+        // Fallback: if parsing failed or empty, single step with AI-selected tables
+        if (steps.isEmpty()) {
+            QueryPlanStep singleStep = new QueryPlanStep();
+            singleStep.description = "Answer the user's question";
+            singleStep.resultKey = "result";
+            singleStep.isFinal = true;
+            singleStep.tablesNeeded = selectRelevantTables("", allTables, allViews, null);
+            steps.add(singleStep);
+        }
+
+        // Ensure at least one step is marked final
+        boolean hasFinal = steps.stream().anyMatch(s -> s.isFinal);
+        if (!hasFinal) {
+            steps.get(steps.size() - 1).isFinal = true;
+        }
+
+        // Cap plan size
+        if (steps.size() > MAX_PLAN_STEPS) {
+            steps = steps.subList(0, MAX_PLAN_STEPS);
+            steps.get(steps.size() - 1).isFinal = true;
+        }
+
+        return steps;
+    }
+
+    /**
+     * When a query fails, asks the AI which additional tables might be needed
+     * based on the error message.
+     */
+    private List<String> discoverAdditionalTables(String userQuery, String stepDescription,
+                                                    String errorMessage, List<String> currentTables,
+                                                    List<String> allTables, List<String> allViews,
+                                                    String modelName) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("A SQL query failed with this error:\n").append(errorMessage);
+        prompt.append("\n\nThe query was trying to: ").append(stepDescription);
+        prompt.append("\nUser question: ").append(userQuery);
+        prompt.append("\n\nCurrently loaded tables: ").append(String.join(", ", currentTables));
+        prompt.append("\n\nAll available tables:\n");
+        for (String t : allTables) {
+            prompt.append("  - ").append(t).append("\n");
+        }
+        for (String v : allViews) {
+            prompt.append("  - ").append(v).append("\n");
+        }
+        prompt.append("\nWhich additional tables/views are needed to fix this error? ");
+        prompt.append("Return ONLY a comma-separated list of table names, nothing else. ");
+        prompt.append("If no additional tables can help, return NONE.");
+
+        String response = aiClient.execute(new LLMRequest(prompt.toString(), userQuery, null, modelName));
+        List<String> additional = new ArrayList<>();
+        if (response != null && !response.isBlank() && !response.trim().equalsIgnoreCase("NONE")) {
+            for (String name : response.split(",")) {
+                String trimmed = name.trim();
+                if (!trimmed.isEmpty() && !containsIgnoreCase(currentTables, trimmed)) {
+                    additional.add(trimmed);
+                }
+            }
+        }
+        return additional;
+    }
+
+    private String loadSchemaForTables(Connection connection, List<String> schemas,
+                                       String dbName, List<String> tables) {
+        String cacheKey = buildSchemaCacheKey(dbName, schemas, tables, List.of());
+        return schemaCache.computeIfAbsent(cacheKey, k -> {
+            try {
+                return introspectSchema(connection, schemas, tables, List.of());
+            } catch (SQLException e) {
+                throw new RuntimeException("Schema introspection failed", e);
+            }
+        });
+    }
+
+    /**
+     * Generates a SQL query for one step of the plan, including context from previous steps.
+     */
+    private String generateStepQuery(String userQuery, String stepDescription,
+                                      String schemaDescription, String stepContext,
+                                      String modelName) {
+        String systemPrompt = "You are an expert SQL query generator. Generate a single read-only SQL SELECT statement.\n\n"
+                + "Rules:\n"
+                + "- Output ONLY the SELECT statement, nothing else\n"
+                + "- Do not include ```sql markers or code fences\n"
+                + "- Do not add a semicolon at the end\n"
+                + "- Use friendly column aliases with underscores (e.g., Order_Count instead of COUNT(*))\n"
+                + "- For string comparisons, use UPPER() on both sides\n"
+                + "- Always include the schema name prefix for tables and views\n"
+                + "- Only include columns relevant to the question\n"
+                + "- NEVER generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or EXEC statements\n"
+                + "- Make sure column and table names exactly match the schema provided\n\n"
+                + "Database Schema:\n" + schemaDescription;
+
+        StringBuilder userPrompt = new StringBuilder();
+        userPrompt.append("Overall question: ").append(userQuery);
+        userPrompt.append("\n\nThis step: ").append(stepDescription);
+        if (stepContext != null && !stepContext.isBlank()) {
+            userPrompt.append("\n\nResults from previous steps (use these values in WHERE/IN clauses):\n");
+            userPrompt.append(stepContext);
+        }
+
+        String result = aiClient.execute(new LLMRequest(systemPrompt, userPrompt.toString(), null, modelName));
+        return cleanSqlResponse(result);
+    }
+
+    private String buildStepContext(List<StepResult> previousResults, ExecutionContext ctx) {
+        StringBuilder sb = new StringBuilder();
+        // Include execution context variables
+        String ctxVars = buildContextVariables(ctx);
+        if (!ctxVars.isBlank()) {
+            sb.append(ctxVars).append("\n");
+        }
+        // Include previous step results (truncated to avoid token overflow)
+        for (StepResult prev : previousResults) {
+            sb.append("Step '").append(prev.resultKey).append("' (").append(prev.description).append("):\n");
+            String data = prev.data.toString();
+            if (data.length() > 2000) {
+                data = data.substring(0, 2000) + "... (truncated)";
+            }
+            sb.append(data).append("\n\n");
+        }
+        return sb.toString();
+    }
+
+    private String cleanSqlResponse(String result) {
+        if (result != null) {
+            result = result.trim();
+            if (result.startsWith("```sql")) {
+                result = result.substring(6);
+            }
+            if (result.startsWith("```")) {
+                result = result.substring(3);
+            }
+            if (result.endsWith("```")) {
+                result = result.substring(0, result.length() - 3);
+            }
+            result = result.trim();
+            if (result.endsWith(";")) {
+                result = result.substring(0, result.length() - 1).trim();
+            }
+        }
+        return result;
+    }
+
+    // ==================== PLAN DATA CLASSES ====================
+
+    private static class QueryPlanStep {
+        String description;
+        List<String> tablesNeeded;
+        String resultKey;
+        boolean isFinal;
+    }
+
+    private static class StepResult {
+        final String description;
+        final String resultKey;
+        final ArrayNode data;
+
+        StepResult(String description, String resultKey, ArrayNode data) {
+            this.description = description;
+            this.resultKey = resultKey;
+            this.data = data;
+        }
+    }
+
+    // ==================== SCHEMA DISCOVERY ====================
 
     private String buildSchemaCacheKey(String dbName, List<String> schemas, List<String> tables, List<String> views) {
         return String.valueOf(dbName) + "|" + schemas + "|" + tables + "|" + views;
@@ -205,6 +530,68 @@ public class DatabaseStep extends BaseStep {
         return sb.toString();
     }
 
+    /**
+     * Lists all table or view names (schema-qualified) for the given schemas — lightweight,
+     * does not load columns, keys or indexes.
+     */
+    private List<String> listTableNames(Connection connection, List<String> schemas, String tableType) throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        List<String> schemaList = schemas.isEmpty() ? discoverSchemas(metaData) : schemas;
+        List<String> names = new ArrayList<>();
+        for (String schema : schemaList) {
+            try (ResultSet rs = metaData.getTables(null, schema, "%", new String[]{tableType})) {
+                while (rs.next()) {
+                    String tableName = rs.getString("TABLE_NAME");
+                    String tableSchema = rs.getString("TABLE_SCHEM");
+                    String fullName = (tableSchema != null ? tableSchema + "." : "") + tableName;
+                    names.add(fullName);
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Asks the LLM to select which tables/views are relevant to the user's question.
+     * Returns a list of table names (may include schema prefix) the AI deems relevant.
+     */
+    private List<String> selectRelevantTables(String userQuery, List<String> tableNames,
+                                               List<String> viewNames, String modelName) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Given the following database tables and views, select ONLY the ones that are likely ");
+        sb.append("needed to answer the user's question. Return the selected names as a comma-separated list, nothing else.\n\n");
+        sb.append("Tables:\n");
+        for (String t : tableNames) {
+            sb.append("  - ").append(t).append("\n");
+        }
+        if (!viewNames.isEmpty()) {
+            sb.append("Views:\n");
+            for (String v : viewNames) {
+                sb.append("  - ").append(v).append("\n");
+            }
+        }
+        sb.append("\nUser question: ").append(userQuery);
+        sb.append("\n\nReturn ONLY the comma-separated list of selected table/view names. No explanation.");
+
+        String response = aiClient.execute(new LLMRequest(sb.toString(), userQuery, null, modelName));
+        List<String> selected = new ArrayList<>();
+        if (response != null && !response.isBlank()) {
+            for (String name : response.split(",")) {
+                String trimmed = name.trim();
+                if (!trimmed.isEmpty()) {
+                    selected.add(trimmed);
+                }
+            }
+        }
+        // If AI returned nothing useful, fall back to all tables
+        if (selected.isEmpty()) {
+            logger.warn("AI returned no relevant tables, falling back to all tables/views");
+            selected.addAll(tableNames);
+            selected.addAll(viewNames);
+        }
+        return selected;
+    }
+
     private List<String> discoverSchemas(DatabaseMetaData metaData) throws SQLException {
         List<String> discovered = new ArrayList<>();
         try (ResultSet rs = metaData.getSchemas()) {
@@ -225,12 +612,14 @@ public class DatabaseStep extends BaseStep {
             while (tablesRs.next()) {
                 String tableName = tablesRs.getString("TABLE_NAME");
                 String tableSchema = tablesRs.getString("TABLE_SCHEM");
+                String fullName = (tableSchema != null ? tableSchema + "." : "") + tableName;
 
-                if (!filterNames.isEmpty() && !containsIgnoreCase(filterNames, tableName)) {
+                if (!filterNames.isEmpty()
+                        && !containsIgnoreCase(filterNames, tableName)
+                        && !containsIgnoreCase(filterNames, fullName)) {
                     continue;
                 }
 
-                String fullName = (tableSchema != null ? tableSchema + "." : "") + tableName;
                 sb.append("\n").append(tableType).append(": ").append(fullName).append("\n");
 
                 appendColumns(metaData, tableSchema, tableName, sb);
@@ -358,25 +747,7 @@ public class DatabaseStep extends BaseStep {
         }
 
         String result = aiClient.execute(new LLMRequest(systemPrompt, userPrompt, null, modelName));
-
-        if (result != null) {
-            result = result.trim();
-            if (result.startsWith("```sql")) {
-                result = result.substring(6);
-            }
-            if (result.startsWith("```")) {
-                result = result.substring(3);
-            }
-            if (result.endsWith("```")) {
-                result = result.substring(0, result.length() - 3);
-            }
-            result = result.trim();
-            if (result.endsWith(";")) {
-                result = result.substring(0, result.length() - 1).trim();
-            }
-        }
-
-        return result;
+        return cleanSqlResponse(result);
     }
 
     /**
