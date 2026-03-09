@@ -212,7 +212,7 @@ public class DatabaseStep extends BaseStep {
             // Step 1: Ask LLM to identify relevant tables for the current (sub-)question
             String previousContext = buildStepContext(stepResults, ctx);
             List<String> relevantTables = identifyRelevantTables(
-                    userQuery, allTableNames, allViewNames, previousContext, modelName);
+                    userQuery, allTableNames, allViewNames, previousContext, knowledgePrompt, modelName);
             logger.info("Iteration {} - AI selected {} relevant tables: {}",
                     iteration + 1, relevantTables.size(), relevantTables);
 
@@ -230,10 +230,14 @@ public class DatabaseStep extends BaseStep {
 
             // Step 3: Generate SQL query using the loaded schema and previous step context
             ArrayNode stepData = null;
+            String lastFailedSql = null;
+            String lastErrorMessage = null;
             for (int retry = 0; retry <= MAX_RETRIES_PER_STEP; retry++) {
+                String sql = null;
                 try {
-                    String sql = generateIterativeQuery(
-                            userQuery, schemaDescription, previousContext, knowledgePrompt, modelName);
+                    sql = generateIterativeQuery(
+                            userQuery, schemaDescription, previousContext, knowledgePrompt,
+                            modelName, lastFailedSql, lastErrorMessage);
                     validateReadOnly(sql);
                     logger.info("Iteration {} query (attempt {}): {}", iteration + 1, retry + 1, sql);
 
@@ -245,8 +249,20 @@ public class DatabaseStep extends BaseStep {
                         }
                     }
                     break; // Success
+                } catch (SecurityException e) {
+                    // validateReadOnly rejected the query — let the LLM correct it
+                    if (retry < MAX_RETRIES_PER_STEP) {
+                        lastFailedSql = sql;
+                        lastErrorMessage = "Validation failed: " + e.getMessage();
+                        logger.warn("Iteration {} query rejected (attempt {}): {}",
+                                iteration + 1, retry + 1, e.getMessage());
+                    } else {
+                        throw new SQLException("Generated SQL failed validation: " + e.getMessage());
+                    }
                 } catch (SQLException e) {
                     if (retry < MAX_RETRIES_PER_STEP) {
+                        lastFailedSql = sql;
+                        lastErrorMessage = e.getMessage();
                         logger.warn("Iteration {} query failed (attempt {}): {}. Discovering additional tables...",
                                 iteration + 1, retry + 1, e.getMessage());
                         List<String> additionalTables = discoverAdditionalTables(
@@ -256,9 +272,9 @@ public class DatabaseStep extends BaseStep {
                             relevantTables.addAll(additionalTables);
                             schemaDescription = loadSchemaForTables(connection, introspector, schemas, dbName, relevantTables);
                             logger.info("Expanded to {} tables for retry: {}", relevantTables.size(), relevantTables);
-                        } else {
-                            throw e;
                         }
+                        // Even without additional tables, retry with the error context
+                        // so the LLM can fix syntax/column/condition issues
                     } else {
                         throw e;
                     }
@@ -292,7 +308,7 @@ public class DatabaseStep extends BaseStep {
      */
     private List<String> identifyRelevantTables(String userQuery, List<String> allTableNames,
                                                  List<String> allViewNames, String previousContext,
-                                                 String modelName) {
+                                                 String knowledgePrompt, String modelName) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("You are a database analyst. Given the user's question and the list of available tables/views, ");
         prompt.append("identify ONLY the tables and views needed to write a SQL query that answers the question.\n\n");
@@ -307,6 +323,7 @@ public class DatabaseStep extends BaseStep {
             }
         }
         prompt.append("\nUser question: ").append(userQuery);
+        prompt.append("\n\nAdditional Instructions:\n").append(knowledgePrompt).append("\n\n");
         if (previousContext != null && !previousContext.isBlank()) {
             prompt.append("\n\nPrevious query results already obtained:\n").append(previousContext);
             prompt.append("\nIdentify tables needed for the NEXT query to further answer the question. ");
@@ -338,10 +355,13 @@ public class DatabaseStep extends BaseStep {
      * Generates a SQL query for the current iteration using the loaded schema
      * (which includes full column details, primary keys, foreign keys, and indexes)
      * and results from any previous iterations.
+     *
+     * @param failedSql     the SQL that failed on a previous attempt, or null on the first try
+     * @param errorMessage  the database/validation error from the previous attempt, or null
      */
     private String generateIterativeQuery(String userQuery, String schemaDescription,
                                            String previousContext, String knowledgePrompt,
-                                           String modelName) {
+                                           String modelName, String failedSql, String errorMessage) {
         String systemPrompt = "You are an expert SQL query generator. Generate a single read-only SQL SELECT statement.\n\n"
                 + "Rules:\n"
                 + "- Output ONLY the SELECT statement, nothing else\n"
@@ -364,6 +384,14 @@ public class DatabaseStep extends BaseStep {
             userPrompt.append("\n\nResults from previous queries (use these values in WHERE/IN clauses if needed):\n");
             userPrompt.append(previousContext);
             userPrompt.append("\nGenerate the NEXT query to further answer the question using the above results as context.");
+        }
+        if (errorMessage != null && !errorMessage.isBlank()) {
+            userPrompt.append("\n\n⚠ PREVIOUS ATTEMPT FAILED. You MUST correct the query.\n");
+            if (failedSql != null && !failedSql.isBlank()) {
+                userPrompt.append("Failed SQL:\n").append(failedSql).append("\n");
+            }
+            userPrompt.append("Error: ").append(errorMessage).append("\n");
+            userPrompt.append("Analyze the error carefully and generate a CORRECTED query that avoids this issue.");
         }
 
         String result = aiClient.execute(new LLMRequest(systemPrompt, userPrompt.toString(), null, modelName));
