@@ -9,6 +9,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -482,51 +483,70 @@ public class DocumentStep extends BaseStep {
             return Collections.singletonList(text);
         }
 
-        int step = chunkSize - overlap;
-        List<String> chunks = new ArrayList<>((textLen / Math.max(step, 1)) + 1);
+        // Clamp overlap so it cannot equal or exceed chunkSize (would stall)
+        int safeOverlap = Math.min(overlap, chunkSize - 1);
+        int step = chunkSize - safeOverlap;
+        List<String> chunks = new ArrayList<>((textLen / step) + 1);
+        char[] chars = text.toCharArray(); // raw array — avoids charAt bounds checks
 
         int start = 0;
         while (start < textLen) {
             int end = Math.min(start + chunkSize, textLen);
             if (end < textLen) {
-                int breakPoint = findBreakPoint(text, start, end);
+                int breakPoint = findBreakPoint(chars, textLen, start, end);
                 if (breakPoint > start) {
                     end = breakPoint;
                 }
             }
-            chunks.add(text.substring(start, end));
-            start = end - overlap;
-            if (start < 0) start = 0;
-            if (start >= end) break;
+            chunks.add(new String(chars, start, end - start));
+            // Guarantee forward progress: advance at least 1 char
+            int next = end - safeOverlap;
+            if (next <= start) {
+                next = start + 1;
+            }
+            start = next;
         }
         return chunks;
     }
 
-    private int findBreakPoint(String text, int start, int end) {
-        int halfPoint = start + (end - start) / 2;
-        int textLen = text.length();
+    /**
+     * Finds the best break point in a single backward pass, checking
+     * paragraph, sentence and word boundaries together.
+     */
+    private int findBreakPoint(char[] chars, int len, int start, int end) {
+        int halfPoint = start + ((end - start) >> 1);
+        int bestSentence = -1;
+        int bestWord = -1;
 
-        // Prefer paragraph break — bounded scan within [halfPoint, end)
-        int scanEnd = Math.min(end, textLen - 2);
-        for (int i = scanEnd; i >= halfPoint; i--) {
-            if (text.charAt(i) == '\n' && text.charAt(i + 1) == '\n') {
-                return i + 2;
-            }
-        }
-        // Then sentence break — bounded scan within [halfPoint, end)
-        for (int i = end; i > halfPoint; i--) {
-            char c = text.charAt(i - 1);
-            if ((c == '.' || c == '!' || c == '?')
-                    && i < textLen && Character.isWhitespace(text.charAt(i))) {
-                return i;
-            }
-        }
-        // Fall back to word boundary — bounded scan within [start, end)
         for (int i = end; i > start; i--) {
-            if (text.charAt(i - 1) == ' ') {
-                return i;
+            char prev = chars[i - 1];
+
+            if (i > halfPoint) {
+                // Paragraph break (\n\n) — highest priority, return immediately
+                if (prev == '\n' && i < len && chars[i] == '\n') {
+                    return i + 1;
+                }
+                // Sentence break (.!? followed by whitespace) — record first found
+                if (bestSentence < 0
+                        && (prev == '.' || prev == '!' || prev == '?')
+                        && i < len && Character.isWhitespace(chars[i])) {
+                    bestSentence = i;
+                }
+            }
+
+            // Word boundary (space) — record first found
+            if (bestWord < 0 && prev == ' ') {
+                bestWord = i;
+            }
+
+            // Below halfPoint: no more paragraph/sentence possible; stop if word found
+            if (i <= halfPoint && bestWord > 0) {
+                break;
             }
         }
+
+        if (bestSentence > 0) return bestSentence;
+        if (bestWord > 0) return bestWord;
         return end;
     }
 
