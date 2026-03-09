@@ -119,7 +119,7 @@ public class AgenticPlanner {
             if (plan.isComplete() && plan.getFinalAnswer() != null) {
                 logger.info("Agent completed task after {} iterations", iteration + 1);
                 ChatResponse response = new ChatResponse();
-                response.setMessage(plan.getFinalAnswer());
+                response.setMessage("Generating output:" + convertToMarkdownTable(plan.getFinalAnswer()));
                 return response;
             }
 
@@ -216,7 +216,7 @@ public class AgenticPlanner {
             }
 
             if (plan.isComplete() && plan.getFinalAnswer() != null) {
-                return Flux.just("Generating output:").concatWith(Flux.just(plan.getFinalAnswer()));
+                return Flux.just("Generating output:").concatWith(Flux.just(convertToMarkdownTable(plan.getFinalAnswer())));
             }
 
             if (plan.getActions() == null || plan.getActions().isEmpty()) {
@@ -387,6 +387,53 @@ public class AgenticPlanner {
             logger.warn("Failed to parse agent plan: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Converts the final answer to a markdown table when the content is JSON.
+     * If the answer is a JSON array of objects, it produces a multi-column table.
+     * If it is a single JSON object, it produces a key-value table.
+     * Otherwise, the original text is returned unchanged.
+     */
+    private String convertToMarkdownTable(String answer) {
+        if (answer == null || answer.isBlank()) return answer;
+        try {
+            JsonNode node = objectMapper.readTree(answer.trim());
+            if (node.isArray() && !node.isEmpty() && node.get(0).isObject()) {
+                // Collect all unique headers across all elements
+                List<String> headers = new ArrayList<>();
+                for (JsonNode element : node) {
+                    element.fieldNames().forEachRemaining(f -> {
+                        if (!headers.contains(f)) headers.add(f);
+                    });
+                }
+                StringBuilder table = new StringBuilder();
+                table.append("| ").append(String.join(" | ", headers)).append(" |\n");
+                table.append("| ").append(headers.stream().map(h -> "---").collect(Collectors.joining(" | "))).append(" |\n");
+                for (JsonNode element : node) {
+                    table.append("| ");
+                    for (int i = 0; i < headers.size(); i++) {
+                        JsonNode val = element.get(headers.get(i));
+                        table.append(val != null && !val.isNull() ? val.asText() : "");
+                        if (i < headers.size() - 1) table.append(" | ");
+                    }
+                    table.append(" |\n");
+                }
+                return table.toString();
+            } else if (node.isObject() && !node.isEmpty()) {
+                StringBuilder table = new StringBuilder();
+                table.append("| Key | Value |\n");
+                table.append("| --- | --- |\n");
+                node.fields().forEachRemaining(entry ->
+                    table.append("| ").append(entry.getKey()).append(" | ")
+                         .append(entry.getValue().isNull() ? "" : entry.getValue().asText()).append(" |\n")
+                );
+                return table.toString();
+            }
+        } catch (Exception e) {
+            // Not JSON — return the original answer as-is
+        }
+        return answer;
     }
 
     private String truncateResult(String result) {
