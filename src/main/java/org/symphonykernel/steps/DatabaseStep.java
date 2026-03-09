@@ -8,11 +8,14 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+
+import reactor.core.publisher.Flux;
 
 import org.symphonykernel.steps.db.DbIntrospector;
 import org.symphonykernel.steps.db.JdbcDbIntrospector;
@@ -669,5 +672,65 @@ public class DatabaseStep extends BaseStep {
             }
         }
         return false;
+    }
+
+    @Override
+    public Flux<String> getResponseStream(ExecutionContext ctx) {
+        ChatResponse response = getResponse(ctx);
+        ArrayNode data = response.getData();
+        if (data != null && data.size() > 0) {
+            String markdown = jsonArrayToMarkdownTable(data);
+            return Flux.just("Generating output:").concatWith(Flux.just(markdown));
+        }
+        String message = response.getMessage();
+        if (message != null && !message.isBlank()) {
+            return Flux.just("Generating output:").concatWith(Flux.just(message));
+        }
+        return Flux.just("No results found.");
+    }
+
+    /**
+     * Converts a Jackson {@link ArrayNode} of row objects into a Markdown table.
+     */
+    private String jsonArrayToMarkdownTable(ArrayNode rows) {
+        if (rows == null || rows.isEmpty()) {
+            return "No results found.";
+        }
+
+        // Collect all column names preserving insertion order
+        LinkedHashSet<String> columnSet = new LinkedHashSet<>();
+        for (JsonNode row : rows) {
+            row.fieldNames().forEachRemaining(columnSet::add);
+        }
+        List<String> columns = new ArrayList<>(columnSet);
+
+        StringBuilder sb = new StringBuilder();
+
+        // Header row
+        sb.append("|");
+        for (String col : columns) {
+            sb.append(" ").append(col).append(" |");
+        }
+        sb.append("\n");
+
+        // Separator row
+        sb.append("|");
+        for (int i = 0; i < columns.size(); i++) {
+            sb.append(" --- |");
+        }
+        sb.append("\n");
+
+        // Data rows
+        for (JsonNode row : rows) {
+            sb.append("|");
+            for (String col : columns) {
+                JsonNode value = row.get(col);
+                String text = (value == null || value.isNull()) ? "" : value.asText();
+                sb.append(" ").append(text).append(" |");
+            }
+            sb.append("\n");
+        }
+
+        return sb.toString();
     }
 }
