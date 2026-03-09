@@ -1333,9 +1333,14 @@ let printBubble = (htmlEl) => {
   }
 };
 
+// Convert literal escape sequences (\r\n, \r, \n, \t) to real whitespace
+let normalizeEscapes = (text) => {
+  return text.replace(/\\r\\n/g, '\n').replace(/\\r/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\r/g, '\n');
+};
+
 let renderMarkdownTab = () => {
   if (!activeMarkdownEl) return;
-  activeMarkdownEl.textContent = currentMarkdown;
+  activeMarkdownEl.textContent = normalizeEscapes(currentMarkdown);
   activeMarkdownEl.scrollTop = activeMarkdownEl.scrollHeight;
   const container = document.querySelector('#chat-messages');
   if (container) {
@@ -1352,7 +1357,7 @@ let renderHtmlTab = () => {
     headerIds: false,
     mangle: false
   };
-  let html = marked.parse(currentMarkdown, options);
+  let html = marked.parse(normalizeEscapes(currentMarkdown), options);
   let sanitized = DOMPurify.sanitize(html);
   activeHtmlEl.innerHTML = sanitized;
 

@@ -613,13 +613,18 @@ kbd {
 
 /* Create Knowledge Form – modal body variant */
 .modal-body-form {
-  min-height: auto;
+  min-height: 0;
   padding: 24px 20px;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
 }
 .modal-form-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1 1 0;
+  min-height: 0;
 }
 .modal-form-label {
   font-size: 13px;
@@ -634,6 +639,8 @@ kbd {
 }
 .modal-form-textarea {
   width: 100%;
+  flex: 1 1 0;
+  min-height: 80px;
   padding: 8px 10px;
   font-size: 13px;
   font-family: inherit;
@@ -2123,7 +2130,7 @@ select.edit-modal-input:focus {
         <button class="btn-knowledge" id="create-knowledge-btn" title="Create a new knowledge entry">➕ New Knowledge</button>
         <!-- Modal for creating knowledge from description -->
         <div class="modal-overlay" id="create-knowledge-modal" tabindex="-1">
-          <div class="modal-dialog">
+          <div class="modal-dialog" style="height:80vh;">
             <div class="modal-header">
               <h3>➕ Create Knowledge Entry</h3>
               <button class="modal-close" id="close-create-knowledge-modal" title="Close">✕</button>
@@ -2132,7 +2139,7 @@ select.edit-modal-input:focus {
               <div class="modal-form-group">
                 <label class="modal-form-label" for="knowledge-desc-input">Describe what you want to generate</label>
                 <p class="modal-form-hint">Provide a clear description of the knowledge entry you need. Use AI to auto-generate the YAML, or create a manual template to fill in yourself.</p>
-                <textarea class="modal-form-textarea" id="knowledge-desc-input" rows="6" placeholder="e.g. A REST API step that fetches customer orders by ID from the orders service…"></textarea>
+                <textarea class="modal-form-textarea" id="knowledge-desc-input" placeholder="e.g. A REST API step that fetches customer orders by ID from the orders service…"></textarea>
               </div>
               <div id="create-knowledge-error" class="modal-form-error"></div>
             </div>
