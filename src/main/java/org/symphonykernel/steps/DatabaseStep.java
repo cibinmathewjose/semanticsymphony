@@ -1,7 +1,6 @@
 package org.symphonykernel.steps;
 
 import java.sql.Connection;
-import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -14,6 +13,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+
+import org.symphonykernel.steps.db.DbIntrospector;
+import org.symphonykernel.steps.db.JdbcDbIntrospector;
+import org.symphonykernel.steps.db.OracleDbIntrospector;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +86,27 @@ public class DatabaseStep extends BaseStep {
     @Autowired(required = false)
     private DataSource dataSource;
 
+    private static final List<DbIntrospector> INTROSPECTORS = List.of(
+            new OracleDbIntrospector(),
+            new JdbcDbIntrospector()   // universal fallback — must be last
+    );
+
+    /**
+     * Picks the first {@link DbIntrospector} that supports the connected database.
+     */
+    private DbIntrospector resolveIntrospector(Connection connection) throws SQLException {
+        String productName = connection.getMetaData().getDatabaseProductName();
+        logger.info("Database product: {}", productName);
+        for (DbIntrospector introspector : INTROSPECTORS) {
+            if (introspector.supports(productName)) {
+                logger.info("Using introspector: {}", introspector.getClass().getSimpleName());
+                return introspector;
+            }
+        }
+        // Should never happen because JdbcDbIntrospector always returns true
+        throw new IllegalStateException("No DbIntrospector found for " + productName);
+    }
+
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
         Knowledge kb = ctx.getKnowledge();
@@ -107,13 +131,14 @@ public class DatabaseStep extends BaseStep {
 
             try (Connection connection = createConnection(dbName)) {
                 connection.setReadOnly(true);
+                DbIntrospector introspector = resolveIntrospector(connection);
 
                 if (!tables.isEmpty() || !views.isEmpty()) {
-                    // Tables/views explicitly specified â€” single-shot query (no planning needed)
+                    // Tables/views explicitly specified — single-shot query (no planning needed)
                     String cacheKey = buildSchemaCacheKey(dbName, schemas, tables, views);
                     String schemaDescription = schemaCache.computeIfAbsent(cacheKey, k -> {
                         try {
-                            return introspectSchema(connection, schemas, tables, views);
+                            return introspector.introspectSchema(connection, schemas, tables, views);
                         } catch (SQLException e) {
                             throw new RuntimeException("Schema introspection failed", e);
                         }
@@ -131,12 +156,12 @@ public class DatabaseStep extends BaseStep {
                         }
                     }
                 } else {
-                    // No tables/views specified â€” agentic multi-step planning
-                    List<String> allTableNames = listTableNames(connection, schemas, "TABLE");
-                    List<String> allViewNames = listTableNames(connection, schemas, "VIEW");
+                    // No tables/views specified — agentic multi-step planning
+                    List<String> allTableNames = introspector.listTableNames(connection, schemas, "TABLE");
+                    List<String> allViewNames = introspector.listTableNames(connection, schemas, "VIEW");
                     logger.info("DatabaseStep discovered {} tables and {} views", allTableNames.size(), allViewNames.size());
 
-                    ArrayNode results = executeAgenticPlan(connection, userQuery, allTableNames,
+                    ArrayNode results = executeAgenticPlan(connection, introspector, userQuery, allTableNames,
                             allViewNames, schemas, dbName, maxRows, ctx);
                     jsonArray.addAll(results);
                 }
@@ -168,7 +193,7 @@ public class DatabaseStep extends BaseStep {
      * </ol>
      * If more queries are needed, previous results are fed as context into the next iteration.
      */
-    private ArrayNode executeAgenticPlan(Connection connection, String userQuery,
+    private ArrayNode executeAgenticPlan(Connection connection, DbIntrospector introspector, String userQuery,
                                          List<String> allTableNames, List<String> allViewNames,
                                          List<String> schemas, String dbName, int maxRows,
                                          ExecutionContext ctx) throws SQLException {
@@ -192,7 +217,7 @@ public class DatabaseStep extends BaseStep {
             }
 
             // Step 2: Load full schema with relationships for the selected tables
-            String schemaDescription = loadSchemaForTables(connection, schemas, dbName, relevantTables);
+            String schemaDescription = loadSchemaForTables(connection, introspector, schemas, dbName, relevantTables);
             if (schemaDescription.isBlank()) {
                 logger.warn("No schema metadata found for tables: {}", relevantTables);
                 break;
@@ -224,7 +249,7 @@ public class DatabaseStep extends BaseStep {
                                 allTableNames, allViewNames, modelName);
                         if (!additionalTables.isEmpty()) {
                             relevantTables.addAll(additionalTables);
-                            schemaDescription = loadSchemaForTables(connection, schemas, dbName, relevantTables);
+                            schemaDescription = loadSchemaForTables(connection, introspector, schemas, dbName, relevantTables);
                             logger.info("Expanded to {} tables for retry: {}", relevantTables.size(), relevantTables);
                         } else {
                             throw e;
@@ -404,12 +429,12 @@ public class DatabaseStep extends BaseStep {
         return additional;
     }
 
-    private String loadSchemaForTables(Connection connection, List<String> schemas,
-                                       String dbName, List<String> tables) {
+    private String loadSchemaForTables(Connection connection, DbIntrospector introspector,
+                                       List<String> schemas, String dbName, List<String> tables) {
         String cacheKey = buildSchemaCacheKey(dbName, schemas, tables, List.of());
         return schemaCache.computeIfAbsent(cacheKey, k -> {
             try {
-                return introspectSchema(connection, schemas, tables, List.of());
+                return introspector.introspectSchema(connection, schemas, tables, List.of());
             } catch (SQLException e) {
                 throw new RuntimeException("Schema introspection failed", e);
             }
@@ -503,178 +528,6 @@ public class DatabaseStep extends BaseStep {
 
         logger.info("Connecting to database '{}' at {}", dbName, url);
         return DriverManager.getConnection(url, username, password);
-    }
-
-    /**
-     * Introspects the database schema using JDBC {@link DatabaseMetaData}.
-     * Builds a human-readable description of tables, columns, keys, indexes, and relationships.
-     */
-    private String introspectSchema(Connection connection, List<String> schemas,
-                                     List<String> tables, List<String> views) throws SQLException {
-        DatabaseMetaData metaData = connection.getMetaData();
-        StringBuilder sb = new StringBuilder();
-
-        List<String> schemaList = schemas.isEmpty() ? discoverSchemas(metaData) : schemas;
-
-        for (String schema : schemaList) {
-            appendTablesMetadata(metaData, schema, tables, "TABLE", sb);
-            appendTablesMetadata(metaData, schema, views, "VIEW", sb);
-        }
-
-        return sb.toString();
-    }
-
-    /**
-     * Lists all table or view names (schema-qualified) for the given schemas â€” lightweight,
-     * does not load columns, keys or indexes.
-     */
-    private List<String> listTableNames(Connection connection, List<String> schemas, String tableType) throws SQLException {
-        DatabaseMetaData metaData = connection.getMetaData();
-        List<String> schemaList = schemas.isEmpty() ? discoverSchemas(metaData) : schemas;
-        List<String> names = new ArrayList<>();
-        for (String schema : schemaList) {
-            try (ResultSet rs = metaData.getTables(null, schema, "%", new String[]{tableType})) {
-                while (rs.next()) {
-                    String tableName = rs.getString("TABLE_NAME");
-                    String tableSchema = rs.getString("TABLE_SCHEM");
-                    String fullName = (tableSchema != null ? tableSchema + "." : "") + tableName;
-                    names.add(fullName);
-                }
-            }
-        }
-        return names;
-    }
-
-    private List<String> discoverSchemas(DatabaseMetaData metaData) throws SQLException {
-        List<String> discovered = new ArrayList<>();
-        try (ResultSet rs = metaData.getSchemas()) {
-            while (rs.next()) {
-                discovered.add(rs.getString("TABLE_SCHEM"));
-            }
-        }
-        if (discovered.isEmpty()) {
-            discovered.add(null);
-        }
-        return discovered;
-    }
-
-    private void appendTablesMetadata(DatabaseMetaData metaData, String schema,
-                                       List<String> filterNames, String tableType,
-                                       StringBuilder sb) throws SQLException {
-        if (filterNames.isEmpty()) {
-            return;
-        }
-        for (String filterName : filterNames) {
-            // Extract just the table name part (strip schema prefix if present)
-            String tableNamePattern = filterName.contains(".")
-                    ? filterName.substring(filterName.lastIndexOf('.') + 1)
-                    : filterName;
-            try (ResultSet tablesRs = metaData.getTables(null, schema, tableNamePattern, new String[]{tableType})) {
-                while (tablesRs.next()) {
-                    String tableName = tablesRs.getString("TABLE_NAME");
-                    String tableSchema = tablesRs.getString("TABLE_SCHEM");
-                    String fullName = (tableSchema != null ? tableSchema + "." : "") + tableName;
-
-                    sb.append("\n").append(tableType).append(": ").append(fullName).append("\n");
-
-                    appendColumns(metaData, tableSchema, tableName, sb);
-                    appendPrimaryKeys(metaData, tableSchema, tableName, sb);
-                    appendForeignKeys(metaData, tableSchema, tableName, sb);
-                    appendIndexes(metaData, tableSchema, tableName, sb);
-                }
-            }
-        }
-    }
-
-    private void appendColumns(DatabaseMetaData metaData, String schema,
-                                String tableName, StringBuilder sb) throws SQLException {
-        sb.append("  Columns:\n");
-        try (ResultSet cols = metaData.getColumns(null, schema, tableName, "%")) {
-            while (cols.next()) {
-                String colName = cols.getString("COLUMN_NAME");
-                String typeName = cols.getString("TYPE_NAME");
-                int size = cols.getInt("COLUMN_SIZE");
-                String nullable = "YES".equals(cols.getString("IS_NULLABLE")) ? "NULL" : "NOT NULL";
-                sb.append("    - ").append(colName)
-                  .append(" ").append(typeName)
-                  .append("(").append(size).append(")")
-                  .append(" ").append(nullable).append("\n");
-            }
-        }
-    }
-
-    private void appendPrimaryKeys(DatabaseMetaData metaData, String schema,
-                                    String tableName, StringBuilder sb) throws SQLException {
-        List<String> pkCols = new ArrayList<>();
-        try (ResultSet pks = metaData.getPrimaryKeys(null, schema, tableName)) {
-            while (pks.next()) {
-                pkCols.add(pks.getString("COLUMN_NAME"));
-            }
-        }
-        if (!pkCols.isEmpty()) {
-            sb.append("  Primary Key: ").append(String.join(", ", pkCols)).append("\n");
-        }
-    }
-
-    private void appendForeignKeys(DatabaseMetaData metaData, String schema,
-                                    String tableName, StringBuilder sb) throws SQLException {
-        try (ResultSet fks = metaData.getImportedKeys(null, schema, tableName)) {
-            boolean hasFK = false;
-            while (fks.next()) {
-                if (!hasFK) {
-                    sb.append("  Foreign Keys:\n");
-                    hasFK = true;
-                }
-                String fkCol = fks.getString("FKCOLUMN_NAME");
-                String pkTable = fks.getString("PKTABLE_NAME");
-                String pkSchema = fks.getString("PKTABLE_SCHEM");
-                String pkCol = fks.getString("PKCOLUMN_NAME");
-                String refTable = (pkSchema != null ? pkSchema + "." : "") + pkTable;
-                sb.append("    - ").append(fkCol)
-                  .append(" -> ").append(refTable).append("(").append(pkCol).append(")\n");
-            }
-        }
-    }
-
-    private void appendIndexes(DatabaseMetaData metaData, String schema,
-                                String tableName, StringBuilder sb) throws SQLException {
-        try (ResultSet idxs = metaData.getIndexInfo(null, schema, tableName, false, true)) {
-            String currentIndex = null;
-            List<String> indexCols = new ArrayList<>();
-            boolean headerWritten = false;
-
-            while (idxs.next()) {
-                String indexName = idxs.getString("INDEX_NAME");
-                if (indexName == null) {
-                    continue;
-                }
-                String colName = idxs.getString("COLUMN_NAME");
-                boolean nonUnique = idxs.getBoolean("NON_UNIQUE");
-
-                if (!indexName.equals(currentIndex)) {
-                    if (currentIndex != null) {
-                        if (!headerWritten) {
-                            sb.append("  Indexes:\n");
-                            headerWritten = true;
-                        }
-                        sb.append("    - ").append(currentIndex)
-                          .append(" (").append(String.join(", ", indexCols)).append(")\n");
-                    }
-                    currentIndex = indexName;
-                    indexCols = new ArrayList<>();
-                }
-                if (colName != null) {
-                    indexCols.add(colName + (nonUnique ? "" : " UNIQUE"));
-                }
-            }
-            if (currentIndex != null) {
-                if (!headerWritten) {
-                    sb.append("  Indexes:\n");
-                }
-                sb.append("    - ").append(currentIndex)
-                  .append(" (").append(String.join(", ", indexCols)).append(")\n");
-            }
-        }
     }
 
     /**
