@@ -222,7 +222,8 @@ public class DocumentStep extends BaseStep {
 
         String synthesisPrompt = buildSynthesisPrompt(systemPrompt, chunkSummaries, userQuestion);
         StringBuilder responseAccumulator = new StringBuilder();
-        return aiClient.streamExecute(new LLMRequest(synthesisPrompt, userQuestion, null, ctx.getModelName()))
+         Flux<String> generatingMsg = Flux.just("Generating output:");
+        return generatingMsg.concatWith(aiClient.streamExecute(new LLMRequest(synthesisPrompt, userQuestion, null, ctx.getModelName())))
                 .doOnNext(responseAccumulator::append)
                 .doFinally(signal -> saveStepData(ctx, responseAccumulator.toString()));
     }

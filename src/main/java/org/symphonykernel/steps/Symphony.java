@@ -98,11 +98,13 @@ public class Symphony extends BaseStep {
         logger.info("Executing Symphony {} with {}", _symphony.getName(), ctx.getVariables());
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
+            // If Result references a flow item, defer its processing to the final response phase
+            String resultKey = parsed.Result;
             StringBuilder responseAccumulator = new StringBuilder();
             return Flux.just("Thinking...")
                 .concatWith(
                     // Stream progress items immediately as they arrive
-                    processFlowItemsByOrder(parsed, ctx, resolvedValues)
+                    processFlowItemsByOrder(parsed, ctx, resolvedValues, resultKey)
                         .onErrorResume(e -> {
                             logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
                             return Flux.just("Error: " + e.getMessage());
@@ -131,15 +133,21 @@ public class Symphony extends BaseStep {
 
     // ==================== FLOW PROCESSING ====================
     private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
-        // 1. Group items as before
+        return processFlowItemsByOrder(parsed, ctx, resolvedValues, null);
+    }
+
+    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues, String skipResultKey) {
         Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
         for (FlowItem item : parsed.Flow) {
+            if (skipResultKey != null && item.getKey() != null && item.getKey().equalsIgnoreCase(skipResultKey)) {
+                logger.info("Deferring flow item '{}' to final response (matches Result field)", item.getKey());
+                continue;
+            }
             Integer order = item.getOrder() != null ? item.getOrder() : 0;
             flowItemsByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(item);
         }
 
-        // 2. Convert the Map entries into a Flux to process each "Order Group" sequentially
-        return  Flux.fromIterable(flowItemsByOrder.entrySet())
+        return Flux.fromIterable(flowItemsByOrder.entrySet())
             .concatMap(entry -> {
                 Integer order = entry.getKey();
                 List<FlowItem> items = entry.getValue();
@@ -328,7 +336,7 @@ public class Symphony extends BaseStep {
             jsonArray.add(objectNode);
         }
     }
-    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, Map<String, JsonNode> resolvedValues) {
+    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, ConcurrentHashMap<String, JsonNode> resolvedValues) {
         if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
             logger.info("Processing final response");
             String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
@@ -359,8 +367,26 @@ public class Symphony extends BaseStep {
                 return Flux.just(result);
             }
         } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
+            // Find the deferred flow item matching Result and process it now
+            FlowItem resultItem = null;
+            for (FlowItem fi : parsed.Flow) {
+                if (fi.getKey() != null && fi.getKey().equalsIgnoreCase(parsed.Result)) {
+                    resultItem = fi;
+                    break;
+                }
+            }
+            if (resultItem != null) {
+                final FlowItem deferredItem = resultItem;
+                return Flux.just("Generating output:")
+                    .concatWith(Mono.fromCallable(() -> {
+                        processFlowItem(deferredItem, ctx, resolvedValues);
+                        JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
+                        return resultNode.toString();
+                    }).subscribeOn(Schedulers.boundedElastic()).flux());
+            }
+            // Result key doesn't match any flow item — return already-resolved value
             JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
-            return Flux.just(resultNode.toString());
+            return Flux.just("Generating output:" + resultNode.toString());
         } else {
             ObjectNode objectNode = objectMapper.createObjectNode();
             for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
