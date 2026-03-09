@@ -36,4 +36,11 @@ public interface IStep {
      * @return a JsonNode containing the query results
      */
     JsonNode executeQueryByName(ExecutionContext context);
+    /**
+     * Executes a query by name using the provided execution context and returns a streaming response.
+     *
+     * @param context the execution context containing query details and parameters
+     * @return a Flux emitting query results as strings
+     */
+    Flux<String> streamQueryByName(ExecutionContext context);
 }

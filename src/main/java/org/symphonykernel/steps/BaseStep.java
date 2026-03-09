@@ -79,6 +79,26 @@ public abstract class BaseStep  implements IStep {
 	     return Flux.just(node.toString());
 	}
     @Override
+    public Flux<String> streamQueryByName(ExecutionContext context) {
+        final ArrayNode[] array = new ArrayNode[1];
+        Knowledge kb = knowledgeBase.GetByName(context.getName());
+        if (kb != null) {
+            JsonNode var = context.getVariables();
+            if (context.getConvert()) {
+                try {
+                    JsonTransformer transformer = new JsonTransformer();
+                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
+                    context.setVariables(var);
+                    context.setKnowledge(kb);       		  
+                } catch (Exception e) {
+                   logger.error("Error in Json Transformation", e);
+                }
+            }
+           return getResponseStream(context);
+        }
+        return Flux.empty();
+    }
+    @Override
     public JsonNode executeQueryByName(ExecutionContext context) {
         final ArrayNode[] array = new ArrayNode[1];
         Knowledge kb = knowledgeBase.GetByName(context.getName());

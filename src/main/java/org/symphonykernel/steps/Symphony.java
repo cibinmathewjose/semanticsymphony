@@ -367,7 +367,7 @@ public class Symphony extends BaseStep {
                 return Flux.just(result);
             }
         } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
-            // Find the deferred flow item matching Result and process it now
+            // Find the deferred flow item matching Result and stream its execution
             FlowItem resultItem = null;
             for (FlowItem fi : parsed.Flow) {
                 if (fi.getKey() != null && fi.getKey().equalsIgnoreCase(parsed.Result)) {
@@ -376,6 +376,15 @@ public class Symphony extends BaseStep {
                 }
             }
             if (resultItem != null) {
+                Knowledge kb = knowledgeBase.GetByName(resultItem.getName());
+                if (kb != null) {
+                    JsonNode resolverPayload = resolvePayload(resultItem, resolvedValues);
+                    if (resolverPayload != null) {
+                        return Flux.just("Generating output:")
+                            .concatWith(getResultsStream(ctx, kb, resultItem, resolverPayload));
+                    }
+                }
+                // Fallback: execute blocking if payload/kb is null
                 final FlowItem deferredItem = resultItem;
                 return Flux.just("Generating output:")
                     .concatWith(Mono.fromCallable(() -> {
@@ -501,4 +510,20 @@ public class Symphony extends BaseStep {
         logger.info("Processing time for {} = {} ms", kb.getName(), (endTime - startTime));
         return result;
     }
+     public Flux<String> getResultsStream(ExecutionContext ctx, Knowledge kb,FlowItem item, JsonNode idNode){
+
+        ExecutionContext newCtx = new ExecutionContext(ctx);
+        newCtx.setCurrentFlowItem(item);
+        newCtx.setName(kb.getName());
+        newCtx.setVariables(idNode);
+        newCtx.setConvert(true);
+        IStep step = knowledgeExecuterFactory.getExecuter(kb);
+        if (step == null) {
+            logger.error("No executer found for knowledge type: {}", kb.getType());
+            throw new RuntimeException("No executer found for knowledge type: " + kb.getType());
+        }
+        return step.streamQueryByName(newCtx);  
+       
+     }
+    
 }
