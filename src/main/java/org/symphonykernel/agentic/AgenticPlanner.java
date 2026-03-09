@@ -28,6 +28,7 @@ import org.symphonykernel.mcp.MCPToolRegistry;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -116,10 +117,13 @@ public class AgenticPlanner {
                 return response;
             }
 
-            if (plan.isComplete() && plan.getFinalAnswer() != null) {
+            if (plan.isComplete() && plan.getMessage() != null) {
                 logger.info("Agent completed task after {} iterations", iteration + 1);
                 ChatResponse response = new ChatResponse();
-                response.setMessage("Generating output:" + convertToMarkdownTable(plan.getFinalAnswer()));
+                if (plan.getData() != null) {
+                    response.setData(plan.getData());
+                }
+                response.setMessage("Generating output:" + plan.getMessage());
                 return response;
             }
 
@@ -215,8 +219,8 @@ public class AgenticPlanner {
                 return Flux.just("Generating output:").concatWith(Flux.just(planResponse));
             }
 
-            if (plan.isComplete() && plan.getFinalAnswer() != null) {
-                return Flux.just("Generating output:").concatWith(Flux.just(convertToMarkdownTable(plan.getFinalAnswer())));
+            if (plan.isComplete() && plan.getMessage() != null) {
+                return Flux.just("Generating output:").concatWith(Flux.just(plan.getMessage()));
             }
 
             if (plan.getActions() == null || plan.getActions().isEmpty()) {
@@ -382,10 +386,38 @@ public class AgenticPlanner {
                 json = json.substring(0, json.length() - 3);
             }
             json = json.trim();
-            return objectMapper.readValue(json, AgentPlan.class);
+            AgentPlan plan = objectMapper.readValue(json, AgentPlan.class);
+            processFinalAnswer(plan);
+            return plan;
         } catch (Exception e) {
             logger.warn("Failed to parse agent plan: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Processes the raw {@code finalAnswer} JsonNode into a text message and optional
+     * structured data on the plan. If the finalAnswer is a JSON array or object it is
+     * converted to a markdown table for display and also stored as ArrayNode data.
+     * Plain strings are kept as-is.
+     */
+    private void processFinalAnswer(AgentPlan plan) {
+        JsonNode answer = plan.getFinalAnswer();
+        if (answer == null || answer.isNull()) {
+            return;
+        }
+        if (answer.isArray()) {
+            ArrayNode arrayNode = (ArrayNode) answer;
+            plan.setData(arrayNode);
+            plan.setMessage(convertToMarkdownTable(answer.toString()));
+        } else if (answer.isObject()) {
+            ArrayNode wrapped = objectMapper.createArrayNode();
+            wrapped.add(answer);
+            plan.setData(wrapped);
+            plan.setMessage(convertToMarkdownTable(answer.toString()));
+        } else {
+            // Plain text value
+            plan.setMessage(answer.asText());
         }
     }
 
