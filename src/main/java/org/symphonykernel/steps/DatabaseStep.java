@@ -148,7 +148,8 @@ public class DatabaseStep extends BaseStep {
                     });
                     if (!schemaDescription.isBlank()) {
                         String contextVariables = buildContextVariables(ctx);
-                        String generatedSql = generateQuery(userQuery, schemaDescription, contextVariables, ctx.getModelName());
+                        String knowledgePrompt = kb.getSystemPrompt();
+                        String generatedSql = generateQuery(userQuery, schemaDescription, contextVariables, knowledgePrompt, ctx.getModelName());
                         validateReadOnly(generatedSql);
                         logger.info("DatabaseStep executing query: {}", generatedSql);
                         try (PreparedStatement stmt = connection.prepareStatement(generatedSql)) {
@@ -164,8 +165,9 @@ public class DatabaseStep extends BaseStep {
                     List<String> allViewNames = introspector.listTableNames(connection, schemas, "VIEW");
                     logger.info("DatabaseStep discovered {} tables and {} views", allTableNames.size(), allViewNames.size());
 
+                    String knowledgePrompt = kb.getSystemPrompt();
                     ArrayNode results = executeAgenticPlan(connection, introspector, userQuery, allTableNames,
-                            allViewNames, schemas, dbName, maxRows, ctx);
+                            allViewNames, schemas, dbName, maxRows, knowledgePrompt, ctx);
                     jsonArray.addAll(results);
                 }
             }
@@ -199,7 +201,7 @@ public class DatabaseStep extends BaseStep {
     private ArrayNode executeAgenticPlan(Connection connection, DbIntrospector introspector, String userQuery,
                                          List<String> allTableNames, List<String> allViewNames,
                                          List<String> schemas, String dbName, int maxRows,
-                                         ExecutionContext ctx) throws SQLException {
+                                         String knowledgePrompt, ExecutionContext ctx) throws SQLException {
         ArrayNode finalResults = objectMapper.createArrayNode();
         List<StepResult> stepResults = new ArrayList<>();
         String modelName = ctx.getModelName();
@@ -231,7 +233,7 @@ public class DatabaseStep extends BaseStep {
             for (int retry = 0; retry <= MAX_RETRIES_PER_STEP; retry++) {
                 try {
                     String sql = generateIterativeQuery(
-                            userQuery, schemaDescription, previousContext, modelName);
+                            userQuery, schemaDescription, previousContext, knowledgePrompt, modelName);
                     validateReadOnly(sql);
                     logger.info("Iteration {} query (attempt {}): {}", iteration + 1, retry + 1, sql);
 
@@ -338,7 +340,8 @@ public class DatabaseStep extends BaseStep {
      * and results from any previous iterations.
      */
     private String generateIterativeQuery(String userQuery, String schemaDescription,
-                                           String previousContext, String modelName) {
+                                           String previousContext, String knowledgePrompt,
+                                           String modelName) {
         String systemPrompt = "You are an expert SQL query generator. Generate a single read-only SQL SELECT statement.\n\n"
                 + "Rules:\n"
                 + "- Output ONLY the SELECT statement, nothing else\n"
@@ -351,6 +354,8 @@ public class DatabaseStep extends BaseStep {
                 + "- NEVER generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or EXEC statements\n"
                 + "- Make sure column and table names exactly match the schema provided\n"
                 + "- Use the foreign key relationships in the schema to construct correct JOINs\n\n"
+                + (knowledgePrompt != null && !knowledgePrompt.isBlank()
+                        ? "Additional Instructions:\n" + knowledgePrompt + "\n\n" : "")
                 + "Database Schema (with relationships):\n" + schemaDescription;
 
         StringBuilder userPrompt = new StringBuilder();
@@ -538,7 +543,8 @@ public class DatabaseStep extends BaseStep {
      * database schema description, and available context variables.
      */
     private String generateQuery(String userQuery, String schemaDescription,
-                                  String contextVariables, String modelName) {
+                                  String contextVariables, String knowledgePrompt,
+                                  String modelName) {
         String systemPrompt = "You are an expert SQL query generator. Generate a single read-only SQL SELECT statement.\n\n"
                 + "Rules:\n"
                 + "- Output ONLY the SELECT statement, nothing else\n"
@@ -550,6 +556,8 @@ public class DatabaseStep extends BaseStep {
                 + "- Only include columns relevant to the question\n"
                 + "- NEVER generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or EXEC statements\n"
                 + "- Make sure column and table names exactly match the schema provided\n\n"
+                + (knowledgePrompt != null && !knowledgePrompt.isBlank()
+                        ? "Additional Instructions:\n" + knowledgePrompt + "\n\n" : "")
                 + "Database Schema:\n" + schemaDescription;
 
         String userPrompt = "Question: " + userQuery;
