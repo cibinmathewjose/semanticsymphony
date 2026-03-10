@@ -4,9 +4,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.core.env.Environment;
 
+/** Configuration properties for Azure OpenAI connections. */
 @ConfigurationProperties(AzureOpenAIConnectionProperties.CONFIG_PREFIX)
 public class AzureOpenAIConnectionProperties {
 
+    /** Configuration prefix for Azure OpenAI properties. */
     public static final String CONFIG_PREFIX = "client.azureopenai";
     
      private String library;
@@ -178,10 +180,12 @@ public class AzureOpenAIConnectionProperties {
         this.maxParallel = maxParallel;
     }
 
+    /** @param maxProcessingTime the maximum processing time in seconds */
     public void setMaxProcessingTime(int maxProcessingTime) {
         this.maxProcessingTime = maxProcessingTime;
     }
 
+    /** @return the maximum processing time in seconds */
     public int getMaxProcessingTime() {
         return maxProcessingTime;
     }
@@ -257,6 +261,12 @@ public class AzureOpenAIConnectionProperties {
         }
         return temperature;     
     }
+   /**
+    * Returns the endpoint for the given model name, falling back to the default endpoint.
+    *
+    * @param modelName the model name
+    * @return the endpoint URL
+    */
    public String getEndpoint(String modelName) {
         String url = null;
         if (modelName != null && !modelName.isBlank() && environment != null) {
@@ -267,6 +277,12 @@ public class AzureOpenAIConnectionProperties {
         }
         return url;     
     }
+    /**
+     * Returns the provider for the given model name.
+     *
+     * @param modelName the model name
+     * @return the provider name, or null if not configured
+     */
     public String getProvider(String modelName) {
         String provider = null;
         if (modelName != null && !modelName.isBlank() && environment != null) {

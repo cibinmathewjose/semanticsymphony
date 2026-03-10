@@ -29,11 +29,49 @@ public interface IUserSessionBase {
      */
     UserSession save(UserSession session);
 
+    /**
+     * Finds a user session by ID.
+     *
+     * @param id the session ID
+     * @return the user session
+     */
     UserSession findById(String id);
 
+    /**
+     * Gets the last request ID for a session.
+     *
+     * @param sessionId the session ID
+     * @return the last request ID
+     */
     String getLastRequestId(String sessionId);
+    /**
+     * Gets all step details for a request.
+     *
+     * @param id the request ID
+     * @return the list of step details
+     */
     List<UserSessionStepDetails> getRequestDetails(String id);
+    /**
+     * Gets step details for a specific step.
+     *
+     * @param id the request ID
+     * @param stepName the step name
+     * @return the step details
+     */
     UserSessionStepDetails getRequestDetails(String id,String stepName);
+    /**
+     * Saves step details for a request.
+     *
+     * @param id the request ID
+     * @param stepName the step name
+     * @param data the data to save
+     */
     void saveRequestDetails(String id,String stepName,String data);
+    /**
+     * Gets the follow-up details for a request.
+     *
+     * @param id the request ID
+     * @return the follow-up step details
+     */
     UserSessionStepDetails getFollowUpDetails(String id);
 }

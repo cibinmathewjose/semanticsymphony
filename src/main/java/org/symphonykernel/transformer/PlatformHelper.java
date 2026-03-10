@@ -18,7 +18,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-@Service
 /**
  * PlatformHelper is a service class that provides utility methods for transforming and processing JSON data.
  * <p>
@@ -29,6 +28,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * @version 1.0
  * @since 1.0
  */
+@Service
 public class PlatformHelper {
 
 

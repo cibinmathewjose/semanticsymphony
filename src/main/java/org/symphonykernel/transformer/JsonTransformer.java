@@ -25,7 +25,9 @@ import com.fasterxml.jackson.databind.node.TextNode;
  */
 public class JsonTransformer {
 
+    /** Prefix for JSON data strings. */
     public static final String JSON = "JSON:";
+    /** Prefix for LLM-optimized compressed JSON strings. */
     public static final String LLM_OPTIMIZED_DATA = "COMPRESSED-JSON:";
     private final ObjectMapper mapper = new ObjectMapper();
     private static final ObjectMapper sharedMapper = new ObjectMapper();
@@ -307,6 +309,12 @@ public class JsonTransformer {
         return inputNode;
     }
     
+    /**
+     * Compresses a JSON tree into a compact schema+data format.
+     *
+     * @param root the JSON tree to compress
+     * @return the compressed string representation
+     */
     public String compress(JsonNode root)  {
         if (root.isArray() && !root.isEmpty() && root.get(0).isObject()) {
             return compressArrayRoot(root);
@@ -503,6 +511,12 @@ public class JsonTransformer {
         return base.isEmpty() ? key : base + "." + key;
     }
 
+    /**
+     * Decompresses a schema+data string back into a JsonNode.
+     *
+     * @param compressed the compressed string
+     * @return the reconstructed JSON tree
+     */
     public JsonNode decompress(String compressed)  {
         String[] parts = compressed.split("\n\nDATA:\n", 2);
         String schemaPart = parts[0].replace("SCHEMA:\n", "");
@@ -734,6 +748,14 @@ public class JsonTransformer {
                 array.add(item);
         }
     }
+     /**
+      * Splits a JSON array string into chunks not exceeding the given length.
+      *
+      * @param jsonArrayString the JSON array string
+      * @param maxLength the maximum length per chunk
+      * @return a list of JSON array chunks
+      * @throws Exception if parsing fails
+      */
      public  List<String> chunkJsonArray( String jsonArrayString,  int maxLength) throws Exception {
 
         List<String> chunks = new ArrayList<>();
@@ -802,6 +824,14 @@ public class JsonTransformer {
     }
 
 
+    /**
+     * Splits a compressed JSON string into chunks not exceeding the given length.
+     *
+     * @param compressedJson the compressed JSON string
+     * @param maxLength the maximum length per chunk
+     * @return a list of compressed chunks
+     * @throws Exception if parsing fails
+     */
     public List<String> chunkCompressedJsonArray(String compressedJson, int maxLength) throws Exception {
         List<String> chunks = new ArrayList<>();
         if (compressedJson == null || compressedJson.isBlank()) {

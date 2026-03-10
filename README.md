@@ -1,6 +1,8 @@
 # Developer Documentation Index
 
-Welcome to the **Semantic Kernel Spring Symphony** Developer Documentation. This comprehensive guide provides everything you need to understand, develop, and integrate with the Semantic Kernel Spring Symphony framework.
+Welcome to the **Symphony AI** Developer Documentation. This comprehensive guide provides everything you need to understand, develop, and integrate with the Symphony AI framework.
+
+> **Symphony AI** (`org.symphonykernel:symphony-ai:0.1.0`) is available on [Maven Central](https://central.sonatype.com/artifact/org.symphonykernel/symphony-ai).
 
 ## 📚 Documentation Structure
 
@@ -11,7 +13,8 @@ The complete guide covering:
 - Core components and classes
 - Workflow and execution flow
 - Configuration management
-- Step types and implementations
+- Step types and implementations (REST, SQL, GraphQL, Agentic, Database, Email, Document, WebSearch, HumanInLoop, and more)
+- MCP (Model Context Protocol) integration
 - Plugin system
 - Development guidelines
 - API reference
@@ -25,6 +28,8 @@ In-depth coverage of:
 - Layered architecture explanation
 - Reactive architecture approach
 - Flow-based programming model
+- Agentic (ReAct) architecture
+- MCP (Model Context Protocol) architecture
 - Component interaction diagrams
 - Data flow visualization
 - Configuration management patterns
@@ -152,12 +157,23 @@ Solutions for common issues:
 - **GraphQLStep**: [GraphQLStep](DEVELOPER_DOCUMENTATION.md#3-graphqlstep)
 - **PluginStep**: [PluginStep](DEVELOPER_DOCUMENTATION.md#4-pluginstep)
 - **VelocityStep**: [VelocityStep](DEVELOPER_DOCUMENTATION.md#5-velocitystep)
+- **AgenticStep**: [AgenticStep](DEVELOPER_DOCUMENTATION.md#6-agenticstep)
+- **DatabaseStep**: [DatabaseStep](DEVELOPER_DOCUMENTATION.md#7-databasestyle)
+- **EmailStep**: [EmailStep](DEVELOPER_DOCUMENTATION.md#8-emailstep)
+- **DocumentStep**: [DocumentStep](DEVELOPER_DOCUMENTATION.md#9-documentstep)
+- **WebSearchStep**: [WebSearchStep](DEVELOPER_DOCUMENTATION.md#10-websearchstep)
+- **HumanInLoopStep**: [HumanInLoopStep](DEVELOPER_DOCUMENTATION.md#11-humaninloopstep)
+- **AuthenticationStep**: [AuthenticationStep](DEVELOPER_DOCUMENTATION.md#12-authenticationstep)
 
 ### Integration
 - **REST API Integration**: [REST API Integration](API_USAGE_GUIDE.md#example-2-rest-api-integration)
 - **GraphQL Integration**: [GraphQL Query](API_USAGE_GUIDE.md#example-3-graphql-query)
 - **Database Operations**: [Database Operations](API_USAGE_GUIDE.md#example-4-database-operations)
 - **Plugin Integration**: [Plugin Integration](API_USAGE_GUIDE.md#example-5-plugin-integration)
+- **MCP Integration**: [MCP Configuration](API_USAGE_GUIDE.md#mcp-integration)
+- **Agentic Workflows**: [Agentic Step](API_USAGE_GUIDE.md#agentic-workflows)
+- **Email Notifications**: [Email Step](API_USAGE_GUIDE.md#email-step)
+- **Document Processing**: [Document Step](API_USAGE_GUIDE.md#document-processing)
 
 ### Configuration
 - **Azure OpenAI**: [Configuration Examples](API_USAGE_GUIDE.md#example-1-azure-openai-configuration)
@@ -234,10 +250,17 @@ Request → Agent → KnowledgeGraphBuilder → ExecutionContext
 
 ### Key Features
 - **Multi-Step Workflows**: Chain multiple operations
-- **Multiple Data Sources**: SQL, REST, GraphQL
-- **AI Integration**: Azure OpenAI, Semantic Kernel
+- **Multiple Data Sources**: SQL, REST, GraphQL, Documents
+- **AI Integration**: Azure OpenAI, Anthropic (via Spring AI)
+- **Agentic AI**: ReAct-style autonomous planning and execution
+- **MCP Protocol**: Expose tools and consume external MCP servers
 - **Reactive Streams**: Non-blocking async processing
 - **Plugin System**: Extensible custom operations
+- **Email Notifications**: SMTP-based email with templates
+- **Document Processing**: PDF, DOCX, Excel, images
+- **Web Search**: Bing, Google, SerpAPI integration
+- **Human-in-the-Loop**: Pause workflows for user input
+- **Database Intelligence**: Natural language to SQL
 - **Caching**: Redis-based response caching
 - **Session Management**: Track user sessions
 
@@ -258,14 +281,16 @@ All documentation follows these standards:
 ## 🔗 Related Resources
 
 ### Official Projects
-- [Semantic Kernel (Microsoft)](https://github.com/microsoft/semantic-kernel)
+- [Spring AI](https://docs.spring.io/spring-ai/reference/)
 - [Spring Boot (Pivotal)](https://spring.io/projects/spring-boot)
 - [Project Reactor](https://projectreactor.io/)
+- [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
 
 ### External Documentation
-- [Microsoft Semantic Kernel Docs](https://learn.microsoft.com/en-us/semantic-kernel/)
+- [Spring AI Reference Guide](https://docs.spring.io/spring-ai/reference/)
 - [Spring Boot Reference Guide](https://docs.spring.io/spring-boot/docs/current/reference/html/)
 - [Azure OpenAI Service](https://learn.microsoft.com/en-us/azure/ai-services/openai/)
+- [MCP Specification](https://spec.modelcontextprotocol.io/)
 
 ---
 

@@ -1,6 +1,6 @@
 # Architecture and Design Patterns Guide
 
-## Design Patterns Used in Semantic Kernel Spring Symphony
+## Design Patterns Used in Symphony AI
 
 ### 1. Strategy Pattern
 
@@ -8,7 +8,7 @@ The framework uses the Strategy pattern extensively for different step execution
 
 **Implementation**:
 - `IStep` interface defines the contract
-- Each step type (REST, SQL, GraphQL, etc.) implements this interface
+- Each step type (REST, SQL, GraphQL, Agentic, Database, Email, Document, WebSearch, etc.) implements this interface
 - Runtime selection based on configuration
 
 ```java
@@ -26,6 +26,15 @@ public class SqlStep extends BaseStep { ... }
 
 @Service("GraphQLStep")
 public class GraphQLStep extends BaseStep { ... }
+
+@Service("AgenticStep")
+public class AgenticStep extends BaseStep { ... }
+
+@Service("DatabaseStep")
+public class DatabaseStep extends BaseStep { ... }
+
+@Service("EmailStep")
+public class EmailStep extends BaseStep { ... }
 ```
 
 **Benefits**:
@@ -240,6 +249,72 @@ Workflows defined as JSON flows with multiple steps:
 }
 ```
 
+### 5. Agentic Architecture (ReAct Pattern)
+
+The `AgenticStep` and `AgenticPlanner` implement the ReAct (Reason + Act) pattern for autonomous AI-driven workflows:
+
+```
+User Query
+    ↓
+┌───────────────────────────────────┐
+│  LLM Planning (Reason)          │
+│  - Analyze query                │
+│  - Select tools from registry   │
+│  - Generate action plan          │
+└─────────────────┬─────────────────┘
+                  ↓
+┌───────────────────────────────────┐
+│  Tool Execution (Act)           │
+│  - Execute Symphony steps       │
+│  - Call external MCP tools      │
+│  - Collect results              │
+└─────────────────┬─────────────────┘
+                  ↓
+┌───────────────────────────────────┐
+│  Observe & Iterate              │
+│  - Evaluate results             │
+│  - Plan next action or finish   │
+│  - Max iterations: configurable │
+└─────────────────┬─────────────────┘
+                  ↓
+            Final Answer
+```
+
+**Key Components**:
+- `AgenticPlanner`: Coordinates reasoning and action loops
+- `AgentPlan`: LLM-generated plan with actions or final answer
+- `AgentAction`: Individual action with tool name and parameters
+- `MCPToolRegistry`: Central tool registry (Symphony + external MCP tools)
+
+### 6. MCP (Model Context Protocol) Architecture
+
+Symphony AI implements both MCP server and client roles:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  External MCP Clients (Claude Desktop, Cursor, etc.)    │
+└─────────────────────────┬─────────────────────────────────┘
+                          │ SSE Transport
+                          ▼
+┌───────────────────────────────────────────────────────────┐
+│                    Symphony AI                           │
+│  ┌───────────────────┐  ┌──────────────────────────────┐  │
+│  │   MCP Server      │  │   MCP Client                   │  │
+│  │   (Expose tools)  │  │   (Consume external tools)     │  │
+│  └───────────────────┘  └─────────────┬────────────────┘  │
+│                              │                              │
+│                     ┌───────┴─────────────────┐          │
+│                     │  MCPToolRegistry        │          │
+│                     │  (Symphony + External)  │          │
+│                     └─────────────────────────┘          │
+└───────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌───────────────────────────────────────────────────────────┐
+│  External MCP Servers (weather, filesystem, db, etc.)    │
+└───────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## Component Interaction Diagrams
@@ -398,8 +473,11 @@ Spring Profile-Specific Properties
 - `AzureOpenAiConfig`: AI service configuration
 - `VelocityEngineConfig`: Template engine setup
 - `AzureAISearchConnectionProperties`: Vector search
-- `DBConnectionProperties`: Database access
+- `DBConnectionProperties`: Multi-database access
 - `RedisConnectionProperties`: Cache setup
+- `SymphonyConfig`: Agent mode configuration
+- `MCPServerConfig`: MCP server setup
+- `MCPClientProperties`: MCP client configuration
 
 ---
 
@@ -497,7 +575,7 @@ if (request == null || request.getQuery().isEmpty()) {
 
 ```properties
 # Use environment variables, not hardcoding
-spring.ai.azure.openai.api-key=${AZURE_OPENAI_API_KEY}
+client.symphonykernel.azureopenaikey=${AZURE_OPENAI_API_KEY}
 ```
 
 ### 3. SQL Injection Prevention
@@ -654,10 +732,10 @@ spring.task.execution.pool.max-size=20
 
 - **Java**: 17+
 - **Spring Boot**: 3.4.2+
-- **Semantic Kernel**: 1.4.4+
+- **Spring AI**: 1.1.2+
 - **Azure SDK**: Latest stable
 
 ---
 
 **Document Version**: 1.0  
-**Last Updated**: February 2026
+**Last Updated**: March 2026

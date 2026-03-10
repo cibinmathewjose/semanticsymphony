@@ -6,6 +6,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 import org.slf4j.Logger;
@@ -18,6 +20,10 @@ import org.symphonykernel.transformer.JsonTransformer;
 
 
 
+/**
+ * Abstract base class for AI client implementations providing LLM execution,
+ * prompt splitting, and parallel processing capabilities.
+ */
 public abstract class AIClientBase {
 
     private static final Logger logger = LoggerFactory.getLogger(AIClientBase.class);
@@ -29,12 +35,19 @@ public abstract class AIClientBase {
     private static final String CHUNK_PROMPT = "<!ChunksPrompt!>";
     
    
+   /** JSON transformer utility. */
    JsonTransformer jsonTransformer;
+   /** Azure OpenAI connection properties. */
    protected AzureOpenAIConnectionProperties conProperties;
 
     private static int MAX_PARALLEL_EXECUTIONS = 5; // Configurable limit for parallel executions
     private final ExecutorService executorService;
 
+    /**
+     * Constructs an AIClientBase with the given connection properties.
+     *
+     * @param connectionProperties the Azure OpenAI connection settings
+     */
     protected AIClientBase(AzureOpenAIConnectionProperties connectionProperties) {
         conProperties=connectionProperties;
 
@@ -50,6 +63,13 @@ public abstract class AIClientBase {
         jsonTransformer = new JsonTransformer();
     }
 
+    /**
+     * Executes the given LLM request.
+     *
+     * @param <R> the return type
+     * @param request the LLM request to execute
+     * @return the execution result
+     */
     public abstract <R> R execute(LLMRequest request);
 
     /**
@@ -142,7 +162,19 @@ public abstract class AIClientBase {
             }, executorService));
         }
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .get(5, TimeUnit.MINUTES);
+        } catch (TimeoutException e) {
+            logger.error("Parallel prompt execution timed out after 5 minutes", e);
+            throw new RuntimeException("Parallel prompt execution timed out", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Parallel prompt execution was interrupted", e);
+        } catch (ExecutionException e) {
+            logger.error("Error during parallel prompt execution", e);
+            throw new RuntimeException("Error during parallel prompt execution", e);
+        }
         return futures;
     }
 
@@ -301,7 +333,19 @@ public abstract class AIClientBase {
             }, executorService));
 
         }
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .get(5, TimeUnit.MINUTES);
+        } catch (TimeoutException e) {
+            logger.error("Parallel chunk execution timed out after 5 minutes", e);
+            throw new RuntimeException("Parallel chunk execution timed out", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Parallel chunk execution was interrupted", e);
+        } catch (ExecutionException e) {
+            logger.error("Error during parallel chunk execution", e);
+            throw new RuntimeException("Error during parallel chunk execution", e);
+        }
         int c = 1;
         StringBuilder finalResponse = new StringBuilder();
         for (CompletableFuture<R> future : futures) {

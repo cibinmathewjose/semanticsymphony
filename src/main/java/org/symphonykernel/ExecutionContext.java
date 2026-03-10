@@ -8,16 +8,16 @@
  */
 package org.symphonykernel;
 
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.symphonykernel.config.Constants;
 import org.symphonykernel.core.IHttpHeaderProvider;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.microsoft.semantickernel.services.chatcompletion.ChatHistory;
 
 /**
  * Represents the execution context for operations.
@@ -38,12 +38,24 @@ public class ExecutionContext {
 
     /** The name of the execution context. */
     String name;
-      
+
+    String finalPrompt;
+
+    String tokenCount;
+
+    /** The model name for LLM execution. */
     String modelName;
+    /** @return the model name */
     public String getModelName() {
         return modelName;
     }
 
+    /**
+     * Sets the model name.
+     *
+     * @param modelName the model name
+     * @return this context for chaining
+     */
     public ExecutionContext setModelName(String modelName) {
         this.modelName = modelName;
         return this;
@@ -56,7 +68,7 @@ public class ExecutionContext {
     boolean convert;
 
     /** The chat history associated with the execution context. */
-    ChatHistory chatHistory;
+    List<Message> chatHistory;
 
     /** The user session information. */
     UserSession info;
@@ -101,7 +113,7 @@ public class ExecutionContext {
         setHttpHeaderProvider(ctx.getHttpHeaderProvider());
         setUsersQuery(ctx.getUsersQuery());
         setChatHistory(ctx.getChatHistory());
-        resolvedValues=ctx.getResolvedValues();
+        resolvedValues=new java.util.HashMap<>(ctx.getResolvedValues());
         if(ctx.getCurrentFlowItem()!=null)
         	setCurrentFlowItem(ctx.getCurrentFlowItem().copy());
         setUserSession(ctx.getUserSession());
@@ -242,7 +254,7 @@ public class ExecutionContext {
      * 
      * @return the chat history
      */
-    public ChatHistory getChatHistory() {
+    public List<Message> getChatHistory() {
         return chatHistory;
     }
 
@@ -421,7 +433,7 @@ public class ExecutionContext {
      * @param chatHistory the chat history to set
      * @return the updated execution context
      */
-    public ExecutionContext setChatHistory(ChatHistory chatHistory) {
+    public ExecutionContext setChatHistory(List<Message> chatHistory) {
         this.chatHistory = chatHistory;
         return this;
     }
@@ -512,6 +524,23 @@ public class ExecutionContext {
         if (value != null && key != null && !key.isEmpty())
             resolvedValues.put(key, com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.numberNode(value.doubleValue()));
     }
+
+    public String getFinalPrompt() {
+        return finalPrompt;
+    }
+
+    public void setFinalPrompt(String finalPrompt) {
+        this.finalPrompt = finalPrompt;
+    }
+
+    public String getTokenCount() {
+        return tokenCount;
+    }
+
+    public void setTokenCount(String tokenCount) {
+        this.tokenCount = tokenCount;
+    }
+    
 }
 
 

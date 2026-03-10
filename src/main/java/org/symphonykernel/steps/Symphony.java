@@ -10,7 +10,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
@@ -18,9 +17,10 @@ import org.symphonykernel.FlowItem;
 import org.symphonykernel.FlowJson;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.LLMRequest;
-import org.symphonykernel.QueryType;
+import org.symphonykernel.ai.KnowledgeExecuterFactory;
 import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IPluginLoader;
+import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
@@ -52,33 +52,17 @@ public class Symphony extends BaseStep {
     IPluginLoader pluginLoader;
     
     @Autowired
-    @Qualifier("GraphQLStep")
-    GraphQLStep graphQLHelper;
-        
-    @Autowired
     TemplateResolver templateResolver;
     
-    @Autowired
-    @Qualifier("RESTStep")
-    RESTStep restHelper;
-    
-    @Autowired
-    SqlStep sqlAssistant;
 
     @Autowired
     PlatformHelper platformHelper;
 
     @Autowired
-    PluginStep pluginStep;
-    @Autowired
-    ToolStep toolStep;
-    @Autowired
-    VelocityStep velocityTemplateEngine;
+    private KnowledgeExecuterFactory knowledgeExecuterFactory;
     
     @Autowired
     IAIClient azureOpenAIHelper;
-
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
     
 
     @Override
@@ -86,13 +70,13 @@ public class Symphony extends BaseStep {
         JsonNode input = ctx.getVariables();
         Knowledge _symphony = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
-        logger.info("Executing Symphony " + _symphony.getName() + " with " + input);
+        logger.info("Executing Symphony {} with {}", _symphony.getName(), input);
         ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
         resolvedValues.put("input", input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
             processFlowItemsByOrder(parsed, ctx, resolvedValues)
-            .doOnNext(item -> logger.info("Processing item: " + item))
+            .doOnNext(item -> logger.info("Processing item: {}", item))
             .onErrorContinue((e, o) -> logger.error("Error in processFlowItemsByOrder: {}", e.getMessage()))
             .then()
             .block();
@@ -101,7 +85,7 @@ public class Symphony extends BaseStep {
         } catch (JsonProcessingException e) {
             handleJsonProcessingException(e, jsonArray);
         }
-        logger.info("Data " + jsonArray); // Consider removing if sensitive
+        logger.info("Data {}", jsonArray); // Consider removing if sensitive
         ChatResponse a = new ChatResponse();
         a.setData(jsonArray);
         saveStepData(ctx, jsonArray);
@@ -114,11 +98,13 @@ public class Symphony extends BaseStep {
         logger.info("Executing Symphony {} with {}", _symphony.getName(), ctx.getVariables());
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
+            // If Result references a flow item, defer its processing to the final response phase
+            String resultKey = parsed.Result;
             StringBuilder responseAccumulator = new StringBuilder();
             return Flux.just("Thinking...")
                 .concatWith(
                     // Stream progress items immediately as they arrive
-                    processFlowItemsByOrder(parsed, ctx, resolvedValues)
+                    processFlowItemsByOrder(parsed, ctx, resolvedValues, resultKey)
                         .onErrorResume(e -> {
                             logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
                             return Flux.just("Error: " + e.getMessage());
@@ -147,15 +133,21 @@ public class Symphony extends BaseStep {
 
     // ==================== FLOW PROCESSING ====================
     private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
-        // 1. Group items as before
+        return processFlowItemsByOrder(parsed, ctx, resolvedValues, null);
+    }
+
+    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues, String skipResultKey) {
         Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
         for (FlowItem item : parsed.Flow) {
+            if (skipResultKey != null && item.getKey() != null && item.getKey().equalsIgnoreCase(skipResultKey)) {
+                logger.info("Deferring flow item '{}' to final response (matches Result field)", item.getKey());
+                continue;
+            }
             Integer order = item.getOrder() != null ? item.getOrder() : 0;
             flowItemsByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(item);
         }
 
-        // 2. Convert the Map entries into a Flux to process each "Order Group" sequentially
-        return  Flux.fromIterable(flowItemsByOrder.entrySet())
+        return Flux.fromIterable(flowItemsByOrder.entrySet())
             .concatMap(entry -> {
                 Integer order = entry.getKey();
                 List<FlowItem> items = entry.getValue();
@@ -167,7 +159,7 @@ public class Symphony extends BaseStep {
                 } else {
                     // PARALLEL PROCESSING (for items within the same order group)
                     return Flux.fromIterable(items)
-                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues));
+                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues), 8);
                 }
             });
     }
@@ -176,14 +168,14 @@ public class Symphony extends BaseStep {
 
         return Flux.defer(() -> {
             // 1. Start with the status message
-            return Flux.just(knowledgeBase.getKnowledgeDescriptions(itemName) +"(Step:"+itemName +")")
+            return Flux.just(knowledgeBase.getKnowledgeDescriptions(itemName) +"(Step-:"+itemName +")")
                 .concatWith(
                     // 2. Perform work and directly emit COMPLETED as the Mono's value
                     Mono.fromCallable(() -> {
                         logger.info("Actually starting work for: {}", itemName);
                         long startTime = System.currentTimeMillis();
                         processFlowItem(item, ctx, resolvedValues);                        
-                        return "Step:" + itemName +" completed in " + (System.currentTimeMillis() - startTime) + " ms";
+                        return "Step-:" + itemName +"completed in " + (System.currentTimeMillis() - startTime) + " ms";
                     })
                     .subscribeOn(Schedulers.boundedElastic()) // Offload blocking I/O
                 )
@@ -321,7 +313,7 @@ public class Symphony extends BaseStep {
             }
             String result = null;
             if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
-                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
+                (userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0)) {
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
                     result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
                 } else {
@@ -344,7 +336,7 @@ public class Symphony extends BaseStep {
             jsonArray.add(objectNode);
         }
     }
-    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, Map<String, JsonNode> resolvedValues) {
+    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, ConcurrentHashMap<String, JsonNode> resolvedValues) {
         if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
             logger.info("Processing final response");
             String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
@@ -358,7 +350,7 @@ public class Symphony extends BaseStep {
             }
            
             if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
-                userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) {
+                (userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0)) {
                 Flux<String> generatingMsg = Flux.just("Generating output:");
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
                     return generatingMsg.concatWith(
@@ -375,8 +367,35 @@ public class Symphony extends BaseStep {
                 return Flux.just(result);
             }
         } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
+            // Find the deferred flow item matching Result and stream its execution
+            FlowItem resultItem = null;
+            for (FlowItem fi : parsed.Flow) {
+                if (fi.getKey() != null && fi.getKey().equalsIgnoreCase(parsed.Result)) {
+                    resultItem = fi;
+                    break;
+                }
+            }
+            if (resultItem != null) {
+                Knowledge kb = knowledgeBase.GetByName(resultItem.getName());
+                if (kb != null) {
+                    JsonNode resolverPayload = resolvePayload(resultItem, resolvedValues);
+                    if (resolverPayload != null) {
+                        return Flux.just("Generating output:")
+                            .concatWith(getResultsStream(ctx, kb, resultItem, resolverPayload));
+                    }
+                }
+                // Fallback: execute blocking if payload/kb is null
+                final FlowItem deferredItem = resultItem;
+                return Flux.just("Generating output:")
+                    .concatWith(Mono.fromCallable(() -> {
+                        processFlowItem(deferredItem, ctx, resolvedValues);
+                        JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
+                        return resultNode.toString();
+                    }).subscribeOn(Schedulers.boundedElastic()).flux());
+            }
+            // Result key doesn't match any flow item return already-resolved value
             JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
-            return Flux.just(resultNode.toString());
+            return Flux.just("Generating output:" + resultNode.toString());
         } else {
             ObjectNode objectNode = objectMapper.createObjectNode();
             for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
@@ -393,14 +412,14 @@ public class Symphony extends BaseStep {
         {           
             if(item.isRequired())
             {                    
-                logger.error("No data found for step: " + item.getKey());
+                logger.error("No data found for step: {}", item.getKey());
                 throw new RuntimeException("No data found for step: " + item.getKey());
             }
             else
             {
                 resultNode= objectMapper.createObjectNode();
                 ((ObjectNode) resultNode).put(item.getKey(), "No data found" );
-                logger.warn("No data found for step: " + item.getKey());
+                logger.warn("No data found for step: {}", item.getKey());
             }          
         }        
         else if(item.getJsonPath()!=null&&!item.getJsonPath().isEmpty())
@@ -416,22 +435,13 @@ public class Symphony extends BaseStep {
         resolvedValues.put(item.getKey().toLowerCase(), resultNode);
     }
     private JsonNode getResult(Knowledge kb, ExecutionContext newCtx) {
-        JsonNode result = null;
-        if (kb.getType() == QueryType.SQL) {
-            result = sqlAssistant.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.GRAPHQL) {
-            result = graphQLHelper.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.REST) {
-            result = restHelper.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.SYMPHNOY) { // fixed typo
-            result = executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.PLUGIN) {
-            result = pluginStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.TOOL) {
-            result = toolStep.executeQueryByName(newCtx);
-        } else if (kb.getType() == QueryType.VELOCITY) {
-            result = velocityTemplateEngine.executeQueryByName(newCtx);
+       
+        IStep step = knowledgeExecuterFactory.getExecuter(kb);
+        if (step == null) {
+            logger.error("No executer found for knowledge type: {}", kb.getType());
+            throw new RuntimeException("No executer found for knowledge type: " + kb.getType());
         }
+        JsonNode result = step.executeQueryByName(newCtx);       
         return result;
     }   
 
@@ -487,13 +497,33 @@ public class Symphony extends BaseStep {
         long startTime = System.currentTimeMillis();
         JsonNode result;
         ExecutionContext newCtx = new ExecutionContext(ctx);
-        ctx.setCurrentFlowItem(item);
+        newCtx.setCurrentFlowItem(item);
         newCtx.setName(kb.getName());
         newCtx.setVariables(idNode);
         newCtx.setConvert(true);
         result = getResult(kb, newCtx);
+        // Propagate header provider back so auth tokens are available to subsequent steps
+        if (newCtx.getHttpHeaderProvider() != null) {
+            ctx.setHttpHeaderProvider(newCtx.getHttpHeaderProvider());
+        }
         long endTime = System.currentTimeMillis();
         logger.info("Processing time for {} = {} ms", kb.getName(), (endTime - startTime));
         return result;
     }
+     public Flux<String> getResultsStream(ExecutionContext ctx, Knowledge kb,FlowItem item, JsonNode idNode){
+
+        ExecutionContext newCtx = new ExecutionContext(ctx);
+        newCtx.setCurrentFlowItem(item);
+        newCtx.setName(kb.getName());
+        newCtx.setVariables(idNode);
+        newCtx.setConvert(true);
+        IStep step = knowledgeExecuterFactory.getExecuter(kb);
+        if (step == null) {
+            logger.error("No executer found for knowledge type: {}", kb.getType());
+            throw new RuntimeException("No executer found for knowledge type: " + kb.getType());
+        }
+        return step.streamQueryByName(newCtx);  
+       
+     }
+    
 }

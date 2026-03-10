@@ -187,9 +187,15 @@ public class FlowItem {
         this.condition = condition;
     }
 
+    /** @return the JSON path expression */
     public String getJsonPath() {
         return jsonPath;
     }
+    /**
+     * Creates a shallow copy of this FlowItem.
+     *
+     * @return a new FlowItem with the same field values
+     */
     public FlowItem copy() {
 		FlowItem copy = new FlowItem();
 		copy.name = this.name;

@@ -42,16 +42,25 @@ public class FileContentProvider {
 
 	private static final Logger logger = LoggerFactory.getLogger(FileContentProvider.class);
 
+	/** Map of prompt key to file path. */
 	private Map<String, String> promptPathsMap = new HashMap<>();
+	/** Map of prompt key to loaded content. */
 	protected Map<String, String> promptsContentMap = new HashMap<>();
 
+	/** Prompt key for matching knowledge. */
 	protected static final String MATCH_KNOWLEDGE_PROMPT = "matchKnowledgePrompt";
+	/** Prompt key for parameter parsing. */
 	protected static final String PARAM_PARSER_PROMPT = "paramParserPrompt";
+	/** Prompt key for matching select queries. */
 	protected static final String MATCH_SELECT_QUERY_PROMPT = "matchSelectQueryPrompt";
+	/** Prompt key for getting queries. */
 	protected static final String GET_QUERY_PROMPT = "getQueryPrompt";
+	/** Prompt key for matching parameters. */
 	protected static final String MATCH_PARAMS_PROMPT = "matchParamsPrompt";
+	/** Prompt key for follow-up prompts. */
 	protected static final String FOLLOWUP_PROMPT = "followupPrompt";
 
+	/** Ordered list of all prompt keys. */
 	protected static List<String> promptKeys = List.of(
 		MATCH_KNOWLEDGE_PROMPT,
 		PARAM_PARSER_PROMPT,
@@ -62,18 +71,22 @@ public class FileContentProvider {
 	);
 
 	
+	/** @return the prompt paths map */
 	public Map<String, String> getPromptPathsMap() {
 	    return promptPathsMap;
 	}
 
+	/** @param promptPathsMap the prompt paths map to set */
 	public void setPromptPathsMap(Map<String, String> promptPathsMap) {
 	    this.promptPathsMap = promptPathsMap;
 	}
 
+	/** @return the prompts content map */
 	public Map<String, String> getPromptsContentMap() {
 	    return promptsContentMap;
 	}
 
+	/** @param promptsContentMap the prompts content map to set */
 	public void setPromptsContentMap(Map<String, String> promptsContentMap) {
 	    this.promptsContentMap = promptsContentMap;
 	}
@@ -120,32 +133,76 @@ public class FileContentProvider {
          }
     }
 		
+	/**
+	 * Prepares the match-params prompt with the given values.
+	 *
+	 * @param paramDef the parameter definition
+	 * @param dataset the dataset
+	 * @param question the user question
+	 * @return the prepared prompt
+	 */
 	public String prepareMatchParamsPrompt(String paramDef,String dataset,String question) {
 		return promptsContentMap.get(MATCH_PARAMS_PROMPT).replace(PARAM_DEF, paramDef)
                             .replace(DATA_SET,dataset)
                             .replace(QUESTION, question);
 	}
+	/**
+	 * Prepares the match-knowledge prompt with the given values.
+	 *
+	 * @param jsonString the knowledge descriptions JSON
+	 * @param question the user question
+	 * @param context the context variables
+	 * @return the prepared prompt
+	 */
 	public String prepareMatchKnowledgePrompt(String jsonString,String question, String context) {
 		return promptsContentMap.get(MATCH_KNOWLEDGE_PROMPT).replace(DATA_SET, jsonString)
             .replace(QUESTION, question)
 			.replace(CTX_VAR, context);
 	}
 	
+	/**
+	 * Prepares the param-parser prompt.
+	 *
+	 * @param jsonString the dataset JSON
+	 * @param question the user question
+	 * @return the prepared prompt
+	 */
 	public String prepareParamParserPrompt(String jsonString,String question) {
 		return  promptsContentMap.get(PARAM_PARSER_PROMPT) 
                 .replace(DATA_SET, jsonString)
                  .replace(QUESTION, question);
 	}
+	/**
+	 * Prepares the match-select-query prompt.
+	 *
+	 * @param jsonString the dataset JSON
+	 * @param question the user question
+	 * @return the prepared prompt
+	 */
 	public String prepareMatchSelectQueryPrompt(String jsonString,String question) {
 		return  promptsContentMap.get(MATCH_SELECT_QUERY_PROMPT) 
 		.replace(DATA_SET, jsonString)
 		 .replace(QUESTION, question);
 	}
+	/**
+	 * Prepares the get-query prompt.
+	 *
+	 * @param jsonString the dataset JSON
+	 * @param question the user question
+	 * @return the prepared prompt
+	 */
 	public String prepareQueryPrompt(String jsonString,String question) {
 		return  promptsContentMap.get(GET_QUERY_PROMPT) 
 		.replace(DATA_SET, jsonString)
 		 .replace(QUESTION, question);
 	}
+	/**
+	 * Prepares the follow-up prompt.
+	 *
+	 * @param contextData the context data from previous steps
+	 * @param lastAnswer the last response
+	 * @return the prepared prompt
+	 */
 	public String prepareFollowupPrompt(String contextData, String lastAnswer) {
 		return  promptsContentMap.get(FOLLOWUP_PROMPT).replace(DATA_SET, lastAnswer)		
 			.replace(CTX_VAR, contextData);
