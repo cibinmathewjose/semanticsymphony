@@ -1,4 +1,4 @@
-# Semantic Kernel Spring Symphony - Developer Documentation
+# Symphony AI - Developer Documentation
 
 ## Table of Contents
 1. [Project Overview](#project-overview)
@@ -17,30 +17,36 @@
 
 ## Project Overview
 
-**Semantic Kernel Spring Symphony** is an intelligent chat agentic framework that integrates Microsoft's Semantic Kernel with Spring Boot. It provides a comprehensive solution for building sophisticated AI-driven applications with support for multiple data sources, knowledge bases, and execution workflows.
+**Symphony AI** is an intelligent chat agentic framework built on Spring AI and Spring Boot. It provides a comprehensive solution for building sophisticated AI-driven applications with support for multiple data sources, knowledge bases, agentic workflows, and the Model Context Protocol (MCP).
 
 ### Key Features
-- **Agentic AI Framework**: Leverages Microsoft Semantic Kernel for AI capabilities
-- **Multi-Step Workflows**: Execute complex workflows with multiple step types (SQL, REST, GraphQL, etc.)
+- **Agentic AI Framework**: ReAct-style autonomous planning and execution via Spring AI
+- **Multi-Step Workflows**: Execute complex workflows with 12+ step types (SQL, REST, GraphQL, Agentic, Database, Email, Document, WebSearch, HumanInLoop, and more)
+- **MCP Protocol Support**: Expose Symphony steps as MCP tools and consume external MCP servers
 - **Knowledge Graph Integration**: Build and query knowledge graphs
-- **Vector Search Support**: Azure AI Search integration for semantic search
+- **Vector Search Support**: Azure AI Search integration for semantic intent matching
 - **Plugin System**: Extensible plugin architecture
 - **Session Management**: Track and manage user sessions
 - **Stream Processing**: Reactive streams for real-time response handling
-- **Multiple AI Integrations**: OpenAI, Azure OpenAI, and Semantic Kernel support
+- **Multiple AI Providers**: Azure OpenAI and Anthropic via Spring AI
+- **Document Processing**: PDF, DOCX, Excel, images (including scanned/OCR)
+- **Email Notifications**: SMTP-based email with template resolution
+- **Web Search**: Bing, Google, and SerpAPI integration
+- **Human-in-the-Loop**: Pause workflows for user input
+- **Database Intelligence**: Natural language to SQL with schema introspection
 
 ### Technology Stack
 - **Java**: JDK 17+
 - **Framework**: Spring Boot 3.4.2
 - **Core Dependencies**:
-  - Microsoft Semantic Kernel 1.4.4-RC2
-  - Spring AI 1.1.2
-  - Azure AI Services
+  - Spring AI 1.1.2 (Azure OpenAI, Anthropic, MCP)
+  - Azure AI Search 11.8.0
   - Jackson for JSON processing
   - Reactor for reactive programming
   - Redis for caching
-  - Apache POI for document processing
-  - Apache PDFBox for PDF handling
+  - Apache POI 5.4.1 for document processing
+  - Apache PDFBox 3.0.4 for PDF handling
+  - Apache Velocity 2.4.1 for template engine
 
 ---
 
@@ -61,12 +67,17 @@
 ├──────────────────────┼──────────────────────────────────────┤
 │         Symphony (Orchestrator)                             │
 ├──────────────────────────────────────────────────────────────┤
-│  ┌──────────┬──────────┬──────────┬──────────┬────────────┐ │
-│  │ REST     │ SQL      │GraphQL   │ Plugin   │ Velocity   │ │
-│  │ Step     │ Step     │ Step     │ Step     │ Step       │ │
-│  └──────────┴──────────┴──────────┴──────────┴────────────┘ │
+│  ┌────────┬────────┬────────┬────────┬──────────┬──────────┐ │
+│  │ REST   │ SQL    │GraphQL │ Plugin │ Agentic  │ Database │ │
+│  │ Step   │ Step   │ Step   │ Step   │ Step     │ Step     │ │
+│  ├────────┼────────┼────────┼────────┼──────────┼──────────┤ │
+│  │ Email  │Document│WebSearch│Velocity│HumanIn  │  Auth    │ │
+│  │ Step   │ Step   │ Step   │ Step   │LoopStep │  Step    │ │
+│  └────────┴────────┴────────┴────────┴──────────┴──────────┘ │
 ├──────────────────────────────────────────────────────────────┤
-│                   AI Client (OpenAI/Azure)                   │
+│            MCP Server / MCP Client Integration               │
+├──────────────────────────────────────────────────────────────┤
+│          AI Client (Azure OpenAI / Anthropic via Spring AI)  │
 ├──────────────────────────────────────────────────────────────┤
 │           Knowledge Base & Vector Search Services            │
 └─────────────────────────────────────────────────────────────┘
@@ -109,25 +120,17 @@ mvn package
 
 ### Maven Dependency
 
-Add to your `pom.xml`:
+Symphony AI is published on **Maven Central**. Add to your `pom.xml`:
 
 ```xml
 <dependency>
     <groupId>org.symphonykernel</groupId>
-    <artifactId>semantickernel-spring-symphony</artifactId>
-    <version>0.4.7-SNAPSHOT</version>
+    <artifactId>symphony-ai</artifactId>
+    <version>0.1.0</version>
 </dependency>
 ```
 
-Or use GitHub Packages:
-
-```xml
-<repository>
-    <id>github</id>
-    <name>GitHub Packages</name>
-    <url>https://maven.pkg.github.com/cibinmathewjose/semanticsymphony</url>
-</repository>
-```
+No additional repository configuration is needed — Maven Central is used by default.
 
 ---
 
@@ -324,27 +327,58 @@ Key configuration properties in `application.properties`:
 
 ```properties
 # Azure OpenAI Configuration
-spring.ai.azure.openai.api-key=${AZURE_OPENAI_API_KEY}
-spring.ai.azure.openai.endpoint=${AZURE_OPENAI_ENDPOINT}
-spring.ai.azure.openai.chat.options.model=${AZURE_OPENAI_MODEL}
+client.symphonykernel.azureopenaikey=${AZURE_OPENAI_API_KEY}
+client.symphonykernel.azureopenaiendpoint=${AZURE_OPENAI_ENDPOINT}
+client.symphonykernel.azureopenaideploymentname=gpt-4o
 
-# Azure AI Search Configuration
-spring.ai.azure.search.uri=${AZURE_SEARCH_URI}
-spring.ai.azure.search.key=${AZURE_SEARCH_KEY}
-spring.ai.azure.search.index-name=${AZURE_SEARCH_INDEX}
+# Vector Intent Matching
+symphony.intent.vector.enabled=true
+symphony.intent.vector.similarity-threshold=0.78
+symphony.intent.vector.top-k=3
+spring.ai.azure.openai.embedding.options.deployment-name=text-embedding-ada-002
 
-# Database Configuration
-spring.datasource.url=${DB_URL}
-spring.datasource.username=${DB_USERNAME}
-spring.datasource.password=${DB_PASSWORD}
+# MCP Server (Expose Symphony steps as tools)
+symphony.mcp.server.enabled=false
+# spring.ai.mcp.server.name=symphony-kernel
+# spring.ai.mcp.server.version=1.0.0
+
+# MCP Client (Connect to external MCP servers)
+symphony.mcp.client.enabled=false
+# symphony.mcp.client.servers[0].name=example-server
+# symphony.mcp.client.servers[0].url=http://localhost:3001
+
+# Agentic Configuration
+symphony.agentic.max-iterations=10
+
+# Database Configuration (per-database)
+# symphony.db.<dbname>.url=
+# symphony.db.<dbname>.username=
+# symphony.db.<dbname>.password=
+# symphony.db.<dbname>.driver-class-name=
+
+# Document Processing
+symphony.document.chunk-size=4000
+symphony.document.chunk-overlap=200
+symphony.document.scanned-text-threshold=50
+symphony.document.pdf-image-dpi=150
+symphony.document.parallel-threads=4
+
+# Web Search
+# symphony.websearch.bing.api-key=
+# symphony.websearch.google.api-key=
+# symphony.websearch.google.cx=
+
+# Email (Spring Mail)
+spring.mail.host=smtp.example.com
+spring.mail.port=587
+spring.mail.username=your-email@example.com
+spring.mail.password=your-password
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true
 
 # Redis Configuration
 spring.redis.host=${REDIS_HOST}
 spring.redis.port=${REDIS_PORT}
-
-# SharePoint Configuration (if using)
-spring.sharepoint.site-url=${SHAREPOINT_SITE_URL}
-spring.sharepoint.tenant-id=${TENANT_ID}
 ```
 
 ### Spring Boot Auto-Configuration
@@ -355,8 +389,12 @@ The framework provides auto-configuration through `SymphonyKernelAutoConfigurati
 1. `AzureOpenAiConfig`: Azure OpenAI service setup
 2. `VelocityEngineConfig`: Velocity template engine
 3. `AzureAISearchConnectionProperties`: Vector search configuration
-4. `DBConnectionProperties`: Database connections
+4. `DBConnectionProperties`: Multi-database connections
 5. `RedisConnectionProperties`: Cache configuration
+6. `SymphonyConfig`: Agent mode configuration (autonomous, thread pool, cache TTL)
+7. `MCPServerConfig`: MCP server setup
+8. `MCPClientProperties`: MCP client configuration
+9. `SharePointConfig`: SharePoint integration setup
 
 ---
 
@@ -517,6 +555,183 @@ Executes semantic kernel tools.
 **Class**: `org.symphonykernel.steps.FileStep`
 
 Handles file operations (PDF extraction, document parsing).
+
+### 8. AgenticStep
+**Class**: `org.symphonykernel.steps.AgenticStep`
+
+Executes agentic workflows using the ReAct (Reason + Act) pattern. The LLM dynamically plans which tools to use without predefined flows.
+
+**Configuration**:
+```json
+{
+  "type": "Agentic",
+  "systemPrompt": "You are a helpful assistant with access to tools.",
+  "maxIterations": 10
+}
+```
+
+**Features**:
+- LLM-driven dynamic planning
+- Supports both Symphony steps and external MCP tools
+- Configurable max iterations (default: 10)
+- Thread pool semaphore for concurrent LLM calls
+
+### 9. DatabaseStep
+**Class**: `org.symphonykernel.steps.DatabaseStep`
+
+Intelligent database querying with natural language to SQL conversion.
+
+**Configuration**:
+```json
+{
+  "type": "Database",
+  "dbName": "mydb",
+  "maxRows": 100
+}
+```
+
+**Features**:
+- Schema introspection (tables, views, columns)
+- LLM-generated SQL from natural language
+- Multi-database support (Oracle, SQL Server, MySQL, PostgreSQL)
+- Read-only query enforcement (prevents INSERT/UPDATE/DELETE/DROP)
+- Configurable per-database JDBC connections
+
+### 10. AuthenticationStep
+**Class**: `org.symphonykernel.steps.AuthenticationStep`
+
+OAuth2/token acquisition for downstream API calls.
+
+**Configuration**:
+```json
+{
+  "type": "Authentication",
+  "tokenEndpoint": "https://auth.example.com/token",
+  "clientId": "your-client-id",
+  "clientSecret": "${contextInfo.clientSecret}",
+  "headerName": "Authorization"
+}
+```
+
+### 11. EmailStep
+**Class**: `org.symphonykernel.steps.EmailStep`
+
+Sends emails with template resolution via Spring Mail.
+
+**Configuration**:
+```json
+{
+  "type": "Email",
+  "to": ["user@example.com"],
+  "cc": [],
+  "bcc": [],
+  "subject": "Report for {{reportName}}",
+  "body": "<h1>Hello {{userName}}</h1><p>Your report is ready.</p>",
+  "html": true
+}
+```
+
+**Features**:
+- Per-step SMTP configuration
+- Template placeholder resolution (`{{key}}` syntax)
+- TO, CC, BCC support
+- HTML and plain text modes
+
+### 12. DocumentStep
+**Class**: `org.symphonykernel.steps.DocumentStep`
+
+Multi-format document analysis and extraction.
+
+**Supported Formats**: PDF (text + scanned), DOCX, Excel, plain text, images (JPEG, PNG, TIFF, BMP, GIF, WebP)
+
+**Configuration**:
+```json
+{
+  "type": "Document",
+  "chunkSize": 4000,
+  "chunkOverlap": 200,
+  "parallelThreads": 4
+}
+```
+
+**Features**:
+- Chunk-based processing with overlap
+- Parallel processing (configurable threads)
+- Vision model support for scanned pages and images
+
+### 13. WebSearchStep
+**Class**: `org.symphonykernel.steps.WebSearchStep`
+
+Internet search with optional LLM summarization.
+
+**Configuration**:
+```json
+{
+  "type": "WebSearch",
+  "provider": "bing",
+  "resultCount": 5,
+  "summarize": true
+}
+```
+
+**Providers**: Bing, Google, SerpAPI
+
+### 14. HumanInLoopStep
+**Class**: `org.symphonykernel.steps.HumanInLoopStep`
+
+Pauses workflow execution for user input.
+
+**Configuration**:
+```json
+{
+  "type": "HumanInLoop",
+  "question": "Please confirm the action for {{itemName}}:",
+  "options": ["Approve", "Reject", "Modify"],
+  "timeout": 300000,
+  "defaultOption": "Reject"
+}
+```
+
+**Features**:
+- Question with `{{placeholder}}` resolution
+- Multiple choice options
+- Timeout handling with default values
+- Blocks workflow until user submits
+
+---
+
+## MCP (Model Context Protocol) Integration
+
+Symphony AI supports the [Model Context Protocol](https://modelcontextprotocol.io/) for tool interoperability.
+
+### MCP Server (Expose Symphony as tools)
+
+External agents (e.g., Claude Desktop, Cursor, other MCP clients) can discover and call Symphony knowledge steps as MCP tools.
+
+**Enable**:
+```properties
+symphony.mcp.server.enabled=true
+spring.ai.mcp.server.name=symphony-kernel
+spring.ai.mcp.server.version=1.0.0
+```
+
+**How it works**: `MCPServerConfig` registers all knowledge base entries as MCP tools via SSE transport. External agents can then discover and invoke them.
+
+### MCP Client (Consume external MCP servers)
+
+Symphony can connect to external MCP servers and use their tools within workflows and agentic planning.
+
+**Enable**:
+```properties
+symphony.mcp.client.enabled=true
+symphony.mcp.client.servers[0].name=example-server
+symphony.mcp.client.servers[0].url=http://localhost:3001
+```
+
+**Key Classes**:
+- `MCPClientService`: Connects to external MCP servers, discovers tools
+- `MCPToolRegistry`: Central registry of all available tools (Symphony + external)
+- `MCPToolDescriptor`: Tool metadata for registration
 
 ---
 
@@ -820,7 +1035,7 @@ Map<String, JsonNode> resolved = ctx.getResolvedValues();
 Enable debug logging:
 ```properties
 logging.level.org.symphonykernel=DEBUG
-logging.level.com.microsoft.semantickernel=DEBUG
+logging.level.org.springframework.ai=DEBUG
 ```
 
 ---
@@ -847,5 +1062,5 @@ For issues and questions:
 ---
 
 **Document Version**: 1.0  
-**Last Updated**: February 2026  
+**Last Updated**: March 2026  
 **Maintained By**: Cibin Jose

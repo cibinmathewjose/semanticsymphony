@@ -43,16 +43,15 @@ cat ~/.m2/settings.xml
 
 **settings.xml Configuration**:
 ```xml
+<!-- No special settings required — symphony-ai is on Maven Central -->
 <settings>
     <servers>
-        <server>
-            <id>github</id>
-            <username>YOUR_USERNAME</username>
-            <password>YOUR_PERSONAL_TOKEN</password>
-        </server>
+        <!-- Only needed if using GitHub Packages for other dependencies -->
     </servers>
 </settings>
 ```
+
+> **Note**: Symphony AI (`org.symphonykernel:symphony-ai:0.1.0`) is published on Maven Central. No special repository or authentication is needed.
 
 ### Issue 2: Java Version Incompatibility
 
@@ -623,7 +622,7 @@ public void testGraphQL(String endpoint, String query, Map<String, Object> varia
 ```properties
 # Enable debug for specific packages
 logging.level.org.symphonykernel=DEBUG
-logging.level.com.microsoft.semantickernel=DEBUG
+logging.level.org.springframework.ai=DEBUG
 logging.level.org.springframework.web=DEBUG
 logging.level.org.springframework.data=DEBUG
 
@@ -760,5 +759,147 @@ Trace ID will be automatically added to logs.
 
 ---
 
+## MCP Integration Issues
+
+### Issue 1: MCP Server Not Starting
+
+**Problem**: External MCP clients cannot discover Symphony tools.
+
+**Cause**: MCP server not enabled or port conflict.
+
+**Solution**:
+```properties
+# Ensure MCP server is enabled
+symphony.mcp.server.enabled=true
+spring.ai.mcp.server.name=symphony-kernel
+spring.ai.mcp.server.version=1.0.0
+```
+
+Verify the server is running by checking logs for MCP registration messages.
+
+### Issue 2: MCP Client Cannot Connect to External Server
+
+**Problem**: `MCPClientService` fails to connect to external MCP servers.
+
+**Solution**:
+```properties
+# Verify server URL is correct and reachable
+symphony.mcp.client.enabled=true
+symphony.mcp.client.servers[0].name=my-server
+symphony.mcp.client.servers[0].url=http://localhost:3001
+```
+
+```bash
+# Test connectivity
+curl http://localhost:3001/health
+```
+
+---
+
+## Agentic Step Issues
+
+### Issue 1: Agentic Step Loops Without Finishing
+
+**Problem**: The agentic planner keeps iterating without producing a final answer.
+
+**Cause**: Max iterations too high or LLM unable to determine completion.
+
+**Solution**:
+```properties
+# Reduce max iterations
+symphony.agentic.max-iterations=5
+```
+
+Also ensure the system prompt clearly instructs when to produce a final answer.
+
+### Issue 2: Agentic Step Cannot Find Tools
+
+**Problem**: LLM plans to use a tool that isn't registered.
+
+**Solution**: Check that your knowledge base entries are loaded and MCP tools are registered:
+```java
+@Autowired
+private MCPToolRegistry toolRegistry;
+
+// List all registered tools
+toolRegistry.getAllTools().forEach(t -> logger.info("Tool: {}", t.getName()));
+```
+
+---
+
+## Email Step Issues
+
+### Issue 1: Email Sending Fails
+
+**Problem**: `EmailStep` throws `MailSendException`.
+
+**Cause**: SMTP configuration incorrect.
+
+**Solution**:
+```properties
+# Verify SMTP settings
+spring.mail.host=smtp.gmail.com
+spring.mail.port=587
+spring.mail.username=your-email@gmail.com
+spring.mail.password=your-app-password
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true
+```
+
+> For Gmail, use an App Password (not your regular password) and ensure 2FA is enabled.
+
+---
+
+## Document Processing Issues
+
+### Issue 1: PDF Text Extraction Returns Empty
+
+**Problem**: DocumentStep returns no content for PDF files.
+
+**Cause**: PDF contains scanned images instead of text.
+
+**Solution**: The DocumentStep automatically falls back to vision model processing for scanned pages. Ensure:
+```properties
+symphony.document.scanned-text-threshold=50
+symphony.document.pdf-image-dpi=150
+```
+
+### Issue 2: Out of Memory with Large Documents
+
+**Problem**: `OutOfMemoryError` when processing large files.
+
+**Solution**: Adjust chunk settings and parallel threads:
+```properties
+symphony.document.chunk-size=2000
+symphony.document.chunk-overlap=100
+symphony.document.parallel-threads=2
+```
+
+---
+
+## Database Step Issues
+
+### Issue 1: Database Step Cannot Connect
+
+**Problem**: `DatabaseStep` fails with connection errors.
+
+**Solution**: Verify per-database configuration:
+```properties
+symphony.db.mydb.url=jdbc:postgresql://localhost:5432/mydb
+symphony.db.mydb.username=user
+symphony.db.mydb.password=pass
+symphony.db.mydb.driver-class-name=org.postgresql.Driver
+```
+
+### Issue 2: Query Blocked by Safety Check
+
+**Problem**: `DatabaseStep` rejects a query with "write operation not allowed".
+
+**Cause**: The DatabaseStep enforces read-only access. INSERT, UPDATE, DELETE, and DROP statements are blocked.
+
+**Solution**: This is by design for safety. Use `SqlStep` directly if you need write operations in controlled scenarios.
+
+---
+
 **Document Version**: 1.0  
-**Last Updated**: February 2026
+**Last Updated**: March 2026

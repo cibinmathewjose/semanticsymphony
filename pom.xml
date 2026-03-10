@@ -8,11 +8,12 @@
         <relativePath/> 
     </parent>
     <groupId>org.symphonykernel</groupId>
-    <artifactId>semantickernel-spring-symphony</artifactId>
-    <version>0.6.0-SNAPSHOT</version> 
+    <artifactId>symphony-ai</artifactId>
+    <version>1.0.0</version> 
     <packaging>jar</packaging>
-    <name>Semantic Kernel Spring Symphony</name>
+    <name>Symphony AI</name>
     <description>Defines a chat agentic framework with Spring AI and SpringBoot</description>
+    <url>https://github.com/cibinmathewjose/semanticsymphony</url>
     <properties>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.source>17</maven.compiler.source>
@@ -263,6 +264,49 @@
                     </plugin>
                 </plugins>
             </build>   
+        </profile>
+        <profile>
+            <id>maven-central</id>
+            <distributionManagement>
+                <repository>
+                    <id>central</id>
+                    <name>Maven Central</name>
+                    <url>https://central.sonatype.com/repository/maven-central/</url>
+                </repository>
+                <snapshotRepository>
+                    <id>central</id>
+                    <name>Maven Central Snapshots</name>
+                    <url>https://central.sonatype.com/repository/maven-central/</url>
+                </snapshotRepository>
+            </distributionManagement>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.7.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
     <developers>

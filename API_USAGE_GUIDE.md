@@ -4,9 +4,17 @@
 1. [Basic Usage](#basic-usage)
 2. [Request and Response Examples](#request-and-response-examples)
 3. [Advanced Workflows](#advanced-workflows)
-4. [Error Handling](#error-handling)
-5. [Configuration Examples](#configuration-examples)
-6. [Integration Examples](#integration-examples)
+4. [Agentic Workflows](#agentic-workflows)
+5. [MCP Integration](#mcp-integration)
+6. [Email Step](#email-step)
+7. [Database Intelligence](#database-intelligence)
+8. [Document Processing](#document-processing)
+9. [Web Search](#web-search)
+10. [Human-in-the-Loop](#human-in-the-loop)
+11. [Authentication Step](#authentication-step)
+12. [Error Handling](#error-handling)
+13. [Configuration Examples](#configuration-examples)
+14. [Integration Examples](#integration-examples)
 
 ---
 
@@ -376,6 +384,310 @@ JsonNode chartData = response.getData();
 
 ---
 
+## Agentic Workflows
+
+The Agentic step uses the ReAct (Reason + Act) pattern where the LLM dynamically plans which tools to use.
+
+### Example 1: Basic Agentic Request
+
+```java
+// The Agentic step doesn't require predefined flows — the LLM decides which tools to call
+ChatRequest request = new ChatRequest();
+request.setQuery("Find recent orders for customer ACME Corp and send a summary email to the sales team");
+request.setUser("analyst_001");
+
+ChatResponse response = agent.process(request);
+```
+
+### Example 2: Agentic Knowledge Configuration
+
+```json
+{
+  "name": "smart-assistant",
+  "type": "Agentic",
+  "description": "An intelligent assistant that can access databases, APIs, and send emails",
+  "systemPrompt": "You are a helpful business assistant. Use the available tools to answer questions about customers, orders, and products. Always verify data before sending emails.",
+  "data": {
+    "maxIterations": 10
+  }
+}
+```
+
+### Example 3: Agentic with MCP Tools
+
+When MCP client is enabled, the agentic planner can use both Symphony steps and external MCP tools:
+
+```properties
+# Enable MCP client to augment agentic planning with external tools
+symphony.mcp.client.enabled=true
+symphony.mcp.client.servers[0].name=filesystem-server
+symphony.mcp.client.servers[0].url=http://localhost:3001
+symphony.mcp.client.servers[1].name=database-server
+symphony.mcp.client.servers[1].url=http://localhost:3002
+```
+
+---
+
+## MCP Integration
+
+### MCP Server: Expose Symphony Tools
+
+External agents can discover and call Symphony steps as MCP tools.
+
+**Configuration**:
+```properties
+symphony.mcp.server.enabled=true
+spring.ai.mcp.server.name=symphony-kernel
+spring.ai.mcp.server.version=1.0.0
+```
+
+Once enabled, all knowledge base entries are automatically registered as MCP tools via SSE transport. External tools like Claude Desktop or Cursor can connect and use them.
+
+### MCP Client: Consume External Tools
+
+```properties
+symphony.mcp.client.enabled=true
+symphony.mcp.client.servers[0].name=weather-server
+symphony.mcp.client.servers[0].url=http://localhost:3001
+symphony.mcp.client.servers[1].name=file-server
+symphony.mcp.client.servers[1].url=http://localhost:3002
+```
+
+**Programmatic Usage**:
+```java
+@Autowired
+private MCPToolRegistry toolRegistry;
+
+// List all available tools (Symphony + external MCP)
+List<MCPToolDescriptor> tools = toolRegistry.getAllTools();
+
+// Tools are automatically available in Agentic planning
+```
+
+---
+
+## Email Step
+
+### Example 1: Simple Email Notification
+
+**Knowledge Configuration**:
+```json
+{
+  "name": "send-report-email",
+  "type": "Email",
+  "description": "Send a report email to the team",
+  "data": {
+    "to": ["team@example.com"],
+    "subject": "Daily Report - {{reportDate}}",
+    "body": "<h1>Daily Report</h1><p>{{reportContent}}</p>",
+    "html": true
+  }
+}
+```
+
+### Example 2: Email in a Multi-Step Workflow
+
+```json
+{
+  "id": "report-and-email",
+  "items": [
+    {
+      "id": "fetch_data",
+      "type": "SQL",
+      "query": "SELECT * FROM daily_metrics WHERE date = CURRENT_DATE"
+    },
+    {
+      "id": "format_report",
+      "type": "Velocity",
+      "template": "#foreach($row in $fetch_data)- ${row.metric}: ${row.value}\n#end"
+    },
+    {
+      "id": "send_email",
+      "type": "Email",
+      "to": ["manager@example.com"],
+      "cc": ["team@example.com"],
+      "subject": "Daily Metrics Report",
+      "body": "<pre>{{format_report}}</pre>",
+      "html": true
+    }
+  ]
+}
+```
+
+---
+
+## Database Intelligence
+
+The DatabaseStep provides natural language to SQL conversion with schema introspection.
+
+### Example 1: Natural Language SQL Query
+
+**Knowledge Configuration**:
+```json
+{
+  "name": "query-sales-db",
+  "type": "Database",
+  "description": "Query the sales database using natural language",
+  "data": {
+    "dbName": "salesdb",
+    "maxRows": 100
+  }
+}
+```
+
+**Database Connection** (`application.properties`):
+```properties
+symphony.db.salesdb.url=jdbc:postgresql://localhost:5432/sales
+symphony.db.salesdb.username=${DB_USER}
+symphony.db.salesdb.password=${DB_PASS}
+symphony.db.salesdb.driver-class-name=org.postgresql.Driver
+```
+
+**Usage**:
+```java
+ChatRequest request = new ChatRequest();
+request.setQuery("Show me the top 10 customers by revenue last quarter");
+// The LLM will introspect the schema and generate appropriate SQL
+ChatResponse response = agent.process(request);
+```
+
+**Safety**: The DatabaseStep enforces read-only queries — INSERT, UPDATE, DELETE, and DROP statements are blocked.
+
+---
+
+## Document Processing
+
+The DocumentStep processes multiple document formats including PDF, DOCX, Excel, and images.
+
+### Example 1: Analyze a PDF Document
+
+**Knowledge Configuration**:
+```json
+{
+  "name": "analyze-document",
+  "type": "Document",
+  "description": "Extract and analyze document content",
+  "data": {
+    "chunkSize": 4000,
+    "chunkOverlap": 200,
+    "parallelThreads": 4
+  }
+}
+```
+
+**Configuration** (`application.properties`):
+```properties
+symphony.document.chunk-size=4000
+symphony.document.chunk-overlap=200
+symphony.document.scanned-text-threshold=50
+symphony.document.pdf-image-dpi=150
+symphony.document.parallel-threads=4
+```
+
+**Supported Formats**: PDF (text + scanned), DOCX, Excel (.xlsx, .xls), plain text, images (JPEG, PNG, TIFF, BMP, GIF, WebP)
+
+---
+
+## Web Search
+
+The WebSearchStep integrates internet search with optional LLM summarization.
+
+### Example 1: Search the Web
+
+**Knowledge Configuration**:
+```json
+{
+  "name": "web-search",
+  "type": "WebSearch",
+  "description": "Search the internet for information",
+  "data": {
+    "provider": "bing",
+    "resultCount": 5,
+    "summarize": true
+  }
+}
+```
+
+**Configuration** (`application.properties`):
+```properties
+symphony.websearch.bing.api-key=${BING_API_KEY}
+# Or for Google:
+# symphony.websearch.google.api-key=${GOOGLE_API_KEY}
+# symphony.websearch.google.cx=${GOOGLE_CX}
+```
+
+**Providers**: `bing`, `google`, `serpapi`
+
+---
+
+## Human-in-the-Loop
+
+The HumanInLoopStep pauses workflow execution to collect user input.
+
+### Example 1: Approval Workflow
+
+```json
+{
+  "id": "approval-workflow",
+  "items": [
+    {
+      "id": "fetch_request",
+      "type": "SQL",
+      "query": "SELECT * FROM purchase_requests WHERE id = ?"
+    },
+    {
+      "id": "approval",
+      "type": "HumanInLoop",
+      "question": "Approve purchase request for {{fetch_request.item_name}} (${{fetch_request.amount}})?",
+      "options": ["Approve", "Reject", "Request More Info"],
+      "timeout": 300000,
+      "defaultOption": "Reject"
+    },
+    {
+      "id": "update_status",
+      "type": "SQL",
+      "query": "UPDATE purchase_requests SET status = ? WHERE id = ?",
+      "params": ["${approval.result}", "${fetch_request.id}"]
+    }
+  ]
+}
+```
+
+---
+
+## Authentication Step
+
+The AuthenticationStep acquires OAuth2 tokens for downstream API calls.
+
+### Example 1: OAuth2 Token Acquisition
+
+```json
+{
+  "id": "authenticated-api-call",
+  "items": [
+    {
+      "id": "get_token",
+      "type": "Authentication",
+      "tokenEndpoint": "https://auth.example.com/oauth2/token",
+      "clientId": "${contextInfo.clientId}",
+      "clientSecret": "${contextInfo.clientSecret}",
+      "headerName": "Authorization"
+    },
+    {
+      "id": "call_api",
+      "type": "REST",
+      "method": "GET",
+      "url": "https://api.example.com/protected/data",
+      "headers": {
+        "Authorization": "${get_token.token}"
+      }
+    }
+  ]
+}
+```
+
+---
+
 ## Error Handling
 
 ### Example 1: Basic Error Handling
@@ -458,15 +770,19 @@ ChatResponse processWithFallback(ChatRequest request) {
 
 ```properties
 # Azure OpenAI
-spring.ai.azure.openai.api-key=${AZURE_OPENAI_API_KEY}
-spring.ai.azure.openai.endpoint=${AZURE_OPENAI_ENDPOINT}
-spring.ai.azure.openai.chat.options.model=gpt-4
-spring.ai.azure.openai.chat.options.temperature=0.7
-spring.ai.azure.openai.chat.options.max-tokens=2000
+client.symphonykernel.azureopenaikey=${AZURE_OPENAI_API_KEY}
+client.symphonykernel.azureopenaiendpoint=${AZURE_OPENAI_ENDPOINT}
+client.symphonykernel.azureopenaideploymentname=gpt-4o
+
+# Vector Intent Matching
+symphony.intent.vector.enabled=true
+symphony.intent.vector.similarity-threshold=0.78
+symphony.intent.vector.top-k=3
+spring.ai.azure.openai.embedding.options.deployment-name=text-embedding-ada-002
 
 # Logging
 logging.level.org.symphonykernel=INFO
-logging.level.com.microsoft.semantickernel=DEBUG
+logging.level.org.springframework.ai=DEBUG
 ```
 
 ### Example 2: Database Configuration
@@ -734,4 +1050,4 @@ public class CustomKnowledgeBaseService implements IknowledgeBase {
 ---
 
 **Document Version**: 1.0  
-**Last Updated**: February 2026
+**Last Updated**: March 2026
