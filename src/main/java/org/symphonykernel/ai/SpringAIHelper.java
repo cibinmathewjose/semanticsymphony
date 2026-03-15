@@ -3,6 +3,7 @@ package org.symphonykernel.ai;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -113,14 +114,20 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
 
     private Flux<String> callLLMAsync(LLMRequest request) {
         ChatClientRequestSpec client = getClient(request);
+        AtomicReference<org.springframework.ai.chat.model.ChatResponse> usageResponse = new AtomicReference<>();
         return client.stream().chatResponse()
                 .doOnNext(chatResponse -> {
-                    // Usage metadata is populated on the final chunk
                     if (chatResponse != null && chatResponse.getMetadata() != null) {
                         var usage = chatResponse.getMetadata().getUsage();
                         if (usage != null && usage.getTotalTokens() > 0) {
-                            logTokenUsage(chatResponse, request);
+                            usageResponse.set(chatResponse);
                         }
+                    }
+                })
+                .doOnComplete(() -> {
+                    var response = usageResponse.get();
+                    if (response != null) {
+                        logTokenUsage(response, request);
                     }
                 })
                 .map(chatResponse -> {
@@ -240,7 +247,8 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
         Integer maxCompletionTokens = conProperties.getMaxCompletionTokens(modelName);
         Integer maxTokens = conProperties.getMaxTokens(modelName);
         Double temperature = conProperties.getTemperature(modelName);       
-        var builder = AzureOpenAiChatOptions.builder().deploymentName(modelName);
+        var builder = AzureOpenAiChatOptions.builder().deploymentName(modelName)
+                .streamUsage(logPromptEnabled);
         
         if (maxCompletionTokens != null) {
             builder.maxCompletionTokens(maxCompletionTokens);
