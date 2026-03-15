@@ -106,14 +106,14 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
     }
 
     private String callLLM(LLMRequest request) {
-        ChatClientRequestSpec client = getClient(request);
+        ChatClientRequestSpec client = getClient(request, false);
         var response = client.call();
         logTokenUsage(response.chatResponse(), request);
         return response.content();
     }
 
     private Flux<String> callLLMAsync(LLMRequest request) {
-        ChatClientRequestSpec client = getClient(request);
+        ChatClientRequestSpec client = getClient(request, true);
         AtomicReference<org.springframework.ai.chat.model.ChatResponse> usageResponse = new AtomicReference<>();
         return client.stream().chatResponse()
                 .doOnNext(chatResponse -> {
@@ -167,7 +167,7 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
         return (Flux<String>) processPromptString(request, this::callLLMAsync);
     }
 
-    private Prompt createPrompt(String systemPrompt, String userInput, String model) {
+    private Prompt createPrompt(String systemPrompt, String userInput, String model, boolean streaming) {
 
         List<Message> messages = new ArrayList<>();
         Prompt prompt;
@@ -205,15 +205,15 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
             prompt= new Prompt(messages, chatOptions);
         } else {
 
-            var chatOptions = resolveOptionsForAzureOpenAi(model);
+            var chatOptions = resolveOptionsForAzureOpenAi(model, streaming);
             prompt= new Prompt(messages, chatOptions);
 
         }
         return prompt;
     }
 
-    private ChatClientRequestSpec getClient(LLMRequest request) {
-        Prompt prompt = createPrompt(request.getSystemMessage(), request.getUserPrompt(), request.getModelName());
+    private ChatClientRequestSpec getClient(LLMRequest request, boolean streaming) {
+        Prompt prompt = createPrompt(request.getSystemMessage(), request.getUserPrompt(), request.getModelName(), streaming);
         var client = getClient(prompt, request.getTools());
         return client;
     }
@@ -238,7 +238,7 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
         return client;
     }
 
-    private AzureOpenAiChatOptions resolveOptionsForAzureOpenAi(String modelName) {
+    private AzureOpenAiChatOptions resolveOptionsForAzureOpenAi(String modelName, boolean streaming) {
         if (modelName == null || modelName.isBlank() || modelName.equalsIgnoreCase(DEFAULT_MODEL)) {
             // no override – use model & options configured on the ChatModel bean
             modelName = conProperties.getDeploymentName();
@@ -247,8 +247,11 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
         Integer maxCompletionTokens = conProperties.getMaxCompletionTokens(modelName);
         Integer maxTokens = conProperties.getMaxTokens(modelName);
         Double temperature = conProperties.getTemperature(modelName);       
-        var builder = AzureOpenAiChatOptions.builder().deploymentName(modelName)
-                .streamUsage(logPromptEnabled);
+        var builder = AzureOpenAiChatOptions.builder().deploymentName(modelName);
+
+        if (streaming && logPromptEnabled) {
+            builder.streamUsage(true);
+        }
         
         if (maxCompletionTokens != null) {
             builder.maxCompletionTokens(maxCompletionTokens);
@@ -304,7 +307,7 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
                 .media(new Media(MimeTypeUtils.APPLICATION_OCTET_STREAM, new ByteArrayResource(imageBytes)))
                 .build();
 
-        Prompt imagePrompt = new Prompt(userMessage, resolveOptionsForAzureOpenAi(DEFAULT_MODEL));
+        Prompt imagePrompt = new Prompt(userMessage, resolveOptionsForAzureOpenAi(DEFAULT_MODEL, false));
         var client = getClient(imagePrompt, null);
         return client.call().content();
     }
