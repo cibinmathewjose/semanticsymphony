@@ -50,7 +50,7 @@ public class MCPToolRegistry {
      */
     public void refreshRegistry() {
         toolRegistry.clear();
-        Map<String, String> descriptions = knowledgeBase.getAllKnowledgeDescriptions();
+        Map<String, String> descriptions = knowledgeBase.getActiveKnowledgeDescriptions();
         if (descriptions == null || descriptions.isEmpty()) {
             logger.warn("No knowledge descriptions found for MCP tool registry");
             return;

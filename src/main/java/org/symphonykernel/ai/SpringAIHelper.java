@@ -3,6 +3,7 @@ package org.symphonykernel.ai;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.content.Media;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.retry.support.RetryTemplate;
@@ -42,10 +44,14 @@ import reactor.core.publisher.Flux;
         value = "ai.client.library.type",
         havingValue = "StringAI"
 )
-public class StringAIHelper extends AIClientBase implements IAIClient {
+public class SpringAIHelper extends AIClientBase implements IAIClient {
 
-    private static final Logger logger = LoggerFactory.getLogger(StringAIHelper.class);
+    private static final Logger logger = LoggerFactory.getLogger(SpringAIHelper.class);
     static String DEFAULT_MODEL = "default";
+
+    @Value("${symphony.log.prompt.enabled:false}")
+    private boolean logPromptEnabled;
+
     @Autowired(required = false)
     @Qualifier("azureOpenAiChatModel")
     private ChatModel azureOpenAiChatModel;
@@ -60,7 +66,7 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
      *
      * @param connectionProperties the Azure OpenAI connection configuration
      */
-    public StringAIHelper(AzureOpenAIConnectionProperties connectionProperties) {
+    public SpringAIHelper(AzureOpenAIConnectionProperties connectionProperties) {
         super(connectionProperties);
         logger.info("AI processor : StringAI");
     }
@@ -100,25 +106,73 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
     }
 
     private String callLLM(LLMRequest request) {
-         ChatClientRequestSpec client = getClient(request);
-        return client.call().content();      
+        ChatClientRequestSpec client = getClient(request, false);
+        var response = client.call().chatResponse();
+        logTokenUsage(response, request);
+        if (response.getResult() != null
+                && response.getResult().getOutput() != null
+                && response.getResult().getOutput().getText() != null) {
+            return response.getResult().getOutput().getText();
+        }
+        return "";
 
     }
 
     private Flux<String> callLLMAsync(LLMRequest request) {
-         ChatClientRequestSpec client = getClient(request);
-        return client.stream().content();      
+        ChatClientRequestSpec client = getClient(request, true);
+        AtomicReference<org.springframework.ai.chat.model.ChatResponse> usageResponse = new AtomicReference<>();
+        return client.stream().chatResponse()
+                .doOnNext(chatResponse -> {
+                    if (chatResponse != null && chatResponse.getMetadata() != null) {
+                        var usage = chatResponse.getMetadata().getUsage();
+                        if (usage != null && usage.getTotalTokens() > 0) {
+                            usageResponse.set(chatResponse);
+                        }
+                    }
+                })
+                .doOnComplete(() -> {
+                    var response = usageResponse.get();
+                    if (response != null) {
+                        logTokenUsage(response, request);
+                    }
+                })
+                .map(chatResponse -> {
+                    if (chatResponse.getResult() != null
+                            && chatResponse.getResult().getOutput() != null
+                            && chatResponse.getResult().getOutput().getText() != null) {
+                        return chatResponse.getResult().getOutput().getText();
+                    }
+                    return "";
+                })
+                .filter(text -> !text.isEmpty());
+    }
 
+    private void logTokenUsage(org.springframework.ai.chat.model.ChatResponse chatResponse, LLMRequest request) {
+        if (chatResponse == null || chatResponse.getMetadata() == null) {
+            return;
+        }
+
+        if (logPromptEnabled && request != null && request.isLogPrompt()) {
+            var usage = chatResponse.getMetadata().getUsage();
+            if (usage != null) {
+                logger.info("Token usage — prompt: {}, completion: {}, total: {} | system: [{}] | user: [{}]",
+                        usage.getPromptTokens(),
+                        usage.getCompletionTokens(),
+                        usage.getTotalTokens(),
+                        request.getSystemMessage(),
+                        request.getUserPrompt());
+            }
+        }
     }
     @Override
     public Flux<String> streamExecute(LLMRequest request) {
         return (Flux<String>) processPromptString(request, this::callLLMAsync);
     }
 
-    private Prompt createPrompt(String systemPrompt, String userInput, String model) {
+    private Prompt createPrompt(String systemPrompt, String userInput, String model, boolean streaming) {
 
         List<Message> messages = new ArrayList<>();
-
+        Prompt prompt;
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             messages.add(new SystemMessage(systemPrompt));
         }
@@ -150,17 +204,18 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
             }
 
             var chatOptions = resolveOptionsForAnthropic(model);
-            return new Prompt(messages, chatOptions);
+            prompt= new Prompt(messages, chatOptions);
         } else {
 
-            var chatOptions = resolveOptionsForAzureOpenAi(model);
-            return new Prompt(messages, chatOptions);
+            var chatOptions = resolveOptionsForAzureOpenAi(model, streaming);
+            prompt= new Prompt(messages, chatOptions);
 
         }
+        return prompt;
     }
 
-    private ChatClientRequestSpec getClient(LLMRequest request) {
-        Prompt prompt = createPrompt(request.getSystemMessage(), request.getUserPrompt(), request.getModelName());
+    private ChatClientRequestSpec getClient(LLMRequest request, boolean streaming) {
+        Prompt prompt = createPrompt(request.getSystemMessage(), request.getUserPrompt(), request.getModelName(), streaming);
         var client = getClient(prompt, request.getTools());
         return client;
     }
@@ -185,7 +240,7 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
         return client;
     }
 
-    private AzureOpenAiChatOptions resolveOptionsForAzureOpenAi(String modelName) {
+    private AzureOpenAiChatOptions resolveOptionsForAzureOpenAi(String modelName, boolean streaming) {
         if (modelName == null || modelName.isBlank() || modelName.equalsIgnoreCase(DEFAULT_MODEL)) {
             // no override – use model & options configured on the ChatModel bean
             modelName = conProperties.getDeploymentName();
@@ -195,6 +250,10 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
         Integer maxTokens = conProperties.getMaxTokens(modelName);
         Double temperature = conProperties.getTemperature(modelName);       
         var builder = AzureOpenAiChatOptions.builder().deploymentName(modelName);
+
+        if (streaming && logPromptEnabled) {
+            builder.streamUsage(true);
+        }
         
         if (maxCompletionTokens != null) {
             builder.maxCompletionTokens(maxCompletionTokens);
@@ -250,7 +309,7 @@ public class StringAIHelper extends AIClientBase implements IAIClient {
                 .media(new Media(MimeTypeUtils.APPLICATION_OCTET_STREAM, new ByteArrayResource(imageBytes)))
                 .build();
 
-        Prompt imagePrompt = new Prompt(userMessage, resolveOptionsForAzureOpenAi(DEFAULT_MODEL));
+        Prompt imagePrompt = new Prompt(userMessage, resolveOptionsForAzureOpenAi(DEFAULT_MODEL, false));
         var client = getClient(imagePrompt, null);
         return client.call().content();
     }

@@ -7,6 +7,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -14,6 +15,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import reactor.core.publisher.Flux;
 
@@ -25,14 +27,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import javax.sql.DataSource;
 
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.LLMRequest;
+import org.symphonykernel.QueryCorrectionLearning;
 import org.symphonykernel.core.IAIClient;
+import org.symphonykernel.core.IQueryCorrectionRepository;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -72,6 +78,7 @@ public class DatabaseStep extends BaseStep {
     private static final int DEFAULT_MAX_ROWS = 100;
     private static final int MAX_PLAN_STEPS = 5;
     private static final int MAX_RETRIES_PER_STEP = 2;
+    private static final int MAX_LEARNINGS_PER_QUERY = 5;
 
     private static final Pattern FORBIDDEN_SQL_PATTERN = Pattern.compile(
             "\\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|MERGE|EXEC|EXECUTE|CALL|GRANT|REVOKE|INTO)\\b",
@@ -79,6 +86,9 @@ public class DatabaseStep extends BaseStep {
     );
 
     private final ConcurrentHashMap<String, String> schemaCache = new ConcurrentHashMap<>();
+
+    @Value("${symphony.agentic.chat-history-count:2}")
+    private int chatHistoryCount;
 
     @Autowired
     private Environment environment;
@@ -88,6 +98,9 @@ public class DatabaseStep extends BaseStep {
 
     @Autowired(required = false)
     private DataSource dataSource;
+
+    @Autowired(required = false)
+    private IQueryCorrectionRepository correctionRepository;
 
     private static final List<DbIntrospector> INTROSPECTORS = List.of(
             new OracleDbIntrospector(),
@@ -132,6 +145,11 @@ public class DatabaseStep extends BaseStep {
                 return resp;
             }
 
+            // Step 1: Rewrite the question using chat history for better context
+            String chatHistoryText = buildChatHistoryText(ctx.getChatHistory());
+            String rewrittenQuery = rewriteQuestion(userQuery, chatHistoryText, ctx.getModelName());
+            logger.info("Original query: {} | Rewritten query: {}", userQuery, rewrittenQuery);
+
             try (Connection connection = createConnection(dbName)) {
                 connection.setReadOnly(true);
                 DbIntrospector introspector = resolveIntrospector(connection);
@@ -149,7 +167,9 @@ public class DatabaseStep extends BaseStep {
                     if (!schemaDescription.isBlank()) {
                         String contextVariables = buildContextVariables(ctx);
                         String knowledgePrompt = kb.getSystemPrompt();
-                        String generatedSql = generateQuery(userQuery, schemaDescription, contextVariables, knowledgePrompt, ctx.getModelName());
+                        String learnings = loadRelevantLearnings(dbName, tables);
+                        String generatedSql = generateQuery(rewrittenQuery, schemaDescription,
+                                contextVariables, knowledgePrompt, chatHistoryText, learnings, ctx.getModelName());
                         validateReadOnly(generatedSql);
                         logger.info("DatabaseStep executing query: {}", generatedSql);
                         try (PreparedStatement stmt = connection.prepareStatement(generatedSql)) {
@@ -157,6 +177,22 @@ public class DatabaseStep extends BaseStep {
                             try (ResultSet rs = stmt.executeQuery()) {
                                 jsonArray.addAll(resultSetToJson(rs));
                             }
+                        } catch (SQLException e) {
+                            // Single-shot also gets error correction now
+                            logger.warn("Single-shot query failed: {}. Attempting LLM correction...", e.getMessage());
+                            String correctedSql = correctFailedQuery(rewrittenQuery, generatedSql,
+                                    e.getMessage(), schemaDescription, learnings, ctx.getModelName());
+                            validateReadOnly(correctedSql);
+                            logger.info("Retrying with corrected query: {}", correctedSql);
+                            try (PreparedStatement stmt2 = connection.prepareStatement(correctedSql)) {
+                                stmt2.setMaxRows(maxRows);
+                                try (ResultSet rs = stmt2.executeQuery()) {
+                                    jsonArray.addAll(resultSetToJson(rs));
+                                }
+                            }
+                            // Save the correction learning for future use
+                            saveCorrectionLearning(dbName, rewrittenQuery, generatedSql,
+                                    e.getMessage(), correctedSql, tables);
                         }
                     }
                 } else {
@@ -166,8 +202,8 @@ public class DatabaseStep extends BaseStep {
                     logger.info("DatabaseStep discovered {} tables and {} views", allTableNames.size(), allViewNames.size());
 
                     String knowledgePrompt = kb.getSystemPrompt();
-                    ArrayNode results = executeAgenticPlan(connection, introspector, userQuery, allTableNames,
-                            allViewNames, schemas, dbName, maxRows, knowledgePrompt, ctx);
+                    ArrayNode results = executeAgenticPlan(connection, introspector, rewrittenQuery, allTableNames,
+                            allViewNames, schemas, dbName, maxRows, knowledgePrompt, chatHistoryText, ctx);
                     jsonArray.addAll(results);
                 }
             }
@@ -201,7 +237,8 @@ public class DatabaseStep extends BaseStep {
     private ArrayNode executeAgenticPlan(Connection connection, DbIntrospector introspector, String userQuery,
                                          List<String> allTableNames, List<String> allViewNames,
                                          List<String> schemas, String dbName, int maxRows,
-                                         String knowledgePrompt, ExecutionContext ctx) throws SQLException {
+                                         String knowledgePrompt, String chatHistoryText,
+                                         ExecutionContext ctx) throws SQLException {
         ArrayNode finalResults = objectMapper.createArrayNode();
         List<StepResult> stepResults = new ArrayList<>();
         String modelName = ctx.getModelName();
@@ -211,8 +248,10 @@ public class DatabaseStep extends BaseStep {
 
             // Step 1: Ask LLM to identify relevant tables for the current (sub-)question
             String previousContext = buildStepContext(stepResults, ctx);
+            String learnings = loadRelevantLearnings(dbName, allTableNames);
             List<String> relevantTables = identifyRelevantTables(
-                    userQuery, allTableNames, allViewNames, previousContext, knowledgePrompt, modelName);
+                    userQuery, allTableNames, allViewNames, previousContext,
+                    knowledgePrompt, learnings, modelName);
             logger.info("Iteration {} - AI selected {} relevant tables: {}",
                     iteration + 1, relevantTables.size(), relevantTables);
 
@@ -221,36 +260,50 @@ public class DatabaseStep extends BaseStep {
                 break;
             }
 
-            // Step 2: Load full schema with relationships for the selected tables
+            // Step 2: Load full schema with columns, PKs, FKs, and indexes for selected tables
             String schemaDescription = loadSchemaForTables(connection, introspector, schemas, dbName, relevantTables);
             if (schemaDescription.isBlank()) {
                 logger.warn("No schema metadata found for tables: {}", relevantTables);
                 break;
             }
 
-            // Step 3: Generate SQL query using the loaded schema and previous step context
+            // Step 3: Load past correction learnings for the selected tables
+            String tableLearnings = loadRelevantLearnings(dbName, relevantTables);
+
+            // Step 4: Generate SQL query using loaded schema, chat history, and learnings
             ArrayNode stepData = null;
             String lastFailedSql = null;
             String lastErrorMessage = null;
             for (int retry = 0; retry <= MAX_RETRIES_PER_STEP; retry++) {
                 String sql = null;
                 try {
-                    sql = generateIterativeQuery(
-                            userQuery, schemaDescription, previousContext, knowledgePrompt,
-                            modelName, lastFailedSql, lastErrorMessage);
+                    if (lastErrorMessage != null && lastFailedSql != null) {
+                        // Use dedicated correction prompt for retries
+                        sql = correctFailedQuery(userQuery, lastFailedSql, lastErrorMessage,
+                                schemaDescription, tableLearnings, modelName);
+                    } else {
+                        sql = generateIterativeQuery(
+                                userQuery, schemaDescription, previousContext, knowledgePrompt,
+                                chatHistoryText, tableLearnings, modelName);
+                    }
                     validateReadOnly(sql);
                     logger.info("Iteration {} query (attempt {}): {}", iteration + 1, retry + 1, sql);
 
-                    // Step 4: Execute the query
+                    // Step 5: Execute the query
                     try (PreparedStatement stmt = connection.prepareStatement(sql)) {
                         stmt.setMaxRows(maxRows);
                         try (ResultSet rs = stmt.executeQuery()) {
                             stepData = resultSetToJson(rs);
                         }
                     }
+
+                    // If this was a retry that succeeded, save the correction learning
+                    if (lastFailedSql != null && lastErrorMessage != null) {
+                        saveCorrectionLearning(dbName, userQuery, lastFailedSql,
+                                lastErrorMessage, sql, relevantTables);
+                    }
                     break; // Success
                 } catch (SecurityException e) {
-                    // validateReadOnly rejected the query — let the LLM correct it
                     if (retry < MAX_RETRIES_PER_STEP) {
                         lastFailedSql = sql;
                         lastErrorMessage = "Validation failed: " + e.getMessage();
@@ -271,10 +324,9 @@ public class DatabaseStep extends BaseStep {
                         if (!additionalTables.isEmpty()) {
                             relevantTables.addAll(additionalTables);
                             schemaDescription = loadSchemaForTables(connection, introspector, schemas, dbName, relevantTables);
+                            tableLearnings = loadRelevantLearnings(dbName, relevantTables);
                             logger.info("Expanded to {} tables for retry: {}", relevantTables.size(), relevantTables);
                         }
-                        // Even without additional tables, retry with the error context
-                        // so the LLM can fix syntax/column/condition issues
                     } else {
                         throw e;
                     }
@@ -287,7 +339,7 @@ public class DatabaseStep extends BaseStep {
                 finalResults.addAll(stepData);
             }
 
-            // Step 5: Ask LLM if the question is fully answered or more queries are needed
+            // Step 6: Ask LLM if the question is fully answered or more queries are needed
             if (!needsMoreQueries(userQuery, stepResults, modelName)) {
                 logger.info("AI determined question is fully answered after {} iteration(s)", iteration + 1);
                 break;
@@ -308,7 +360,8 @@ public class DatabaseStep extends BaseStep {
      */
     private List<String> identifyRelevantTables(String userQuery, List<String> allTableNames,
                                                  List<String> allViewNames, String previousContext,
-                                                 String knowledgePrompt, String modelName) {
+                                                 String knowledgePrompt, String learnings,
+                                                 String modelName) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("You are a database analyst. Given the user's question and the list of available tables/views, ");
         prompt.append("identify ONLY the tables and views needed to write a SQL query that answers the question.\n\n");
@@ -324,6 +377,10 @@ public class DatabaseStep extends BaseStep {
         }
         prompt.append("\nUser question: ").append(userQuery);
         prompt.append("\n\nAdditional Instructions:\n").append(knowledgePrompt).append("\n\n");
+        if (learnings != null && !learnings.isBlank()) {
+            prompt.append("\n\nPast Query Learnings (tables previously needed for similar queries):\n");
+            prompt.append(learnings);
+        }
         if (previousContext != null && !previousContext.isBlank()) {
             prompt.append("\n\nPrevious query results already obtained:\n").append(previousContext);
             prompt.append("\nIdentify tables needed for the NEXT query to further answer the question. ");
@@ -353,15 +410,13 @@ public class DatabaseStep extends BaseStep {
 
     /**
      * Generates a SQL query for the current iteration using the loaded schema
-     * (which includes full column details, primary keys, foreign keys, and indexes)
-     * and results from any previous iterations.
-     *
-     * @param failedSql     the SQL that failed on a previous attempt, or null on the first try
-     * @param errorMessage  the database/validation error from the previous attempt, or null
+     * (which includes full column details, primary keys, foreign keys, and indexes),
+     * results from any previous iterations, chat history context, and past learnings.
      */
     private String generateIterativeQuery(String userQuery, String schemaDescription,
                                            String previousContext, String knowledgePrompt,
-                                           String modelName, String failedSql, String errorMessage) {
+                                           String chatHistoryText, String learnings,
+                                           String modelName) {
         String systemPrompt = "You are an expert SQL query generator. Generate a single read-only SQL SELECT statement.\n\n"
                 + "Rules:\n"
                 + "- Output ONLY the SELECT statement, nothing else\n"
@@ -378,20 +433,19 @@ public class DatabaseStep extends BaseStep {
                         ? "Additional Instructions:\n" + knowledgePrompt + "\n\n" : "")
                 + "Database Schema (with relationships):\n" + schemaDescription;
 
+        if (learnings != null && !learnings.isBlank()) {
+            systemPrompt += "\n\nPast Correction Learnings (avoid these mistakes):\n" + learnings;
+        }
+
         StringBuilder userPrompt = new StringBuilder();
+        if (chatHistoryText != null && !chatHistoryText.isBlank()) {
+            userPrompt.append("Chat History Context:\n").append(chatHistoryText).append("\n\n");
+        }
         userPrompt.append("Question: ").append(userQuery);
         if (previousContext != null && !previousContext.isBlank()) {
             userPrompt.append("\n\nResults from previous queries (use these values in WHERE/IN clauses if needed):\n");
             userPrompt.append(previousContext);
             userPrompt.append("\nGenerate the NEXT query to further answer the question using the above results as context.");
-        }
-        if (errorMessage != null && !errorMessage.isBlank()) {
-            userPrompt.append("\n\n⚠ PREVIOUS ATTEMPT FAILED. You MUST correct the query.\n");
-            if (failedSql != null && !failedSql.isBlank()) {
-                userPrompt.append("Failed SQL:\n").append(failedSql).append("\n");
-            }
-            userPrompt.append("Error: ").append(errorMessage).append("\n");
-            userPrompt.append("Analyze the error carefully and generate a CORRECTED query that avoids this issue.");
         }
 
         String result = aiClient.execute(new LLMRequest(systemPrompt, userPrompt.toString(), null, modelName));
@@ -568,10 +622,11 @@ public class DatabaseStep extends BaseStep {
 
     /**
      * Generates a SQL SELECT query using the LLM based on the user's question,
-     * database schema description, and available context variables.
+     * database schema description, context variables, chat history, and past learnings.
      */
     private String generateQuery(String userQuery, String schemaDescription,
                                   String contextVariables, String knowledgePrompt,
+                                  String chatHistoryText, String learnings,
                                   String modelName) {
         String systemPrompt = "You are an expert SQL query generator. Generate a single read-only SQL SELECT statement.\n\n"
                 + "Rules:\n"
@@ -588,15 +643,167 @@ public class DatabaseStep extends BaseStep {
                         ? "Additional Instructions:\n" + knowledgePrompt + "\n\n" : "")
                 + "Database Schema:\n" + schemaDescription;
 
-        String userPrompt = "Question: " + userQuery;
-        if (contextVariables != null && !contextVariables.isBlank()) {
-            userPrompt += "\n\nAvailable context variables (use these values in WHERE clauses when relevant):\n"
-                    + contextVariables;
+        if (learnings != null && !learnings.isBlank()) {
+            systemPrompt += "\n\nPast Correction Learnings (avoid these mistakes):\n" + learnings;
         }
+
+        StringBuilder userPrompt = new StringBuilder();
+        if (chatHistoryText != null && !chatHistoryText.isBlank()) {
+            userPrompt.append("Chat History Context:\n").append(chatHistoryText).append("\n\n");
+        }
+        userPrompt.append("Question: ").append(userQuery);
+        if (contextVariables != null && !contextVariables.isBlank()) {
+            userPrompt.append("\n\nAvailable context variables (use these values in WHERE clauses when relevant):\n")
+                    .append(contextVariables);
+        }
+
+        String result = aiClient.execute(new LLMRequest(systemPrompt, userPrompt.toString(), null, modelName));
+        return cleanSqlResponse(result);
+    }
+
+    // ==================== QUESTION REWRITING & CHAT HISTORY ====================
+
+    /**
+     * Rewrites the user's question using chat history context to make it self-contained
+     * and more suitable for SQL query generation. Resolves pronouns, references, and
+     * follow-up context from previous conversation turns.
+     */
+    private String rewriteQuestion(String originalQuestion, String chatHistoryText, String modelName) {
+        if (chatHistoryText == null || chatHistoryText.isBlank()) {
+            return originalQuestion; // No history to contextualize with
+        }
+
+        String systemPrompt = "You are a query analysis assistant. Your job is to analyze the user's question "
+                + "and rewrite it for optimal SQL query generation against a relational database.\n\n"
+                + "Instructions:\n"
+                + "1. Analyze the current question in the context of the chat history.\n"
+                + "2. Resolve any pronouns or references (e.g., 'those', 'that table', 'the same customer') "
+                + "using chat history context.\n"
+                + "3. Expand abbreviations or vague terms into precise database-friendly language.\n"
+                + "4. If the question is a follow-up, incorporate the relevant context from previous messages "
+                + "to make it self-contained.\n"
+                + "5. Preserve the original intent — do not add assumptions beyond what the chat history supports.\n"
+                + "6. Output ONLY the rewritten question, nothing else. No explanation.";
+
+        String userPrompt = "Chat History:\n" + chatHistoryText + "\n\nCurrent Question: " + originalQuestion;
+
+        String rewritten = aiClient.execute(new LLMRequest(systemPrompt, userPrompt, null, modelName));
+        if (rewritten != null && !rewritten.isBlank()) {
+            return rewritten.trim();
+        }
+        return originalQuestion;
+    }
+
+    /**
+     * Builds a text representation of the recent chat history, limited by
+     * the {@code symphony.agentic.chat-history-count} configuration.
+     */
+    private String buildChatHistoryText(List<Message> chatHistory) {
+        if (chatHistory == null || chatHistory.isEmpty()) {
+            return "";
+        }
+        int start = Math.max(0, chatHistory.size() - chatHistoryCount);
+        List<Message> recentHistory = chatHistory.subList(start, chatHistory.size());
+        StringBuilder sb = new StringBuilder();
+        for (Message msg : recentHistory) {
+            sb.append(msg.getMessageType()).append(": ").append(msg.getText()).append("\n");
+        }
+        return sb.toString();
+    }
+
+    // ==================== ERROR CORRECTION WITH LLM ====================
+
+    /**
+     * Uses the LLM to correct a failed SQL query based on the error message,
+     * schema description, and past correction learnings.
+     */
+    private String correctFailedQuery(String userQuery, String failedSql, String errorMessage,
+                                       String schemaDescription, String learnings, String modelName) {
+        String systemPrompt = "You are an expert SQL debugger. A SQL query failed with an error. "
+                + "Analyze the error and generate a corrected query.\n\n"
+                + "Database Schema:\n" + schemaDescription + "\n\n"
+                + "Rules:\n"
+                + "- Output ONLY the corrected SELECT statement, nothing else\n"
+                + "- Do not include ```sql markers or code fences\n"
+                + "- Do not add a semicolon at the end\n"
+                + "- Analyze the error carefully — common issues include:\n"
+                + "  - Wrong column names (check schema for exact names)\n"
+                + "  - Missing schema prefix on table/view names\n"
+                + "  - Incorrect JOIN conditions (use foreign key relationships)\n"
+                + "  - Data type mismatches in comparisons\n"
+                + "  - Missing UPPER() for case-insensitive string comparisons\n"
+                + "  - Ambiguous column references (add table alias)\n"
+                + "- Use the foreign key relationships in the schema for correct JOINs\n"
+                + "- NEVER generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or EXEC statements";
+
+        if (learnings != null && !learnings.isBlank()) {
+            systemPrompt += "\n\nPast Correction Learnings (apply these lessons):\n" + learnings;
+        }
+
+        String userPrompt = "Original Question: " + userQuery
+                + "\n\nFailed SQL:\n" + failedSql
+                + "\n\nError Message: " + errorMessage
+                + "\n\nGenerate the CORRECTED SQL query that fixes this error.";
 
         String result = aiClient.execute(new LLMRequest(systemPrompt, userPrompt, null, modelName));
         return cleanSqlResponse(result);
     }
+
+    // ==================== CORRECTION LEARNINGS ====================
+
+    /**
+     * Saves a query correction learning to the repository for future reference.
+     * Silently skips if no {@link IQueryCorrectionRepository} is configured.
+     */
+    private void saveCorrectionLearning(String dbName, String question, String failedSql,
+                                         String errorMessage, String correctedSql,
+                                         List<String> tables) {
+        if (correctionRepository == null) {
+            logger.debug("No IQueryCorrectionRepository configured, skipping correction learning save");
+            return;
+        }
+        try {
+            String tablesTouched = tables != null ? String.join(",", tables) : "";
+            QueryCorrectionLearning learning = new QueryCorrectionLearning(
+                    dbName, question, failedSql, errorMessage, correctedSql, tablesTouched);
+            correctionRepository.save(learning);
+            logger.info("Saved query correction learning for tables: {}", tablesTouched);
+        } catch (Exception e) {
+            logger.warn("Failed to save correction learning: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Loads past correction learnings relevant to the current query context.
+     * Returns a formatted string of learnings, or empty string if none found.
+     */
+    private String loadRelevantLearnings(String dbName, List<String> tables) {
+        if (correctionRepository == null || tables == null || tables.isEmpty()) {
+            return "";
+        }
+        try {
+            List<QueryCorrectionLearning> learnings =
+                    correctionRepository.findRelevantLearnings(dbName, tables, MAX_LEARNINGS_PER_QUERY);
+            if (learnings == null || learnings.isEmpty()) {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < learnings.size(); i++) {
+                QueryCorrectionLearning l = learnings.get(i);
+                sb.append("Learning ").append(i + 1).append(":\n");
+                sb.append("  Question: ").append(l.getOriginalQuestion()).append("\n");
+                sb.append("  Failed SQL: ").append(l.getFailedSql()).append("\n");
+                sb.append("  Error: ").append(l.getErrorMessage()).append("\n");
+                sb.append("  Corrected SQL: ").append(l.getCorrectedSql()).append("\n\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            logger.warn("Failed to load correction learnings: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    // ==================== VALIDATION ====================
 
     /**
      * Validates that the generated SQL is a read-only SELECT statement.

@@ -228,6 +228,9 @@ footer {
   padding: 8px 10px;
   border-radius: 12px;
   font-size: 14px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 .chat-message .chat-timestamp {
@@ -262,6 +265,7 @@ footer {
   background-color: #f6f8fa;
   color: #24292f;
   max-width: 100%;
+  overflow-x: hidden;
 }
 
 .bot-tabs {
@@ -307,6 +311,8 @@ footer {
 .bot-html {
   max-height: none;
   overflow-y: visible; /* avoid inner scrollbars; outer chat-messages scrolls */
+  overflow-x: auto;
+  min-width: 0;
 }
 
 /* In bot bubbles, let Markdown/HTML content use full width with a 50px right margin */
@@ -383,6 +389,8 @@ footer {
   margin: 0 auto;
   font-size: 14px;
   line-height: 1.6;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .markdown-body h1,
@@ -432,7 +440,11 @@ footer {
   padding: 0.85em 1em;
   margin: 0.75em 0;
   border-radius: 6px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
   background-color: #0d1117;
   color: #e6edf3;
 }
@@ -442,11 +454,18 @@ footer {
   padding: 0;
 }
 
+.markdown-body .table-scroll-wrapper {
+  overflow-x: auto;
+  margin: 1em 0;
+  -webkit-overflow-scrolling: touch;
+}
+
 .markdown-body table {
   border-collapse: collapse;
   border-spacing: 0;
-  margin: 1em 0;
   width: 100%;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .markdown-body table th,
@@ -1404,6 +1423,7 @@ let enhanceTablesInBubble = (root) => {
 
     const wrapper = document.createElement('div');
     wrapper.style.marginBottom = '1.5em';
+    wrapper.classList.add('table-scroll-wrapper');
 
     const link = document.createElement('a');
     link.textContent = 'Download table';

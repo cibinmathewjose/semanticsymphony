@@ -14,6 +14,7 @@ public class LLMRequest   {
 	Object[] tools;
 	/** The model name to use. */
 	String modelName;
+	boolean logPrompt;
 
 	/** Default constructor. */
 	public LLMRequest()
@@ -28,11 +29,20 @@ public class LLMRequest   {
 	 * @param tools optional tool definitions
 	 * @param modelName the model name
 	 */
+	public LLMRequest(String systemMessage, String userPrompt, Object[] tools, String modelName, boolean logPrompt) {
+		this.systemMessage = systemMessage;
+		this.userPrompt = userPrompt;
+		this.tools = tools;
+		this.modelName = modelName;
+		this.logPrompt = logPrompt;
+	}
+
 	public LLMRequest(String systemMessage, String userPrompt, Object[] tools, String modelName) {
 		this.systemMessage = systemMessage;
 		this.userPrompt = userPrompt;
 		this.tools = tools;
 		this.modelName = modelName;
+		this.logPrompt = false;
 	}
 
 
@@ -81,4 +91,12 @@ public class LLMRequest   {
 	public String getModelName() {
 		return modelName;
 	}
+
+    public boolean isLogPrompt() {
+        return logPrompt;
+    }
+
+    public void setLogPrompt(boolean logPrompt) {
+        this.logPrompt = logPrompt;
+    }
 }

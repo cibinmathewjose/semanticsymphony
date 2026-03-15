@@ -10,13 +10,13 @@ import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.LLMRequest;
 import org.symphonykernel.ai.KnowledgeExecuterFactory;
 import org.symphonykernel.ai.KnowledgeGraphBuilder;
 import org.symphonykernel.core.IAIClient;
@@ -57,6 +57,9 @@ public class AgenticPlanner {
     @Value("${symphony.agentic.max-iterations:10}")
     private int maxIterations;
 
+    @Value("${symphony.agentic.chat-history-count:5}")
+    private int chatHistoryCount;
+
     @Autowired
     private IAIClient aiClient;
 
@@ -93,7 +96,7 @@ public class AgenticPlanner {
         for (int iteration = 0; iteration < maxIterations; iteration++) {
             logger.info("Agentic iteration {}/{}", iteration + 1, maxIterations);
 
-            String planPrompt = buildPlanningPrompt(userQuery, resolvedValues, conversationHistory);
+            String planPrompt = buildPlanningPrompt(userQuery, resolvedValues, conversationHistory, ctx.getChatHistory());
             String planResponse;
             try {
                 llmSemaphore.acquire();
@@ -203,7 +206,7 @@ public class AgenticPlanner {
 
         return Mono.fromCallable(() -> {
             logger.info("Agentic stream iteration {}/{}", iteration + 1, maxIterations);
-            String planPrompt = buildPlanningPrompt(state.userQuery, state.resolvedValues, state.conversationHistory);
+            String planPrompt = buildPlanningPrompt(state.userQuery, state.resolvedValues, state.conversationHistory, ctx.getChatHistory());
             llmSemaphore.acquire();
             try {
                 return aiClient.evaluatePrompt(planPrompt);
@@ -266,9 +269,22 @@ public class AgenticPlanner {
     }
 
     private String buildPlanningPrompt(String userQuery, Map<String, JsonNode> resolvedValues, 
-                                        List<Map<String, String>> conversationHistory) {
+                                        List<Map<String, String>> conversationHistory,
+                                        List<Message> chatHistory) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("You are an intelligent agent that plans and executes tasks using available tools.\n\n");
+
+        if (chatHistory != null && !chatHistory.isEmpty()) {
+            int start = Math.max(0, chatHistory.size() - chatHistoryCount);
+            List<Message> recentHistory = chatHistory.subList(start, chatHistory.size());
+            prompt.append("## Recent Conversation History\n");
+            for (Message msg : recentHistory) {
+                prompt.append("- ").append(msg.getMessageType()).append(": ")
+                    .append(truncateResult(msg.getText())).append("\n");
+            }
+            prompt.append("\n");
+        }
+
         prompt.append("## Available Tools\n");
 
         for (MCPToolDescriptor tool : toolRegistry.listTools()) {
@@ -346,11 +362,13 @@ public class AgenticPlanner {
                 IStep step = knowledgeExecuterFactory.getExecuter(kb);
                 if (step != null) {
                     ExecutionContext stepCtx = new ExecutionContext(ctx);
+                    stepCtx.setRequest(ctx.getRequest());
                     stepCtx.setKnowledge(kb);
                     stepCtx.setName(toolName);
+                    knowledgeGraphBuilder.setParameters(stepCtx);
                     if (action.getArguments() != null && !action.getArguments().isEmpty()) {
                         stepCtx.setVariables(objectMapper.valueToTree(action.getArguments()));
-                    } else {
+                    } else if (ctx.getVariables() != null) {
                         stepCtx.setVariables(ctx.getVariables());
                     }
                     stepCtx.setConvert(true);
