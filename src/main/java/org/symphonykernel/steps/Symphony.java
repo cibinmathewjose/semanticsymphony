@@ -315,9 +315,9 @@ public class Symphony extends BaseStep {
             if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
                 (userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0)) {
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
-                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()));
+                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName(),true));
                 } else {
-                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()));
+                    result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName(),true));
                 }
             } else {
                 result = "Unable to process request, data not availabe";
@@ -354,11 +354,11 @@ public class Symphony extends BaseStep {
                 Flux<String> generatingMsg = Flux.just("Generating output:");
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
                     return generatingMsg.concatWith(
-                        azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName()))
+                        azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName(),true))
                     );
                 } else {
                     return generatingMsg.concatWith(
-                        azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName()))
+                        azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName(),true))
                     );
                 }
             } else {

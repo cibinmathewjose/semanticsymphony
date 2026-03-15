@@ -107,9 +107,15 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
 
     private String callLLM(LLMRequest request) {
         ChatClientRequestSpec client = getClient(request, false);
-        var response = client.call();
-        logTokenUsage(response.chatResponse(), request);
-        return response.content();
+        var response = client.call().chatResponse();
+        logTokenUsage(response, request);
+        if (response.getResult() != null
+                && response.getResult().getOutput() != null
+                && response.getResult().getOutput().getText() != null) {
+            return response.getResult().getOutput().getText();
+        }
+        return "";
+
     }
 
     private Flux<String> callLLMAsync(LLMRequest request) {
@@ -145,20 +151,16 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
         if (chatResponse == null || chatResponse.getMetadata() == null) {
             return;
         }
-        var usage = chatResponse.getMetadata().getUsage();
-        if (usage != null) {
-            if (logPromptEnabled) {
+
+        if (logPromptEnabled && request != null && request.isLogPrompt()) {
+            var usage = chatResponse.getMetadata().getUsage();
+            if (usage != null) {
                 logger.info("Token usage — prompt: {}, completion: {}, total: {} | system: [{}] | user: [{}]",
                         usage.getPromptTokens(),
                         usage.getCompletionTokens(),
                         usage.getTotalTokens(),
                         request.getSystemMessage(),
                         request.getUserPrompt());
-            } else {
-                logger.info("Token usage — prompt: {}, completion: {}, total: {}",
-                        usage.getPromptTokens(),
-                        usage.getCompletionTokens(),
-                        usage.getTotalTokens());
             }
         }
     }

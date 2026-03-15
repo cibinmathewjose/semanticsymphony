@@ -92,7 +92,7 @@ public abstract class AIClientBase {
             throw new IllegalArgumentException("User prompt must not be null.");
         }
         if (request.getUserPrompt().contains(SPLITTER)) {
-            return processAsParts(request.getSystemMessage(), request.getUserPrompt(), request.getTools(), request.getModelName(), llmFunction);
+            return processAsParts(request, llmFunction);
         } else {
             return process(request,llmFunction);
         }
@@ -105,7 +105,11 @@ public abstract class AIClientBase {
         }
     }
 
-    private <R> R processAsParts(String systemPrompt, String question, Object[] tools, String model, Function<LLMRequest, R> llmFunction) {
+    private <R> R processAsParts(LLMRequest request, Function<LLMRequest, R> llmFunction) {
+        String systemPrompt = request.getSystemMessage();
+         String question = request.getUserPrompt();
+          Object[] tools = request.getTools();
+          String model = request.getModelName();
         String[] parts = question.split(SPLITTER);
         String header = parts[0];
         var headerPrompt= getBasePrompt( header);
@@ -118,12 +122,12 @@ public abstract class AIClientBase {
         List<CompletableFuture<R>> futures = getFuture(tools, model,  basePrompt, partList, llmFunction);
         String finalFormattingPrompt =  getFormatingPrompt( header);
        
-            return getFinalResponse(tools, model, finalFormattingPrompt, futures, llmFunction);
+            return getFinalResponse(tools, model, finalFormattingPrompt, futures, llmFunction, request.isLogPrompt());
         
     }
 
     private <R> R getFinalResponse(Object[] tools, String model, String finalFormattingPrompt ,
-            List<CompletableFuture<R>> futures, Function<LLMRequest, R> llmFunction) {
+            List<CompletableFuture<R>> futures, Function<LLMRequest, R> llmFunction,boolean isLogPrompt) {
         StringBuilder finalResponse = new StringBuilder();
         for (CompletableFuture<R> future : futures) {
             try {
@@ -139,7 +143,7 @@ public abstract class AIClientBase {
         if(finalFormattingPrompt == null || finalFormattingPrompt.isEmpty())
             finalFormattingPrompt=  "Combine the responses into a single coherent answer: " ;
         
-        return process(new LLMRequest(finalFormattingPrompt, finalResponse.toString(), tools, model), llmFunction);
+        return process(new LLMRequest(finalFormattingPrompt, finalResponse.toString(), tools, model, isLogPrompt), llmFunction);
         
     }
 

@@ -17,7 +17,6 @@ import org.springframework.stereotype.Component;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.Knowledge;
-import org.symphonykernel.LLMRequest;
 import org.symphonykernel.ai.KnowledgeExecuterFactory;
 import org.symphonykernel.ai.KnowledgeGraphBuilder;
 import org.symphonykernel.core.IAIClient;

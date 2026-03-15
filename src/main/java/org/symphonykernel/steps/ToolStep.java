@@ -61,7 +61,7 @@ public class ToolStep extends BaseStep {
                     Map<String, JsonNode> resolvedValues = context.getResolvedValues();
                     systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, resolvedValues);
                 }
-                String result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, "", null, context.getModelName()));
+                String result = azureOpenAIHelper.execute(new LLMRequest(systemPrompt, "", null, context.getModelName(),true));
                 a = makeResponseObject(result);
             } else {
                 throw new IllegalArgumentException("Tool or system prompt not specified in knowledge data");
@@ -99,7 +99,7 @@ public class ToolStep extends BaseStep {
                      Map<String, JsonNode> resolvedValues = context.getResolvedValues();
                      systemPrompt = templateResolver.resolvePlaceholders(systemPrompt, resolvedValues);
                  }
-                 return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, "", null, context.getModelName())).doOnNext(responseAccumulator::append)
+                 return azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, "", null, context.getModelName(), true)).doOnNext(responseAccumulator::append)
                          .doFinally(signalType -> {
                              saveStepData(context, responseAccumulator.toString());
                          });
