@@ -1,6 +1,7 @@
 package org.symphonykernel.ai;
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,6 +57,14 @@ public class PluginLoader implements IPluginLoader, ApplicationContextAware {
 
     private static final Logger logger = LoggerFactory.getLogger(PluginLoader.class);
 
+    /**
+     * Allowed package prefixes for dynamically loaded classes.
+     * Prevents arbitrary class instantiation (RCE) by restricting to trusted packages.
+     */
+    private static final List<String> ALLOWED_PACKAGE_PREFIXES = List.of(
+            "org.symphonykernel."
+    );
+
     private ApplicationContext applicationContext;
     
     @Override
@@ -72,6 +81,9 @@ public class PluginLoader implements IPluginLoader, ApplicationContextAware {
      * @return An instance of the class, or null if an error occurs.
      */
     public Object createObject(String fullyQualifiedName) throws ClassNotFoundException, InstantiationException, IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+        // Validate class name against allowlist to prevent arbitrary class instantiation
+        validateClassName(fullyQualifiedName);
+        
         // Load the class using the class loader.
         Class<?> clazz = Class.forName(fullyQualifiedName);
 
@@ -100,6 +112,22 @@ public class PluginLoader implements IPluginLoader, ApplicationContextAware {
             logger.error("Error creating instance of class: " + fullyQualifiedName, e);
             return null;
         }      
+    }
+
+    /**
+     * Validates that the class name belongs to an allowed package to prevent
+     * arbitrary class instantiation attacks.
+     */
+    private void validateClassName(String fullyQualifiedName) {
+        if (fullyQualifiedName == null || fullyQualifiedName.isBlank()) {
+            throw new SecurityException("Class name cannot be null or empty");
+        }
+        boolean allowed = ALLOWED_PACKAGE_PREFIXES.stream()
+                .anyMatch(fullyQualifiedName::startsWith);
+        if (!allowed) {
+            throw new SecurityException("Class '" + fullyQualifiedName
+                    + "' is not in an allowed package. Allowed prefixes: " + ALLOWED_PACKAGE_PREFIXES);
+        }
     }
 
 }

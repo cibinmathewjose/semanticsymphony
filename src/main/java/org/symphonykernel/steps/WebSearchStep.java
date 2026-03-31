@@ -244,6 +244,7 @@ public class WebSearchStep extends BaseStep {
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
+        logger.debug("Google search for query (api credentials omitted from logs)");
         ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, entity, JsonNode.class);
         return response.getBody();
     }
@@ -256,6 +257,7 @@ public class WebSearchStep extends BaseStep {
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
+        logger.debug("SerpAPI search for query (api_key omitted from logs)");
         ResponseEntity<JsonNode> response = restTemplate.exchange(url, HttpMethod.GET, entity, JsonNode.class);
         return response.getBody();
     }

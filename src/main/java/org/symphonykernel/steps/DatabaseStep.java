@@ -602,6 +602,11 @@ public class DatabaseStep extends BaseStep {
             return dataSource.getConnection();
         }
 
+        // Validate dbName to prevent property key injection
+        if (!dbName.matches("[a-zA-Z0-9_-]+")) {
+            throw new IllegalArgumentException("Invalid database name: only alphanumeric, underscore, and hyphen characters are allowed");
+        }
+
         String prefix = "symphony.db." + dbName + ".";
         String url = environment.getProperty(prefix + "url");
         String username = environment.getProperty(prefix + "username");

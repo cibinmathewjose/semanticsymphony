@@ -168,10 +168,7 @@ public class VectorSearchHelper {
         }
         catch (Exception e)
         {
-            e.printStackTrace();
-            // If for some reason any documents are dropped during indexing, you can compensate by delaying and
-            // retrying. This simple demo just logs failure and continues
-            System.err.println("Failed to index some of the documents");
+            LOGGER.error("Failed to index some of the documents", e);
         }        
         }
 	}

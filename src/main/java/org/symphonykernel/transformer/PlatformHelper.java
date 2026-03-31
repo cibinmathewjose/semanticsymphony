@@ -9,6 +9,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.text.similarity.LevenshteinDistance;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -31,6 +33,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 @Service
 public class PlatformHelper {
 
+    private static final Logger logger = LoggerFactory.getLogger(PlatformHelper.class);
 
     /**
      * Generates an adaptive card JSON based on the provided mapping template.
@@ -68,7 +71,7 @@ public class PlatformHelper {
             body = (ArrayNode) cardTemplate.get("body");
             body.removeAll();
         } catch (JsonProcessingException e) {
-            e.printStackTrace();
+            logger.error("Error parsing adaptive card template JSON", e);
             return "";
         }
 
@@ -304,11 +307,20 @@ public class PlatformHelper {
 	private String read(Map<String, String> paramTypes, String placeholder, JsonNode valueNode) {
 		String value;
 		if ("string".equals(paramTypes.get(placeholder))) {
-		    value = "'" + valueNode.asText() + "'";
+		    // Escape single quotes to prevent SQL injection
+		    String escaped = valueNode.asText().replace("'", "''");
+		    value = "'" + escaped + "'";
 		} else if ("number".equals(paramTypes.get(placeholder))) {
-		    value = valueNode.asText();
+		    // Validate numeric values to prevent injection via number fields
+		    String numText = valueNode.asText();
+		    if (!numText.matches("-?\\d+(\\.\\d+)?")) {
+		        throw new IllegalArgumentException("Invalid numeric value for parameter: " + placeholder);
+		    }
+		    value = numText;
 		} else {
-		    value = valueNode.asText(); // Default to string if type is unknown
+		    // Default: escape as string to prevent injection
+		    String escaped = valueNode.asText().replace("'", "''");
+		    value = escaped;
 		}
 		return value;
 	}
@@ -460,8 +472,7 @@ public class PlatformHelper {
                 }
             }
         } catch (JsonProcessingException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+            logger.error("Error processing JSON during value replacement", e);
         }
 
         // Convert the result node to a JSON string and return

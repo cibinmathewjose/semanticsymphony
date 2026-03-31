@@ -55,8 +55,8 @@ public class RESTStep extends BaseStep {
         Knowledge kb = ctx.getKnowledge();
         try {
             if (kb != null && kb.getUrl() != null && !kb.getUrl().isEmpty()) {
-                try {
-                    logger.info("Executing REST " + kb.getName() + " with " + ctx.getVariables());
+              
+                    logger.info("Executing REST step: {}", kb.getName());
                     ctx.setTmplate(getTemplate(ctx))
                             .setBody(createRequestBody(ctx))
                             .setHeaders(createRequestHeader(ctx))
@@ -65,15 +65,11 @@ public class RESTStep extends BaseStep {
                     JsonNode root = invokeAPI(ctx);
                     JsonNode res = processResponse(ctx, root);
                     jsonArray.add(res);
-                    saveStepData(ctx, jsonArray);
-                } catch (Exception e) {
-                    ObjectNode err = objectMapper.createObjectNode();
-                    err.put("errors", e.getMessage());
-                    jsonArray.add(err);
-                }
+                    saveStepData(ctx, jsonArray);              
             }
 
         } catch (Exception e) {
+            logger.error("Error executing REST step: {}", kb != null ? kb.getName() : "unknown", e);
             ObjectNode err = objectMapper.createObjectNode();
             err.put("errors", e.getMessage());
             jsonArray.add(err);
@@ -160,7 +156,7 @@ public class RESTStep extends BaseStep {
 
         JsonNode root = response.getBody();
         
-        logger.info("url: {} method: {} responseBody: {}", url, method, root!=null?root.toString():"null");
+        logger.info("url: {} method: {} responseStatus: {}", url, method, response.getStatusCode());
 		return root;
 	}
 

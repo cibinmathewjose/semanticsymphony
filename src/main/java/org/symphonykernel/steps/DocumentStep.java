@@ -6,6 +6,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -228,6 +229,38 @@ public class DocumentStep extends BaseStep {
                 .doFinally(signal -> saveStepData(ctx, responseAccumulator.toString()));
     }
 
+    // ==================== URL VALIDATION ====================
+
+    /**
+     * Validates a URL to prevent SSRF attacks by blocking private/internal
+     * IP addresses and restricting to HTTP(S) schemes only.
+     */
+    private void validateUrl(String url) {
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("Document URL cannot be null or empty");
+        }
+        URI uri = URI.create(url);
+        String scheme = uri.getScheme();
+        if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+            throw new SecurityException("Only HTTP and HTTPS URLs are allowed, got: " + scheme);
+        }
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) {
+            throw new SecurityException("URL must have a valid host");
+        }
+        try {
+            InetAddress address = InetAddress.getByName(host);
+            if (address.isLoopbackAddress() || address.isSiteLocalAddress()
+                    || address.isLinkLocalAddress() || address.isAnyLocalAddress()) {
+                throw new SecurityException("URLs pointing to internal/private addresses are not allowed");
+            }
+        } catch (SecurityException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new SecurityException("Unable to resolve host: " + host);
+        }
+    }
+
     // ==================== DOCUMENT FETCHING ====================
 
     private static class FetchResult {
@@ -267,6 +300,7 @@ public class DocumentStep extends BaseStep {
     }
 
     private FetchResult fetchDocument(String url, ExecutionContext ctx) {
+        validateUrl(url);
         HttpHeaders headers = ctx.getHttpHeaderProvider() != null ? ctx.getHttpHeaderProvider().getHeader() : null;
         HttpURLConnection connection = null;
         try {

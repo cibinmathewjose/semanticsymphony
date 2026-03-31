@@ -213,10 +213,10 @@ public class SqlStep extends  BaseStep {
                 if(variables != null)
                 {
                 try {
-                    logger.info("Executing SQL " + kb.getName() + " with " + variables);
+                    logger.info("Executing SQL step: {}", kb.getName());
                     sqlQuery = platformHelper.replacePlaceholders(kb.getData(), kb.getParams(), variables);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    logger.error("Error replacing placeholders for SQL step: {}", kb.getName(), e);
                 }
             }
                 else
