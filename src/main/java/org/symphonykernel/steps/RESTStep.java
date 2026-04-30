@@ -54,26 +54,21 @@ public class RESTStep extends BaseStep {
 
         Knowledge kb = ctx.getKnowledge();
         try {
-            if (kb != null && kb.getUrl() != null && !kb.getUrl().isEmpty()) {
-                try {
-                    logger.info("Executing REST " + kb.getName() + " with " + ctx.getVariables());
-                    ctx.setTmplate(getTemplate(ctx))
-                            .setBody(createRequestBody(ctx))
-                            .setHeaders(createRequestHeader(ctx))
-                            .setMethod(ctx.getTmplate().getMethod())
-                            .setUrl(createUrl(ctx));
-                    JsonNode root = invokeAPI(ctx);
-                    JsonNode res = processResponse(ctx, root);
-                    jsonArray.add(res);
-                    saveStepData(ctx, jsonArray);
-                } catch (Exception e) {
-                    ObjectNode err = objectMapper.createObjectNode();
-                    err.put("errors", e.getMessage());
-                    jsonArray.add(err);
-                }
+            if (kb != null && kb.getUrl() != null && !kb.getUrl().isEmpty()) {             
+                logger.info("Executing REST " + kb.getName() + " with " + ctx.getVariables());
+                ctx.setTmplate(getTemplate(ctx))
+                        .setBody(createRequestBody(ctx))
+                        .setHeaders(createRequestHeader(ctx))
+                        .setMethod(ctx.getTmplate().getMethod())
+                        .setUrl(createUrl(ctx));
+                JsonNode root = invokeAPI(ctx);
+                JsonNode res = processResponse(ctx, root);
+                jsonArray.add(res);
+                saveStepData(ctx, jsonArray);              
             }
 
         } catch (Exception e) {
+            logger.error("Error executing RESTStep: ", e);
             ObjectNode err = objectMapper.createObjectNode();
             err.put("errors", e.getMessage());
             jsonArray.add(err);
