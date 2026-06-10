@@ -1,9 +1,7 @@
 package org.symphonykernel.steps;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,79 +86,32 @@ public class RESTStep extends BaseStep {
         if (ctx.getTmplate() == null || ctx.getTmplate().getUrlParams() == null) {
             return ctx.getKnowledge().getUrl();
         } else {
-            JsonNode urlParamsNode = ctx.getTmplate().getUrlParams();
-            JsonNode jsonNode = ctx.getVariables();
-
-            if (urlParamsNode.isTextual()) {
-                String output = replacePlaceholders(urlParamsNode.asText(), jsonNode);
-                return ctx.getKnowledge().getUrl() + output;
-            }
-
-            if (urlParamsNode.isObject()) {
-                return appendQueryParams(ctx.getKnowledge().getUrl(), urlParamsNode, jsonNode);
-            }
-
-            return ctx.getKnowledge().getUrl();
+            String urlParamsTemplate = ctx.getTmplate().getUrlParams();
+            String output = replacePlaceholders(urlParamsTemplate, ctx.getVariables());
+            return ctx.getKnowledge().getUrl() + output;
         }
-    }
-
-    private String appendQueryParams(String baseUrl, JsonNode paramsNode, JsonNode variablesNode) {
-        StringBuilder query = new StringBuilder();
-        Iterator<Map.Entry<String, JsonNode>> fields = paramsNode.fields();
-
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> field = fields.next();
-            String key = field.getKey();
-            JsonNode valueNode = field.getValue();
-            String value;
-
-            if (valueNode != null && valueNode.isTextual()) {
-                value = replacePlaceholders(valueNode.asText(), variablesNode);
-            } else if (valueNode != null && valueNode.isValueNode()) {
-                value = valueNode.asText();
-            } else {
-                value = valueNode != null ? valueNode.toString() : "";
-            }
-
-            if (query.length() > 0) {
-                query.append("&");
-            }
-            query.append(URLEncoder.encode(key, StandardCharsets.UTF_8))
-                    .append("=")
-                    .append(URLEncoder.encode(value, StandardCharsets.UTF_8));
-        }
-
-        if (query.length() == 0) {
-            return baseUrl;
-        }
-
-        return baseUrl + (baseUrl.contains("?") ? "&" : "?") + query;
     }
 
     private String replacePlaceholders(String inputString, JsonNode jsonNode) {
-        StringBuilder output = new StringBuilder();
-        int i = 0;
-        while (i < inputString.length()) {
-            if (inputString.charAt(i) == '{') {
-                int j = i + 1;
-                StringBuilder keyBuilder = new StringBuilder();
-                while (j < inputString.length() && inputString.charAt(j) != '}') {
-                    keyBuilder.append(inputString.charAt(j));
-                    j++;
-                }
-                String key = keyBuilder.toString();
-                if (jsonNode.has(key)) {
-                    output.append(jsonNode.get(key).asText());
-                } else {
-                    output.append("{").append(key).append("}");
-                    logger.warn("Key not found in JSON: {}", key);
-                }
-                i = j + 1; // Skip the closing '}'
+        if (inputString == null || inputString.isEmpty()) {
+            return inputString;
+        }
+
+        Pattern pattern = Pattern.compile("\\{\\{\\$([a-zA-Z0-9_\\-]+)\\}\\}");
+        Matcher matcher = pattern.matcher(inputString);
+        StringBuffer output = new StringBuffer();
+
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            if (jsonNode != null && jsonNode.has(key)) {
+                String replacement = jsonNode.get(key).asText();
+                matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
             } else {
-                output.append(inputString.charAt(i));
-                i++;
+                logger.warn("Key not found in JSON: {}", key);
+                matcher.appendReplacement(output, Matcher.quoteReplacement(matcher.group(0)));
             }
         }
+        matcher.appendTail(output);
         return output.toString();
     }
 
@@ -270,21 +221,12 @@ public class RESTStep extends BaseStep {
     protected RestRequestTemplate getTemplate(ExecutionContext ctx) throws JsonProcessingException {
         String data = ctx.getKnowledge().getData();
         RestRequestTemplate tmp = RestRequestTemplate.getDefault();
+
         if (data != null && !data.isEmpty()) {
-            if (data.contains("{{$params}}")) {
-                if (ctx.getVariables() == null) {
-                    throw new IllegalArgumentException("Variables cannot be null");
-                } else {
-                    String paramsJson = objectMapper.writeValueAsString(ctx.getVariables());
-                    data = data.replace("\"{{$params}}\"", paramsJson)
-                            .replace("{{$params}}", paramsJson);
-                }
-            }
-            
             JsonNode templateNode = objectMapper.readTree(data);
             tmp = objectMapper.convertValue(templateNode, RestRequestTemplate.class);
-            
         }
+
         return tmp;
     }
 }
