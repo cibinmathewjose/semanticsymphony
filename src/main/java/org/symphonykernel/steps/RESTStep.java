@@ -192,8 +192,9 @@ public class RESTStep extends BaseStep {
         if (ctx.getTmplate().getHeaderTemplate() != null) {
             String resolved = replacePlaceholders(ctx.getTmplate().getHeaderTemplate().toString(), ctx.getVariables());
             JsonNode resolvedNode = objectMapper.readTree(resolved);
+            final HttpHeaders finalHeaders = headers;
             resolvedNode.fields().forEachRemaining(entry ->
-                headers.set(entry.getKey(), entry.getValue().asText()));
+                finalHeaders.set(entry.getKey(), entry.getValue().asText()));
         }
         return headers;
     }
