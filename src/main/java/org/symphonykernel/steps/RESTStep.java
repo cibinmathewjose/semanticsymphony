@@ -183,11 +183,17 @@ public class RESTStep extends BaseStep {
      * @param ctx the execution context containing the template and variables
      * @return the HTTP headers for the API call
      */
-    protected HttpHeaders createRequestHeader(ExecutionContext ctx) {
+    protected HttpHeaders createRequestHeader(ExecutionContext ctx) throws JsonProcessingException {
         HttpHeaders headers = ctx.getHttpHeaderProvider() != null ? ctx.getHttpHeaderProvider().getHeader() : null;
         if (headers == null) {
             headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+        }
+        if (ctx.getTmplate().getHeaderTemplate() != null) {
+            String resolved = replacePlaceholders(ctx.getTmplate().getHeaderTemplate().toString(), ctx.getVariables());
+            JsonNode resolvedNode = objectMapper.readTree(resolved);
+            resolvedNode.fields().forEachRemaining(entry ->
+                headers.set(entry.getKey(), entry.getValue().asText()));
         }
         return headers;
     }
@@ -198,11 +204,12 @@ public class RESTStep extends BaseStep {
      * @param ctx the execution context containing the template and variables
      * @return the JSON node representing the request body
      */
-    protected JsonNode createRequestBody(ExecutionContext ctx) {
+    protected JsonNode createRequestBody(ExecutionContext ctx) throws JsonProcessingException {
 
         if (ctx.getTmplate().isIncludeRequestBody()) {
             if (ctx.getTmplate().getBodyTemplate() != null) {
-                return ctx.getTmplate().getBodyTemplate();
+                String resolved = replacePlaceholders(ctx.getTmplate().getBodyTemplate().toString(), ctx.getVariables());
+                return objectMapper.readTree(resolved);
             } else {
                 return ctx.getVariables();
             }
