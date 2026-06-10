@@ -20,7 +20,7 @@ public class RestRequestTemplate {
      * URL parameters for the request.
      */
     @JsonProperty("UrlParams")
-    public String urlParams;
+    public JsonNode urlParams;
 
     /**
      * Header template for the request.
@@ -91,7 +91,7 @@ public class RestRequestTemplate {
      *
      * @return the URL parameters
      */
-    public String getUrlParams() {
+    public JsonNode getUrlParams() {
         return urlParams;
     }
 
@@ -100,7 +100,7 @@ public class RestRequestTemplate {
      *
      * @param urlParams the URL parameters to set
      */
-    public void setUrlParams(String urlParams) {
+    public void setUrlParams(JsonNode urlParams) {
         this.urlParams = urlParams;
     }
 

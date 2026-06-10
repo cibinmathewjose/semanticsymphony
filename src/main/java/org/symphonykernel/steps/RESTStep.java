@@ -1,5 +1,10 @@
 package org.symphonykernel.steps;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Iterator;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -83,11 +88,53 @@ public class RESTStep extends BaseStep {
         if (ctx.getTmplate() == null || ctx.getTmplate().getUrlParams() == null) {
             return ctx.getKnowledge().getUrl();
         } else {
-            String inputString = ctx.getTmplate().getUrlParams();
+            JsonNode urlParamsNode = ctx.getTmplate().getUrlParams();
             JsonNode jsonNode = ctx.getVariables();
-            String output = replacePlaceholders(inputString, jsonNode);
-            return ctx.getKnowledge().getUrl() + output;
+
+            if (urlParamsNode.isTextual()) {
+                String output = replacePlaceholders(urlParamsNode.asText(), jsonNode);
+                return ctx.getKnowledge().getUrl() + output;
+            }
+
+            if (urlParamsNode.isObject()) {
+                return appendQueryParams(ctx.getKnowledge().getUrl(), urlParamsNode, jsonNode);
+            }
+
+            return ctx.getKnowledge().getUrl();
         }
+    }
+
+    private String appendQueryParams(String baseUrl, JsonNode paramsNode, JsonNode variablesNode) {
+        StringBuilder query = new StringBuilder();
+        Iterator<Map.Entry<String, JsonNode>> fields = paramsNode.fields();
+
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            String key = field.getKey();
+            JsonNode valueNode = field.getValue();
+            String value;
+
+            if (valueNode != null && valueNode.isTextual()) {
+                value = replacePlaceholders(valueNode.asText(), variablesNode);
+            } else if (valueNode != null && valueNode.isValueNode()) {
+                value = valueNode.asText();
+            } else {
+                value = valueNode != null ? valueNode.toString() : "";
+            }
+
+            if (query.length() > 0) {
+                query.append("&");
+            }
+            query.append(URLEncoder.encode(key, StandardCharsets.UTF_8))
+                    .append("=")
+                    .append(URLEncoder.encode(value, StandardCharsets.UTF_8));
+        }
+
+        if (query.length() == 0) {
+            return baseUrl;
+        }
+
+        return baseUrl + (baseUrl.contains("?") ? "&" : "?") + query;
     }
 
     private String replacePlaceholders(String inputString, JsonNode jsonNode) {
@@ -228,7 +275,9 @@ public class RESTStep extends BaseStep {
                 if (ctx.getVariables() == null) {
                     throw new IllegalArgumentException("Variables cannot be null");
                 } else {
-                    data = data.replace("{{$params}}", ctx.getVariables().toString());
+                    String paramsJson = objectMapper.writeValueAsString(ctx.getVariables());
+                    data = data.replace("\"{{$params}}\"", paramsJson)
+                            .replace("{{$params}}", paramsJson);
                 }
             }
             
