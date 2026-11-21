@@ -503,6 +503,17 @@ public class KnowledgeGraphBuilder {
     }
 
     private Object getValue(JsonNode paramNode, Map<String, Object> variables, String fieldName) {
+        if (variables != null && !variables.isEmpty()) {
+                for (Map.Entry<String, Object> entry : variables.entrySet()) {
+                    Object value = entry.getValue();
+                    if (entry.getKey() != null
+                            && entry.getKey().equalsIgnoreCase(fieldName)
+                            && value != null
+                            && (!(value instanceof String) || !((String) value).trim().isEmpty())) {
+                        return value;
+                    }
+                }
+            }
         Object mappedValue = findMapping(fieldName, paramNode, variables);
         if (mappedValue == null) {
             // Try to get default value from parameter configuration
