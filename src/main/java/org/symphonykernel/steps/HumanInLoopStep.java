@@ -24,10 +24,6 @@
 package org.symphonykernel.steps;
 
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,11 +84,11 @@ public class HumanInLoopStep extends BaseStep {
     private static final long DEFAULT_TIMEOUT_SECONDS = 300;
     private static final String AWAITING_INPUT = "AWAITING_INPUT";
 
-    private static final ConcurrentHashMap<String, CompletableFuture<String>> pendingInputs = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, String> pendingQuestions = new ConcurrentHashMap<>();
-
     @Autowired
     private TemplateResolver templateResolver;
+
+    @Autowired
+    private HumanInLoopStateStore stateStore;
 
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
@@ -103,54 +99,28 @@ public class HumanInLoopStep extends BaseStep {
         try {
             JsonNode config = getConfig(kb);
             Map<String, JsonNode> resolvedValues = ctx.getResolvedValues();
+            String sessionId = ctx.getRequest() != null ? ctx.getRequest().getSession() : null;
 
             String question = resolveQuestion(config, resolvedValues);
-            long timeoutSeconds = getTimeoutSeconds(config);
-            String defaultResponse = getDefaultResponse(config);
 
             logger.info("HumanInLoopStep [{}]: presenting question to user", requestId);
 
-            CompletableFuture<String> future = new CompletableFuture<>();
-            pendingInputs.put(requestId, future);
-            pendingQuestions.put(requestId, question);
+            stateStore.putPending(requestId, sessionId, question, null);
 
             // Build and save the question details so the caller can retrieve them
             ObjectNode questionNode = buildQuestionNode(question, config, requestId);
             jsonArray.add(questionNode);
 
-            String userInput;
-            try {
-                userInput = future.get(timeoutSeconds, TimeUnit.SECONDS);
-                logger.info("HumanInLoopStep [{}]: received user input", requestId);
-            } catch (TimeoutException e) {
-                logger.warn("HumanInLoopStep [{}]: timed out after {} seconds", requestId, timeoutSeconds);
-                userInput = defaultResponse;
-            }
-
-            // Build the result with the user's answer
-            ObjectNode resultNode = objectMapper.createObjectNode();
-            resultNode.put("question", question);
-            resultNode.put("userInput", userInput != null ? userInput : "");
-            resultNode.put("timedOut", userInput != null && userInput.equals(defaultResponse));
-            jsonArray.removeAll();
-            jsonArray.add(resultNode);
-
             saveStepData(ctx, jsonArray);
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.error("HumanInLoopStep [{}]: interrupted", requestId);
-            addError(jsonArray, "Step was interrupted");
         } catch (Exception e) {
             logger.error("HumanInLoopStep [{}]: error - {}", requestId, e.getMessage());
             addError(jsonArray, e.getMessage());
-        } finally {
-            pendingInputs.remove(requestId);
-            pendingQuestions.remove(requestId);
         }
 
         ChatResponse response = new ChatResponse();
         response.setData(jsonArray);
+        response.setStatusCode("PROCESSING");
         return response;
     }
 
@@ -162,43 +132,23 @@ public class HumanInLoopStep extends BaseStep {
         try {
             JsonNode config = getConfig(kb);
             Map<String, JsonNode> resolvedValues = ctx.getResolvedValues();
+            String sessionId = ctx.getRequest() != null ? ctx.getRequest().getSession() : null;
             String question = resolveQuestion(config, resolvedValues);
-            long timeoutSeconds = getTimeoutSeconds(config);
-            String defaultResponse = getDefaultResponse(config);
 
-            CompletableFuture<String> future = new CompletableFuture<>();
-            pendingInputs.put(requestId, future);
-            pendingQuestions.put(requestId, question);
+            stateStore.putPending(requestId, sessionId, question, null);
 
             ObjectNode questionNode = buildQuestionNode(question, config, requestId);
+            ArrayNode arr = objectMapper.createArrayNode();
+            arr.add(questionNode);
+            saveStepData(ctx, arr);
+            String content = questionNode.toString();
 
-            return Flux.just(questionNode.toString())
-                .concatWith(Flux.defer(() -> {
-                    try {
-                        String userInput = future.get(timeoutSeconds, TimeUnit.SECONDS);
-                        logger.info("HumanInLoopStep [{}]: received user input (stream)", requestId);
-                        ObjectNode resultNode = objectMapper.createObjectNode();
-                        resultNode.put("userInput", userInput != null ? userInput : "");
-                        ArrayNode arr = objectMapper.createArrayNode();
-                        arr.add(resultNode);
-                        saveStepData(ctx, arr);
-                        return Flux.just(userInput != null ? userInput : "");
-                    } catch (TimeoutException e) {
-                        logger.warn("HumanInLoopStep [{}]: timed out (stream)", requestId);
-                        return Flux.just(defaultResponse != null ? defaultResponse : "No response received");
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return Flux.just("Step was interrupted");
-                    } catch (Exception e) {
-                        return Flux.just("Error: " + e.getMessage());
-                    }
-                }))
-                .doFinally(signal -> {
-                    pendingInputs.remove(requestId);
-                    pendingQuestions.remove(requestId);
-                });
+            return Flux.just(
+                    streamStatus(ctx, "human_loop", "Awaiting your input", 1),
+                    streamContent(ctx, "human_loop", content, 2),
+                    streamComplete(ctx, "human_loop", "Paused for user input", 3));
         } catch (Exception e) {
-            return Flux.just("Error: " + e.getMessage());
+            return Flux.just(streamError(ctx, "human_loop", "Error: " + e.getMessage(), 1));
         }
     }
 
@@ -209,12 +159,8 @@ public class HumanInLoopStep extends BaseStep {
      * @param userInput the user's response
      * @return {@code true} if the input was accepted, {@code false} if no pending request was found
      */
-    public static boolean submitInput(String requestId, String userInput) {
-        CompletableFuture<String> future = pendingInputs.get(requestId);
-        if (future != null) {
-            return future.complete(userInput);
-        }
-        return false;
+    public boolean submitInput(String requestId, String userInput) {
+        return stateStore.submitInput(requestId, userInput);
     }
 
     /**
@@ -223,8 +169,8 @@ public class HumanInLoopStep extends BaseStep {
      * @param requestId the request ID
      * @return the question text, or {@code null}
      */
-    public static String getPendingQuestion(String requestId) {
-        return pendingQuestions.get(requestId);
+    public String getPendingQuestion(String requestId) {
+        return stateStore.getPendingQuestion(requestId);
     }
 
     /**
@@ -233,8 +179,8 @@ public class HumanInLoopStep extends BaseStep {
      * @param requestId the request ID
      * @return {@code true} if the request is awaiting input
      */
-    public static boolean isAwaitingInput(String requestId) {
-        return pendingInputs.containsKey(requestId);
+    public boolean isAwaitingInput(String requestId) {
+        return stateStore.isAwaitingInput(requestId);
     }
 
     private String resolveQuestion(JsonNode config, Map<String, JsonNode> resolvedValues) {
@@ -245,19 +191,15 @@ public class HumanInLoopStep extends BaseStep {
         return question;
     }
 
-    private long getTimeoutSeconds(JsonNode config) {
-        return config.has("timeoutSeconds") ? config.get("timeoutSeconds").asLong(DEFAULT_TIMEOUT_SECONDS) : DEFAULT_TIMEOUT_SECONDS;
-    }
-
-    private String getDefaultResponse(JsonNode config) {
-        return config.has("defaultResponse") ? config.get("defaultResponse").asText(null) : null;
-    }
-
     private ObjectNode buildQuestionNode(String question, JsonNode config, String requestId) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("status", AWAITING_INPUT);
         node.put("question", question);
         node.put("requestId", requestId);
+        node.put("timeoutSeconds", config.has("timeoutSeconds") ? config.get("timeoutSeconds").asLong(DEFAULT_TIMEOUT_SECONDS) : DEFAULT_TIMEOUT_SECONDS);
+        if (config.has("defaultResponse")) {
+            node.put("defaultResponse", config.get("defaultResponse").asText(""));
+        }
         if (config.has("options") && config.get("options").isArray()) {
             node.set("options", config.get("options"));
         }

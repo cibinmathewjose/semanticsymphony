@@ -12,7 +12,6 @@ import org.symphonykernel.LLMRequest;
 import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IPluginLoader;
 import org.symphonykernel.core.IStep;
-import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.transformer.TemplateResolver;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -33,9 +32,6 @@ public class ToolStep extends BaseStep {
     TemplateResolver templateResolver;
 
     @Autowired
-    IknowledgeBase knowledgeBase;
-
-    @Autowired
     IAIClient azureOpenAIHelper;
 
     @Override
@@ -49,7 +45,7 @@ public class ToolStep extends BaseStep {
         }
         logger.info("Executing Tool " + context.getKnowledge().getName());
         JsonNode paramNode = getParamNode(context.getKnowledge().getData());
-        String plugin = paramNode.get("Tool").asText();
+        String plugin = paramNode.path("Tool").asText("");
         
         if (plugin == null || plugin.isEmpty()) {
             String systemPrompt = null;
@@ -87,8 +83,9 @@ public class ToolStep extends BaseStep {
          }
          logger.info("Executing Tool " + context.getKnowledge().getName());
          JsonNode paramNode = getParamNode(context.getKnowledge().getData());
-         String plugin = paramNode.get("Tool").asText();
+         String plugin = paramNode.path("Tool").asText("");
          StringBuilder responseAccumulator = new StringBuilder();
+
          if (plugin == null || plugin.isEmpty()) {
              String systemPrompt = null;
              if (paramNode.has("SystemPrompt") && !paramNode.get("SystemPrompt").isNull()) {

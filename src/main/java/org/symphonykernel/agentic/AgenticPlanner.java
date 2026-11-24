@@ -1,6 +1,7 @@
 package org.symphonykernel.agentic;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +60,12 @@ public class AgenticPlanner {
 
     @Value("${symphony.agentic.chat-history-count:5}")
     private int chatHistoryCount;
+
+    @Value("${symphony.agentic.max-tools-in-prompt:40}")
+    private int maxToolsInPrompt;
+
+    @Value("${symphony.agentic.lazy-mcp-discovery-per-query:5}")
+    private int lazyMcpDiscoveryPerQuery;
 
     @Autowired
     private IAIClient aiClient;
@@ -274,6 +281,9 @@ public class AgenticPlanner {
         StringBuilder prompt = new StringBuilder();
         prompt.append("You are an intelligent agent that plans and executes tasks using available tools.\n\n");
 
+        warmupExternalToolsForQuery(userQuery);
+        List<MCPToolDescriptor> candidateTools = selectCandidateTools(userQuery, resolvedValues);
+
         if (chatHistory != null && !chatHistory.isEmpty()) {
             int start = Math.max(0, chatHistory.size() - chatHistoryCount);
             List<Message> recentHistory = chatHistory.subList(start, chatHistory.size());
@@ -287,7 +297,7 @@ public class AgenticPlanner {
 
         prompt.append("## Available Tools\n");
 
-        for (MCPToolDescriptor tool : toolRegistry.listTools()) {
+        for (MCPToolDescriptor tool : candidateTools) {
             prompt.append("- **").append(tool.getName()).append("**: ").append(tool.getDescription());
             if (tool.getInputSchema() != null && !tool.getInputSchema().isEmpty()) {
                 try {
@@ -342,6 +352,83 @@ public class AgenticPlanner {
         prompt.append("Respond with ONLY the JSON object, no other text.\n");
 
         return prompt.toString();
+    }
+
+    private void warmupExternalToolsForQuery(String userQuery) {
+        if (mcpClientService == null) {
+            return;
+        }
+        try {
+            mcpClientService.warmupForQuery(userQuery, lazyMcpDiscoveryPerQuery);
+        } catch (Exception ex) {
+            logger.debug("MCP warmup skipped: {}", ex.getMessage());
+        }
+    }
+
+    private List<MCPToolDescriptor> selectCandidateTools(String userQuery, Map<String, JsonNode> resolvedValues) {
+        List<MCPToolDescriptor> allTools = new ArrayList<>(toolRegistry.listTools());
+        if (allTools.isEmpty()) {
+            return allTools;
+        }
+        int maxTools = maxToolsInPrompt > 0 ? maxToolsInPrompt : allTools.size();
+        if (allTools.size() <= maxTools) {
+            return allTools;
+        }
+
+        allTools.sort(Comparator
+                .comparingInt((MCPToolDescriptor tool) -> scoreToolForQuery(tool, userQuery, resolvedValues))
+                .reversed()
+                .thenComparing((left, right) -> {
+                    String leftName = left != null && left.getName() != null ? left.getName() : "";
+                    String rightName = right != null && right.getName() != null ? right.getName() : "";
+                    return leftName.compareToIgnoreCase(rightName);
+                }));
+
+        return new ArrayList<>(allTools.subList(0, Math.min(maxTools, allTools.size())));
+    }
+
+    private int scoreToolForQuery(MCPToolDescriptor tool, String userQuery, Map<String, JsonNode> resolvedValues) {
+        if (tool == null) {
+            return Integer.MIN_VALUE;
+        }
+
+        StringBuilder textBuilder = new StringBuilder();
+        if (tool.getName() != null) {
+            textBuilder.append(tool.getName()).append(' ');
+        }
+        if (tool.getDescription() != null) {
+            textBuilder.append(tool.getDescription()).append(' ');
+        }
+        String toolText = textBuilder.toString().toLowerCase();
+
+        int score = 0;
+        if (userQuery != null && !userQuery.isBlank()) {
+            String[] terms = userQuery.toLowerCase().split("[^a-z0-9]+");
+            for (String term : terms) {
+                if (term.length() < 3) {
+                    continue;
+                }
+                if (toolText.contains(term)) {
+                    score += Math.min(term.length(), 8);
+                }
+            }
+        }
+
+        if (resolvedValues != null && !resolvedValues.isEmpty()) {
+            for (String key : resolvedValues.keySet()) {
+                if (key == null || key.isBlank()) {
+                    continue;
+                }
+                if (toolText.contains(key.toLowerCase())) {
+                    score += 2;
+                }
+            }
+        }
+
+        if (tool.getQueryType() != null && "MCP_EXTERNAL".equalsIgnoreCase(tool.getQueryType())) {
+            score += 1;
+        }
+        return score;
     }
 
     private String executeAction(AgentAction action, ExecutionContext ctx, 

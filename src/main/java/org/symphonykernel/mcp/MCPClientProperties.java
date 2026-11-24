@@ -36,6 +36,14 @@ public class MCPClientProperties {
     public static class ServerConfig {
         private String name;
         private String url;
+        private boolean enabled = true;
+        private String transport;
+        private List<String> chatReadOnlyTools = List.of();
+        private String authType;
+        private String authHeaderName;
+        private String authKeyRef;
+        private String authKey;
+        private String authQueryParamName;
 
         /** @return the server name */
         public String getName() {
@@ -55,6 +63,86 @@ public class MCPClientProperties {
         /** @param url the server URL to set */
         public void setUrl(String url) {
             this.url = url;
+        }
+
+        /** @return whether this server registration is enabled */
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        /** @param enabled whether this server registration is enabled */
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        /** @return transport mode override (auto, sse, streamable) */
+        public String getTransport() {
+            return transport;
+        }
+
+        /** @param transport transport mode override (auto, sse, streamable) */
+        public void setTransport(String transport) {
+            this.transport = transport;
+        }
+
+        /** @return operator-verified read-only tools that omit MCP annotations */
+        public List<String> getChatReadOnlyTools() {
+            return chatReadOnlyTools;
+        }
+
+        /** @param tools unqualified names verified to be read-only */
+        public void setChatReadOnlyTools(List<String> tools) {
+            this.chatReadOnlyTools = tools == null ? List.of() : List.copyOf(tools);
+        }
+
+        /** @return auth type (apiKeyHeader, bearerToken, apiKeyQuery, none) */
+        public String getAuthType() {
+            return authType;
+        }
+
+        /** @param authType auth type (apiKeyHeader, bearerToken, apiKeyQuery, none) */
+        public void setAuthType(String authType) {
+            this.authType = authType;
+        }
+
+        /** @return auth header name (default: x-api-key or Authorization) */
+        public String getAuthHeaderName() {
+            return authHeaderName;
+        }
+
+        /** @param authHeaderName auth header name */
+        public void setAuthHeaderName(String authHeaderName) {
+            this.authHeaderName = authHeaderName;
+        }
+
+        /** @return key reference used to resolve secrets from env/properties */
+        public String getAuthKeyRef() {
+            return authKeyRef;
+        }
+
+        /** @param authKeyRef key reference used to resolve secrets from env/properties */
+        public void setAuthKeyRef(String authKeyRef) {
+            this.authKeyRef = authKeyRef;
+        }
+
+        /** @return inline auth key (for local/dev only) */
+        public String getAuthKey() {
+            return authKey;
+        }
+
+        /** @param authKey inline auth key (for local/dev only) */
+        public void setAuthKey(String authKey) {
+            this.authKey = authKey;
+        }
+
+        /** @return query parameter name for apiKeyQuery auth mode */
+        public String getAuthQueryParamName() {
+            return authQueryParamName;
+        }
+
+        /** @param authQueryParamName query parameter name for apiKeyQuery auth mode */
+        public void setAuthQueryParamName(String authQueryParamName) {
+            this.authQueryParamName = authQueryParamName;
         }
     }
 }

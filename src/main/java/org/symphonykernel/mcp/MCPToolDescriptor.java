@@ -12,6 +12,7 @@ public class MCPToolDescriptor {
     private String description;
     private Map<String, Object> inputSchema;
     private String queryType;
+    private Boolean readOnlyHint;
 
     /** Default constructor. */
     public MCPToolDescriptor() {
@@ -70,6 +71,16 @@ public class MCPToolDescriptor {
     /** @param queryType the query type to set */
     public void setQueryType(String queryType) {
         this.queryType = queryType;
+    }
+
+    /** @return read-only hint, or null when not advertised */
+    public Boolean getReadOnlyHint() {
+        return readOnlyHint;
+    }
+
+    /** @param readOnlyHint whether the tool advertises read-only behavior */
+    public void setReadOnlyHint(Boolean readOnlyHint) {
+        this.readOnlyHint = readOnlyHint;
     }
 
     @Override

@@ -1,1 +1,16 @@
-If the information is insufficient to answer the question, respond with 'I'm sorry, I don't have enough information to answer that question.
+You are handling a follow-up question for an existing conversation.
+
+Use only the context below.
+
+Final output from previous step:
+{{$DATA_SET}}
+
+Additional step context:
+{{$CTX_VAR}}
+
+Rules:
+1) Answer only using the context above.
+2) Keep continuity with the previous conversation and avoid re-explaining unrelated details.
+3) If the follow-up is unclear or information is missing, ask one concise clarification question.
+4) If the answer cannot be derived from context, respond exactly with:
+I'm sorry, I don't have enough information to answer that question.

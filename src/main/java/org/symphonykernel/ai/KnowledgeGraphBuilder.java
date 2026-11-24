@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,7 +43,9 @@ import org.symphonykernel.steps.ToolStep;
 import org.symphonykernel.steps.VelocityStep;
 import org.symphonykernel.steps.WebSearchStep;
 import org.symphonykernel.steps.EmailStep;
-import org.symphonykernel.steps.HumanInLoopStep;
+import org.symphonykernel.steps.HumanInLoopStateStore;
+import org.symphonykernel.steps.WorkflowCheckpoint;
+import org.symphonykernel.steps.WorkflowCheckpointStore;
 import org.symphonykernel.transformer.JsonTransformer;
 import org.symphonykernel.transformer.PlatformHelper;
 import org.symphonykernel.transformer.TemplateResolver;
@@ -132,6 +135,15 @@ import reactor.core.publisher.Flux;
 public class KnowledgeGraphBuilder {
 
     private static final Logger logger = LoggerFactory.getLogger(KnowledgeGraphBuilder.class);
+    private static final String STREAM_SCHEMA_VERSION = "1.0";
+    private static final String FOLLOWUP_CAPABILITY_MESSAGE = "Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.";
+    private static final String FOLLOWUP_INPUT_REQUIRED_MESSAGE = "Conversation id and followup question required";
+
+    private enum FollowupRoute {
+        RESUME_PENDING_INPUT,
+        NORMAL_FOLLOWUP,
+        NONE
+    }
 
     private static final class Status {
         static final String NONE = "NONE";
@@ -196,6 +208,14 @@ public class KnowledgeGraphBuilder {
     @Autowired
     IAIClient openAI;
 
+    @Autowired(required = false)
+    private org.symphonykernel.mcp.MCPClientService mcpClientService;
+
+    @org.springframework.beans.factory.annotation.Value("${symphony.mcp.client.chat-fallback:true}")
+    private boolean mcpChatFallback;
+
+    private static final String MCP_DISCOVERY_KNOWLEDGE = "dynamic-mcp-discovery";
+
     @Autowired
     ObjectMapper objectMapper;
 
@@ -220,6 +240,12 @@ public class KnowledgeGraphBuilder {
     @Autowired(required = false)
     private InMemoryVectorIntentMatcher vectorMatcher;
 
+    @Autowired
+    private HumanInLoopStateStore humanInLoopStateStore;
+
+    @Autowired
+    private WorkflowCheckpointStore workflowCheckpointStore;
+
     /**
      * Creates a new execution context for a given chat request.
      *
@@ -231,7 +257,8 @@ public class KnowledgeGraphBuilder {
         ExecutionContext ctx = new ExecutionContext();
         ctx.setRequest(request);
          String payload=request.getPayload();
-        if(payload!=null && !payload.isEmpty()&&!payload.equals(Status.NONE))
+        if(payload!=null && !payload.isBlank()&&!payload.equals(Status.NONE)
+            && !payload.stripLeading().startsWith("{") && !payload.stripLeading().startsWith("["))
         {
             if(payload.contains("="))
             {
@@ -294,8 +321,15 @@ public class KnowledgeGraphBuilder {
         }
         Knowledge knowledge = matchKnowledge(ctx.getUsersQuery(), params);
         if (knowledge == null) {
-            throw new RuntimeException("No matching knowldge found");
+            knowledge = mcpDiscoveryKnowledge();
+            if (knowledge == null) {
+                throw new RuntimeException("No matching knowledge found");
+            }
         }
+        return assignKnowledge(ctx, knowledge);
+    }
+
+    private ExecutionContext assignKnowledge(ExecutionContext ctx, Knowledge knowledge) {
         logger.debug("Knowldge idetified as {}", knowledge.getName());
         ctx.setKnowledge(knowledge);
         UserSession s = ctx.getUserSession();
@@ -319,6 +353,15 @@ public class KnowledgeGraphBuilder {
         if (request == null) {
             return new ChatResponse("Request is null");
         }
+        String resumeRequestId = tryResumePendingInput(request);
+        if (resumeRequestId != null) {
+            return resumePendingRequest(request, resumeRequestId);
+        }
+        FollowupRoute followupRoute = resolveFollowupRoute(request);
+        if (followupRoute == FollowupRoute.NORMAL_FOLLOWUP) {
+            ExecutionContext mcpContext = prepareMcpFollowup(request);
+            return mcpContext == null ? getFollowupResponse(request) : getResponse(mcpContext);
+        }
         try {
             ExecutionContext ctx = prepareContext(request);
             ChatResponse response = getResponse(ctx);
@@ -326,15 +369,8 @@ public class KnowledgeGraphBuilder {
             logger.info("Processed request in {} ms", durationMs);
             return response;
         } catch (Exception ex) {
-            logger.warn("Error setting parameters or processing request, try to process as followup Question", ex);
-            if(hasContextInfo(request)) {
-            	return getFollowupResponse(request);
-			}
-            else
-            {
-            	throw new RuntimeException("Error processing request and no context info for followup", ex);
-            }
-        } 
+            throw new RuntimeException("Error processing request", ex);
+        }
     }
     /**
      * Processes a chat request and returns a streaming response.
@@ -344,19 +380,76 @@ public class KnowledgeGraphBuilder {
      */
     public Flux<String> streamProcess(ChatRequest request) {      
         if (request == null) {
-            return Flux.just("Request is null");
+            AtomicLong sequence = new AtomicLong(0);
+            return Flux.just(streamEnvelope(null, request, "error", "request", "Request is null", null, sequence.incrementAndGet(), null));
+        }
+        String resumeRequestId = tryResumePendingInput(request);
+        if (resumeRequestId != null) {
+            return streamResumePendingRequest(request, resumeRequestId);
+        }
+        FollowupRoute followupRoute = resolveFollowupRoute(request);
+        if (followupRoute == FollowupRoute.NORMAL_FOLLOWUP) {
+            ExecutionContext mcpContext = prepareMcpFollowup(request);
+            return mcpContext == null ? streamFollowupResponse(request) : streamResponse(mcpContext);
         }
         try {
             ExecutionContext ctx = prepareContext(request);
             return streamResponse(ctx);
         } catch (Exception ex) {
-            logger.warn("Error setting parameters or processing request, try to process as followup Question", ex);
-            if(hasContextInfo(request)) {
-                return streamFollowupResponse(request);
-            } else{
-                throw new RuntimeException("Error processing request and no context info for followup", ex);
-            }
+            throw new RuntimeException("Error processing request", ex);
         } 
+    }
+
+    private ExecutionContext prepareMcpFollowup(ChatRequest request) {
+        UserSession previous = findExistingSessionQuietly(resolveFollowupRequestId(request));
+        if (!belongsToRequest(previous, request) || previous.getKnowldgeName() == null) {
+            return null;
+        }
+        Knowledge knowledge = MCP_DISCOVERY_KNOWLEDGE.equals(previous.getKnowldgeName())
+            ? mcpDiscoveryKnowledge() : knowledgeBaserepo.GetByName(previous.getKnowldgeName());
+        if (knowledge == null || knowledge.getType() != QueryType.MCP) {
+            return null;
+        }
+        return setParameters(assignKnowledge(createContext(request), knowledge));
+    }
+
+    private boolean belongsToRequest(UserSession session, ChatRequest request) {
+        return session != null && java.util.Objects.equals(request.getUser(), session.getUserId())
+                && java.util.Objects.equals(request.getSession(), session.getSessionID());
+    }
+
+    private FollowupRoute resolveFollowupRoute(ChatRequest request) {
+        if (hasContextInfo(request)) {
+            String previousRequestId = resolveFollowupRequestId(request);
+            UserSession previousSession = findExistingSessionQuietly(previousRequestId);
+            if (!belongsToRequest(previousSession, request)) {
+                return FollowupRoute.NONE;
+            }
+            if (shouldTreatAsAnswerToPreviousAiQuestion(previousSession.getBotResponse(), request.getQuery())) {
+                return FollowupRoute.NORMAL_FOLLOWUP;
+            }
+            if (shouldHandleAsFollowupBalanced(request)) {
+                return FollowupRoute.NORMAL_FOLLOWUP;
+            }
+        }
+        return FollowupRoute.NONE;
+    }
+
+    private boolean shouldTreatAsAnswerToPreviousAiQuestion(String previousAnswer, String userQuery) {
+        if (userQuery == null || userQuery.isBlank() || previousAnswer == null || previousAnswer.isBlank()) {
+            return false;
+        }
+        String prompt = "Decide whether the user message is answering the assistant's previous question and should continue the same flow. "
+                + "Return exactly FOLLOWUP or NEW."
+                + "\\n\\nAssistant previous response:\\n" + previousAnswer
+                + "\\n\\nUser message:\\n" + userQuery;
+        try {
+            String result = openAI.evaluatePrompt(prompt);
+            return result != null && "FOLLOWUP".equalsIgnoreCase(result.trim());
+        } catch (Exception ex) {
+            logger.warn("Answer-to-previous-question AI check failed", ex);
+            return false;
+        }
     }
     /**
      * Sets parameters for the query using OpenAI prompt evaluation. Updates the request payload and variables in the execution context.
@@ -371,6 +464,12 @@ public class KnowledgeGraphBuilder {
             throw new RuntimeException("Request object must be set in context");
         }
         Knowledge knowledge = ctx.getKnowledge();
+        if (knowledge != null && knowledge.getType() == QueryType.MCP) {
+            // Only explicit request variables can select a tool directly. Natural-language selection
+            // must go through MCPStep's discovered catalog and read-only checks.
+            ctx.setVariables(request.getVariables());
+            return ctx;
+        }
         if (knowledge != null && knowledge.getParams() != null) {
             if (request.getPayload() != null && !Status.NONE.equals(request.getPayload())) {
                 logger.warn("Ignore paylod : " + request.getPayload());
@@ -677,11 +776,15 @@ public class KnowledgeGraphBuilder {
 
 		Knowledge knowledge = ctx.getKnowledge();
 		IStep step =  knowledgeExecuterFactory.getExecuter(knowledge);
+        AtomicLong sequence = new AtomicLong(0);
 		if (step == null) {
-			return Flux.just("No knowledge found for the query");
+            return Flux.just(streamEnvelope(ctx, ctx.getRequest(), "error", "intent", "No knowledge found for the query", null, sequence.incrementAndGet(), null));
 		} else {
 			try {
-				logger.info("Processing request for requestId: {}", ctx.getRequestId());
+                logger.info("stream.start requestId={} conversationId={} stage=request model={}",
+                        ctx.getRequestId(),
+                        ctx.getRequest() != null ? ctx.getRequest().getConversationId() : "",
+                        ctx.getModelName());
 				return processRequestStream(ctx,  step);
 			} catch (Exception e) {
 				logger.error("Error processing request for requestId: {}", ctx.getRequestId(), e);
@@ -691,7 +794,7 @@ public class KnowledgeGraphBuilder {
 					session.setStatus(Status.FAILED);
 					sessionManager.updateUserSession(session, null);
 				}
-				return Flux.just("An error occurred while processing your request: " + e.getMessage());
+                return Flux.just(streamEnvelope(ctx, ctx.getRequest(), "error", "request", "An error occurred while processing your request: " + e.getMessage(), null, sequence.incrementAndGet(), null));
 			} 
 
 		}
@@ -704,14 +807,14 @@ public class KnowledgeGraphBuilder {
      * @return true if context information exists
      */
     public boolean hasContextInfo(ChatRequest request) {
-    	if (request == null || request.getQuery() == null || request.getSession() == null) {
+	    if (request == null || request.getQuery() == null) {
             return false;
         }
-        String rId = sessionManager.getLastRequestId(request.getSession());
+        String rId = resolveFollowupRequestId(request);
         if (rId == null || rId.isEmpty()) {
            return false;
         }
-        return true;
+	    return findExistingSessionQuietly(rId) != null;
 	}
     
     /**
@@ -721,8 +824,8 @@ public class KnowledgeGraphBuilder {
      * @return a ChatResponse with the follow-up answer
      */
     public ChatResponse getFollowupResponse(ChatRequest request) {
-    	String rId = sessionManager.getLastRequestId(request.getSession());
-        return getFollowupResponse(rId, request.getQuery());
+    	String rId = resolveFollowupRequestId(request);
+        return getFollowupResponse(rId, request != null ? request.getQuery() : null);
 
     }
     /**
@@ -732,10 +835,10 @@ public class KnowledgeGraphBuilder {
      * @return a Flux emitting follow-up response chunks
      */
     public Flux<String> streamFollowupResponse(ChatRequest request) {
-		if (request == null || request.getQuery() == null || request.getSession() == null) {
+        if (request == null || request.getQuery() == null) {
 			throw new RuntimeException("Sorry, I am unable to process the question, please check the FAQ for more information about my capabilities.");
 		}
-		String rId = sessionManager.getLastRequestId(request.getSession());
+        String rId = resolveFollowupRequestId(request);
 		if (rId == null || rId.isEmpty()) {
 			throw new RuntimeException("No previous session found for the given conversation id");
 		}
@@ -752,9 +855,9 @@ public class KnowledgeGraphBuilder {
      * @return a Flux emitting follow-up response chunks
      */
 	 public Flux<String> streamFollowupResponse(String requestId, String query) {
-		
-		 if (requestId == null || requestId.isEmpty() || query == null || query.isEmpty()) {
-			 	throw new RuntimeException("Conversation id and followup question required");
+         String normalizedQuery = normalizeFollowupQuery(query);
+         if (requestId == null || requestId.isEmpty() || normalizedQuery == null || normalizedQuery.isEmpty()) {
+             	throw new RuntimeException(FOLLOWUP_INPUT_REQUIRED_MESSAGE);
 	        }
 	        ExecutionContext ctx = loadContext(requestId, Status.FOLLOWUP);
 
@@ -764,13 +867,30 @@ public class KnowledgeGraphBuilder {
 	        UserSession s = ctx.getUserSession();
 	        List<UserSessionStepDetails> steps = sessionManager.getRequestDetails(requestId);
 	        if (!s.getStatus().equals(Status.SUCCESS) || steps == null || steps.isEmpty() || s.getKnowldgeName() == null) {
-	        	throw new RuntimeException("Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.");
+            	throw new RuntimeException(FOLLOWUP_CAPABILITY_MESSAGE);
 	        } else {
-	        	sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), "");
+            	FollowupContextData followupContext = buildFollowupContext(s, steps);
+            	String clarification = getClarificationIfNeeded(normalizedQuery, followupContext, ctx);
+            	sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + normalizedQuery.hashCode(), "");
+            	AtomicLong sequence = new AtomicLong(0);
+            	logger.info("stream.start requestId={} conversationId={} stage=followup model={}",
+            			ctx.getRequestId(), requestId, ctx.getModelName());
+            	if (clarification != null) {
+            		sessionManager.saveRequestDetails(
+            				ctx.getRequestId(),
+            				Status.FOLLOWUP + "-" + normalizedQuery.hashCode(),
+            				" Question : " + normalizedQuery + " Ans: " + clarification);
+            		sessionManager.updateUserSession(ctx.getUserSession(), clarification, Status.SUCCESS);
+            		return Flux.concat(
+            				Flux.just(streamEnvelope(ctx, ctx.getRequest(), "status", "followup", "Processing request", null, sequence.incrementAndGet(), null)),
+            				Flux.just(streamEnvelope(ctx, ctx.getRequest(), "status", "followup", "Need more details", null, sequence.incrementAndGet(), null)),
+            				Flux.just(streamEnvelope(ctx, ctx.getRequest(), "content", "followup", "", clarification, sequence.incrementAndGet(), null))
+            		);
+            	}
 	        	return Flux.concat(
-	        			Flux.just("Processing request"),
-	        	        Flux.just("Status: Searching database..."),
-	        	        processFollowup(query, ctx, s, steps) // This returns the actual Flux<String>
+            			Flux.just(streamEnvelope(ctx, ctx.getRequest(), "status", "followup", "Processing request", null, sequence.incrementAndGet(), null)),
+            	        Flux.just(streamEnvelope(ctx, ctx.getRequest(), "status", "followup", "Status: Searching database...", null, sequence.incrementAndGet(), null)),
+            	        processFollowup(normalizedQuery, ctx, followupContext, sequence)
 	        	    );
 	        }	      
 	       
@@ -786,8 +906,9 @@ public class KnowledgeGraphBuilder {
      */
     public ChatResponse getFollowupResponse(String requestId, String query) {
         ChatResponse response = new ChatResponse();
-        if (requestId == null || requestId.isEmpty() || query == null || query.isEmpty()) {
-            response.setMessage("Conversation id and followup question required");
+        String normalizedQuery = normalizeFollowupQuery(query);
+        if (requestId == null || requestId.isEmpty() || normalizedQuery == null || normalizedQuery.isEmpty()) {
+            response.setMessage(FOLLOWUP_INPUT_REQUIRED_MESSAGE);
             return response;
         }
         ExecutionContext ctx = loadContext(requestId, Status.FOLLOWUP);
@@ -799,14 +920,27 @@ public class KnowledgeGraphBuilder {
         UserSession s = ctx.getUserSession();
         List<UserSessionStepDetails> steps = sessionManager.getRequestDetails(requestId);
         if (!s.getStatus().equals(Status.SUCCESS) || steps == null || steps.isEmpty() || s.getKnowldgeName() == null) {
-            response.setMessage("Sorry unable to process the followup question, please check the FAQ for more information about my capabilities.");
+            response.setMessage(FOLLOWUP_CAPABILITY_MESSAGE);
         } else {
+            FollowupContextData followupContext = buildFollowupContext(s, steps);
+            String clarification = getClarificationIfNeeded(normalizedQuery, followupContext, ctx);
+            if (clarification != null) {
+                sessionManager.saveRequestDetails(
+                        ctx.getRequestId(),
+                        Status.FOLLOWUP + "-" + normalizedQuery.hashCode(),
+                        " Question : " + normalizedQuery + " Ans: " + clarification);
+                sessionManager.updateUserSession(ctx.getUserSession(), clarification, Status.SUCCESS);
+                response.setMessage(clarification);
+                response.setRequestId(ctx.getRequestId());
+                response.setStatusCode(Status.SUCCESS);
+                return response;
+            }
 
             response.setMessage("Processing request");
             response.setRequestId(ctx.getRequestId());
             response.setStatusCode(Status.PROCESSING);
             executorService.submit(() -> {
-                updateSessionAndPrompt(requestId, query, ctx, s, steps, response);
+                updateSessionAndPrompt(normalizedQuery, ctx, followupContext, response);
             });
 
             return response;
@@ -818,22 +952,19 @@ public class KnowledgeGraphBuilder {
     }
 
     
-    private void updateSessionAndPrompt(String requestId, String query, ExecutionContext ctx, UserSession s, List<UserSessionStepDetails> steps, ChatResponse response) {
+    private void updateSessionAndPrompt(String query, ExecutionContext ctx, FollowupContextData followupContext, ChatResponse response) {
         sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), "");
-        StringBuilder stepDetails = new StringBuilder();
-        StringBuilder finalout = new StringBuilder();
-        String finalStep = s.getKnowldgeName();
-        build(steps, stepDetails, finalout, finalStep);
-        String prompt = fileContentProvider.prepareFollowupPrompt(stepDetails.toString(), finalout.toString());
+        String prompt = fileContentProvider.prepareFollowupPrompt(followupContext.stepDetails(), followupContext.finalOutput());
         String systemPrompt = templateResolver.resolvePlaceholders(prompt);
         String out = openAI.execute(new LLMRequest(systemPrompt, query, null, ctx.getModelName()));
         sessionManager.saveRequestDetails(ctx.getRequestId(), Status.FOLLOWUP + "-" + query.hashCode(), " Question : " + query + " Ans: " + out);
+        sessionManager.updateUserSession(ctx.getUserSession(), out, Status.SUCCESS);
         response.setMessage(out);
     }
 
    
 
-	private void build(List<UserSessionStepDetails> steps, StringBuilder stepDetails, StringBuilder finalout,
+    private void build(List<UserSessionStepDetails> steps, StringBuilder stepDetails, StringBuilder finalout,
 			String finalStep) {
 		for (UserSessionStepDetails step : steps) {
 		    String stepName = step.getStepName();
@@ -854,20 +985,16 @@ public class KnowledgeGraphBuilder {
 		    }
 		}
 	}
-    private Flux<String> processFollowup(String query, ExecutionContext ctx, UserSession s,
-			List<UserSessionStepDetails> steps) {
+    private Flux<String> processFollowup(String query, ExecutionContext ctx, FollowupContextData followupContext, AtomicLong sequence) {
     	try {
             logger.info("Processing follow-up request for requestId: {}", ctx.getRequestId());
-            StringBuilder stepDetails = new StringBuilder();
-            StringBuilder finalout = new StringBuilder();
-            String finalStep = s.getKnowldgeName();
-
-            build(steps, stepDetails, finalout, finalStep);
-            String prompt = fileContentProvider.prepareFollowupPrompt(stepDetails.toString(), finalout.toString());
+            String prompt = fileContentProvider.prepareFollowupPrompt(followupContext.stepDetails(), followupContext.finalOutput());
             String systemPrompt = templateResolver.resolvePlaceholders(prompt);
          // 2. Use a local StringBuilder to capture the stream chunks
             StringBuilder responseAccumulator = new StringBuilder();
-            return openAI.streamExecute(new LLMRequest(systemPrompt, query, null, ctx.getModelName())).doOnNext(responseAccumulator::append) // Capture each chunk as it flies by
+                return openAI.streamExecute(new LLMRequest(systemPrompt, query, null, ctx.getModelName()))
+                    .map(chunk -> streamEnvelope(ctx, ctx.getRequest(), "content", "followup", "", chunk, sequence.incrementAndGet(), null))
+                    .doOnNext(chunk -> responseAccumulator.append(extractContentFromEnvelope(chunk)))
                     .doFinally(signalType -> {
                         // 3. This runs only when the stream completes or errors out
                         String fullResponse = responseAccumulator.toString();
@@ -876,13 +1003,328 @@ public class KnowledgeGraphBuilder {
                             Status.FOLLOWUP + "-" + query.hashCode(), 
                             " Question : " + query + " Ans: " + fullResponse
                         );
-                        logger.info("Session saved for requestId: {}", ctx.getRequestId());
+                        sessionManager.updateUserSession(ctx.getUserSession(), fullResponse, Status.SUCCESS);
+                    logger.info("stream.complete requestId={} conversationId={} stage=followup signal={}",
+                        ctx.getRequestId(),
+                        ctx.getRequest() != null ? ctx.getRequest().getConversationId() : "",
+                        signalType);
                     });
             } catch (Exception e) {
 				logger.error("Error processing follow-up request for requestId: {}", ctx.getRequestId(), e);
 				String out = "An error occurred while processing your follow-up question: " + e.getMessage();
-				return Flux.just(out);
+        				return Flux.just(streamEnvelope(ctx, ctx.getRequest(), "error", "followup", out, null, sequence.incrementAndGet(), null));
             }    			
+    }
+
+    private String resolveFollowupRequestId(ChatRequest request) {
+        if (request == null) {
+            return null;
+        }
+        if (request.getConversationId() != null && !request.getConversationId().isBlank()) {
+            String conversationId = request.getConversationId();
+            if (findExistingSessionQuietly(conversationId) != null) {
+                return conversationId;
+            }
+        }
+        return sessionManager.getLastRequestId(request.getSession());
+    }
+
+    private String tryResumePendingInput(ChatRequest request) {
+        if (request == null) {
+            return null;
+        }
+        String query = request.getQuery();
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+
+        String sessionId = request.getSession();
+        String pendingRequestId = humanInLoopStateStore.getPendingRequestIdBySession(sessionId);
+        if (pendingRequestId != null && !pendingRequestId.isBlank()
+            && belongsToRequest(findExistingSessionQuietly(pendingRequestId), request)) {
+            boolean accepted = humanInLoopStateStore.submitInput(pendingRequestId, query);
+            if (accepted) {
+                logger.info("Accepted human-loop input for sessionId={} requestId={}", sessionId, pendingRequestId);
+                return pendingRequestId;
+            }
+        }
+
+        String conversationId = request.getConversationId();
+        if (conversationId != null && !conversationId.isBlank() && humanInLoopStateStore.isAwaitingInput(conversationId)
+            && belongsToRequest(findExistingSessionQuietly(conversationId), request)) {
+            boolean accepted = humanInLoopStateStore.submitInput(conversationId, query);
+            if (accepted) {
+                logger.info("Accepted human-loop input for conversationId={}", conversationId);
+                return conversationId;
+            }
+        }
+        return null;
+    }
+
+    private ChatResponse buildResumeAcceptedResponse(String requestId) {
+        ChatResponse response = new ChatResponse();
+        response.setRequestId(requestId);
+        response.setStatusCode(Status.PROCESSING);
+        response.setMessage("Input received. Resuming request...");
+        return response;
+    }
+
+    /**
+     * Resumes a paused workflow by request ID, optionally providing user input for
+     * the pending Human-In-Loop step.
+     *
+     * @param pausedRequestId paused workflow request ID
+     * @param userInput optional user input to apply before resuming
+     * @return resumed workflow response, or an error response if no paused workflow exists
+     */
+    public ChatResponse resumePausedWorkflow(String pausedRequestId, String userInput) {
+        if (pausedRequestId == null || pausedRequestId.isBlank()) {
+            ChatResponse response = new ChatResponse();
+            response.setStatusCode(Status.ERROR);
+            response.setMessage("requestId is required");
+            return response;
+        }
+
+        if (userInput != null && !userInput.isBlank()) {
+            humanInLoopStateStore.submitInput(pausedRequestId, userInput);
+        }
+
+        ExecutionContext ctx = buildResumeExecutionContext(null, pausedRequestId);
+        if (ctx == null) {
+            ChatResponse response = new ChatResponse();
+            response.setRequestId(pausedRequestId);
+            response.setStatusCode(Status.ERROR);
+            response.setMessage("No paused workflow found for requestId");
+            return response;
+        }
+        return process(ctx);
+    }
+
+    private ChatResponse resumePendingRequest(ChatRequest request, String pausedRequestId) {
+        ExecutionContext ctx = buildResumeExecutionContext(request, pausedRequestId);
+        if (ctx == null) {
+            return buildResumeAcceptedResponse(pausedRequestId);
+        }
+        return process(ctx);
+    }
+
+    private Flux<String> streamResumePendingRequest(ChatRequest request, String pausedRequestId) {
+        ExecutionContext ctx = buildResumeExecutionContext(request, pausedRequestId);
+        if (ctx == null) {
+            AtomicLong sequence = new AtomicLong(0);
+            return Flux.just(streamEnvelope(null, request, "status", "resume", "Input received. Resuming request...", null,
+                    sequence.incrementAndGet(), null));
+        }
+        return streamResponse(ctx);
+    }
+
+    private ExecutionContext buildResumeExecutionContext(ChatRequest request, String pausedRequestId) {
+        if (pausedRequestId == null || pausedRequestId.isBlank()) {
+            return null;
+        }
+        WorkflowCheckpoint checkpoint = workflowCheckpointStore.load(pausedRequestId);
+        if (checkpoint == null || checkpoint.getKnowledgeName() == null || checkpoint.getKnowledgeName().isBlank()) {
+            return null;
+        }
+
+        ExecutionContext ctx = loadContext(pausedRequestId, Status.PROCESSING);
+        if (ctx == null || ctx.getUserSession() == null) {
+            return null;
+        }
+
+        Knowledge knowledge = knowledgeBaserepo.GetByName(checkpoint.getKnowledgeName());
+        if (knowledge == null) {
+            return null;
+        }
+
+        String resumedInput = humanInLoopStateStore.consumeSubmittedInput(pausedRequestId);
+        if ((resumedInput == null || resumedInput.isBlank()) && request != null) {
+            resumedInput = request.getQuery();
+        }
+        if (resumedInput == null || resumedInput.isBlank()) {
+            return null;
+        }
+
+        ChatRequest resumeRequest = ctx.getRequest();
+        if (resumeRequest != null) {
+            resumeRequest.setSession(ctx.getUserSession().getSessionID());
+            resumeRequest.setUser(ctx.getUserSession().getUserId());
+        }
+        if (request != null && resumeRequest != null) {
+            resumeRequest.setHeaderProvider(request.getHeaderProvider());
+            ctx.setHttpHeaderProvider(request.getHeaderProvider());
+        }
+
+        ctx.setKnowledge(knowledge);
+        ctx.setModelName(checkpoint.getModelName());
+        ctx.setUsersQuery(ctx.getUserSession().getUserInput());
+        if (resumeRequest != null) {
+            resumeRequest.setQuery(ctx.getUsersQuery());
+        }
+        ctx.getResolvedValues().clear();
+        if (checkpoint.getResolvedValues() != null) {
+            ctx.getResolvedValues().putAll(checkpoint.getResolvedValues());
+        }
+        ctx.setVariables(ctx.getResolvedValues().getOrDefault("input", objectMapper.createObjectNode()));
+        if (checkpoint.getWaitingStepKey() != null && resumedInput != null) {
+            ctx.put(checkpoint.getWaitingStepKey(), resumedInput);
+        }
+
+        workflowCheckpointStore.delete(pausedRequestId);
+        humanInLoopStateStore.clearPending(pausedRequestId);
+
+        UserSession session = ctx.getUserSession();
+        session.setStatus(Status.PROCESSING);
+        sessionManager.updateUserSession(session);
+        return ctx;
+    }
+
+    private boolean shouldHandleAsFollowupBalanced(ChatRequest request) {
+        if (request == null || request.getQuery() == null || request.getQuery().isBlank()) {
+            return false;
+        }
+        String previousRequestId = resolveFollowupRequestId(request);
+        if (previousRequestId == null || previousRequestId.isBlank()) {
+            return false;
+        }
+        UserSession previousSession = findExistingSessionQuietly(previousRequestId);
+        if (previousSession == null || previousSession.getBotResponse() == null || previousSession.getBotResponse().isBlank()) {
+            return false;
+        }
+
+        String classifierPrompt = "Classify if the user query is a follow-up to the previous assistant answer. "
+                + "Use BALANCED default: avoid false positives and false negatives. "
+                + "Return exactly FOLLOWUP or NEW."
+                + "\\n\\nPrevious answer:\\n" + previousSession.getBotResponse()
+                + "\\n\\nUser query:\\n" + request.getQuery();
+        try {
+            String result = openAI.evaluatePrompt(classifierPrompt);
+            String normalized = result == null ? "" : result.trim();
+            if ("FOLLOWUP".equalsIgnoreCase(normalized)) {
+                return true;
+            }
+            return shouldHandleAsFollowupByAiReview(previousSession.getBotResponse(), request.getQuery());
+        } catch (Exception ex) {
+            logger.warn("Follow-up classification failed. Falling back to secondary AI review", ex);
+            return shouldHandleAsFollowupByAiReview(previousSession.getBotResponse(), request.getQuery());
+        }
+    }
+
+    private boolean shouldHandleAsFollowupByAiReview(String previousAnswer, String userQuery) {
+        if (userQuery == null || userQuery.isBlank()) {
+            return false;
+        }
+
+        String reviewPrompt = "Decide whether the user query should be handled as a FOLLOWUP to the previous assistant answer. "
+                + "A FOLLOWUP can be implicit (refers to previous rows/results/entities without restating full context). "
+                + "Return exactly FOLLOWUP or NEW."
+                + "\\n\\nPrevious answer:\\n" + (previousAnswer == null ? "" : previousAnswer)
+                + "\\n\\nUser query:\\n" + userQuery;
+        try {
+            String review = openAI.evaluatePrompt(reviewPrompt);
+            return review != null && "FOLLOWUP".equalsIgnoreCase(review.trim());
+        } catch (Exception ex) {
+            logger.warn("Secondary AI follow-up review failed", ex);
+            return false;
+        }
+    }
+
+    private UserSession findExistingSessionQuietly(String requestId) {
+        if (requestId == null || requestId.isBlank()) {
+            return null;
+        }
+        try {
+            return sessionManager.getRequest(requestId);
+        } catch (RuntimeException ex) {
+            logger.debug("No existing session found for requestId={} while evaluating follow-up route", requestId);
+            return null;
+        }
+    }
+
+    private String normalizeFollowupQuery(String query) {
+        if (query == null) {
+            return null;
+        }
+        String normalized = query.replaceAll("\\s+", " ").trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private FollowupContextData buildFollowupContext(UserSession session, List<UserSessionStepDetails> steps) {
+        StringBuilder stepDetails = new StringBuilder();
+        StringBuilder finalout = new StringBuilder();
+        build(steps, stepDetails, finalout, session.getKnowldgeName());
+        return new FollowupContextData(stepDetails.toString(), finalout.toString());
+    }
+
+    private String getClarificationIfNeeded(String query, FollowupContextData followupContext, ExecutionContext ctx) {
+        if (query == null || query.isBlank()) {
+            return FOLLOWUP_INPUT_REQUIRED_MESSAGE;
+        }
+
+        String shortQuery = query.trim();
+        if (shortQuery.length() < 2) {
+            return "Could you please provide a bit more detail so I can continue with the follow-up?";
+        }
+
+        if (hasPredefinedKnowledgeMatch(shortQuery, ctx)) {
+            logger.info("Skipping clarification because query has predefined knowledge match: {}", shortQuery);
+            return null;
+        }
+
+        String validationPrompt = "You are validating if a user follow-up question is specific enough to answer from prior context."
+                + " Return only one line in one of these formats:"
+                + " YES"
+                + " NO|<single concise clarification question>"
+                + "\n\nPrevious final output:\n" + followupContext.finalOutput()
+                + "\n\nPrevious step context:\n" + followupContext.stepDetails()
+                + "\n\nUser follow-up:\n" + shortQuery;
+
+        try {
+            String validation = openAI.execute(new LLMRequest(validationPrompt, shortQuery, null, ctx.getModelName()));
+            if (validation == null || validation.isBlank()) {
+                return null;
+            }
+            String result = validation.trim();
+            if ("YES".equalsIgnoreCase(result)) {
+                return null;
+            }
+            if (result.toUpperCase().startsWith("NO|")) {
+                String clarification = result.substring(3).trim();
+                if (!clarification.isEmpty()) {
+                    return clarification;
+                }
+            }
+            if (result.toUpperCase().startsWith("NO")) {
+                return "Can you clarify what specific field, period, or entity you want me to focus on?";
+            }
+            return null;
+        } catch (Exception ex) {
+            logger.warn("Follow-up validation failed; continuing without clarification gating", ex);
+            return null;
+        }
+    }
+
+    private boolean hasPredefinedKnowledgeMatch(String query, ExecutionContext ctx) {
+        try {
+            JsonNode params = null;
+            if (ctx != null && ctx.getRequest() != null) {
+                params = ctx.getRequest().getVariables();
+            }
+            Knowledge knowledge = matchKnowledge(query, params);
+            if (knowledge == null) {
+                return false;
+            }
+            if (QueryType.AGENTIC.equals(knowledge.getType()) || QueryType.SQL.equals(knowledge.getType())) {
+                return false;
+            }
+            return knowledge.getName() != null && !knowledge.getName().isBlank();
+        } catch (Exception ex) {
+            logger.debug("Predefined knowledge pre-check failed; continuing with clarification logic", ex);
+            return false;
+        }
+    }
+
+    private record FollowupContextData(String stepDetails, String finalOutput) {
     }
 
     /**
@@ -982,21 +1424,148 @@ public class KnowledgeGraphBuilder {
             response.setMessage(platformHelper.generateAdaptiveCardJson(response.getData().get(0), knowledge.getCard()));
         }
         response.setRequestId(ctx.getRequestId());
-        response.setStatusCode(Status.SUCCESS);
+        if (isAwaitingInputResponse(response)) {
+            response.setStatusCode(Status.PROCESSING);
+        } else {
+            response.setStatusCode(Status.SUCCESS);
+        }
         sessionManager.updateUserSession(ctx.getUserSession(), response);
         return response;
     }
     private Flux<String> processRequestStream(ExecutionContext ctx, IStep step) {
     	
+		AtomicLong sequence = new AtomicLong(0);
     	StringBuilder responseAccumulator = new StringBuilder();
-        return step.getResponseStream(ctx).doOnNext(responseAccumulator::append) // Capture each chunk as it flies by
+		final boolean[] awaitingInput = new boolean[] { false };
+	    return step.getResponseStream(ctx)
+	    		.map(chunk -> normalizeStreamChunk(ctx, chunk, sequence))
+	    		.doOnNext(chunk -> {
+	    			responseAccumulator.append(extractContentFromEnvelope(chunk));
+	    			if (isAwaitingInputEnvelope(chunk)) {
+	    				awaitingInput[0] = true;
+	    			}
+	    		})
                 .doFinally(signalType -> {
                     // 3. This runs only when the stream completes or errors out
                     String fullResponse = responseAccumulator.toString();
-                    sessionManager.updateUserSession(ctx.getUserSession(), fullResponse, Status.SUCCESS);
-                    logger.info("Session saved for requestId: {}", ctx.getRequestId());
+                    sessionManager.updateUserSession(ctx.getUserSession(), fullResponse,
+                            awaitingInput[0] ? Status.PROCESSING : Status.SUCCESS);
+                    logger.info("stream.complete requestId={} conversationId={} stage=request signal={}",
+                            ctx.getRequestId(),
+                            ctx.getRequest() != null ? ctx.getRequest().getConversationId() : "",
+                            signalType);
                 });
         
+    }
+
+    private String normalizeStreamChunk(ExecutionContext ctx, String chunk, AtomicLong sequence) {
+        if (isStreamEnvelope(chunk)) {
+            return chunk;
+        }
+        if (chunk != null) {
+            String trimmed = chunk.trim();
+            if ("Generating output:".equalsIgnoreCase(trimmed)) {
+                return streamEnvelope(ctx, ctx.getRequest(), "status", "response", "Generating output...", null,
+                        sequence.incrementAndGet(), null);
+            }
+            if ("Gathering information...".equalsIgnoreCase(trimmed)) {
+                return streamEnvelope(ctx, ctx.getRequest(), "status", "response", "Gathering information...", null,
+                        sequence.incrementAndGet(), null);
+            }
+        }
+        return streamEnvelope(ctx, ctx.getRequest(), "content", "response", "", chunk, sequence.incrementAndGet(), null);
+    }
+
+    private String streamEnvelope(
+            ExecutionContext ctx,
+            ChatRequest request,
+            String eventType,
+            String stage,
+            String message,
+            String content,
+            long sequence,
+            Long elapsedMs) {
+        var node = objectMapper.createObjectNode();
+        node.put("schemaVersion", STREAM_SCHEMA_VERSION);
+        node.put("eventType", eventType == null ? "status" : eventType);
+        node.put("stage", stage == null ? "unknown" : stage);
+        node.put("sequence", sequence);
+        node.put("timestamp", java.time.Instant.now().toString());
+        node.put("source", getClass().getSimpleName());
+        node.put("requestId", ctx != null ? ctx.getRequestId() : "");
+        String conversationId = request != null ? request.getConversationId() : "";
+        node.put("conversationId", conversationId == null ? "" : conversationId);
+        node.put("message", message == null ? "" : message);
+        if (content != null) {
+            node.put("content", content);
+        }
+        if (elapsedMs != null) {
+            node.put("elapsedMs", elapsedMs);
+        }
+        return node.toString();
+    }
+
+    private boolean isStreamEnvelope(String chunk) {
+        if (chunk == null || chunk.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(chunk);
+            return node.isObject() && node.has("schemaVersion") && node.has("eventType") && node.has("stage");
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private String extractContentFromEnvelope(String chunk) {
+        if (!isStreamEnvelope(chunk)) {
+            return chunk;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(chunk);
+            if (!"content".equalsIgnoreCase(node.path("eventType").asText())) {
+                return "";
+            }
+            return node.path("content").asText("");
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    private boolean isAwaitingInputResponse(ChatResponse response) {
+        if (response == null) {
+            return false;
+        }
+        if (Status.PROCESSING.equalsIgnoreCase(response.getStatusCode())) {
+            return true;
+        }
+        ArrayNode data = response.getData();
+        if (data == null || data.isEmpty()) {
+            return false;
+        }
+        JsonNode first = data.get(0);
+        return first != null && first.isObject()
+                && "AWAITING_INPUT".equalsIgnoreCase(first.path("status").asText());
+    }
+
+    private boolean isAwaitingInputEnvelope(String chunk) {
+        if (!isStreamEnvelope(chunk)) {
+            return false;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(chunk);
+            if (!"human_loop".equalsIgnoreCase(node.path("stage").asText())) {
+                return false;
+            }
+            String content = node.path("content").asText("");
+            if (content == null || content.isBlank()) {
+                return false;
+            }
+            JsonNode payload = objectMapper.readTree(content);
+            return "AWAITING_INPUT".equalsIgnoreCase(payload.path("status").asText());
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     /**
@@ -1066,15 +1635,16 @@ public class KnowledgeGraphBuilder {
             }
             String prompt = fileContentProvider.prepareMatchKnowledgePrompt(jsonString, question, params.toString());
             String response = openAI.evaluatePrompt(prompt);
+            String responseText = response == null ? "" : response.trim();
             int matchCount = -1;
-            if(response != null && !response.isEmpty() && !Status.NONE.equalsIgnoreCase(response.trim()))
+            if(!responseText.isEmpty() && !Status.NONE.equalsIgnoreCase(responseText))
             {
-                matchCount  = response.split(",").length;
+                matchCount  = responseText.split(",").length;
             }
             if (matchCount>=0 && matchCount < 5) {
                 Knowledge knowledge = null;
                 if (matchCount > 0) {
-                    String[] matches = response.trim().split(",");
+                    String[] matches = responseText.split(",");
                     for (String match : matches) {
                         knowledge = knowledgeBaserepo.GetByName(match.trim());
                         if (knowledge != null && knowledge.getParams() != null) {
@@ -1090,23 +1660,29 @@ public class KnowledgeGraphBuilder {
                     logger.debug("No matching knowldge found for the query based on parameters returning one match");
                     return knowledge;
                 } else {
-                    logger.debug("question matched with knowledge {}", response);
-                    return knowledgeBaserepo.GetByName(response.trim());
+                    logger.debug("question matched with knowledge {}", responseText);
+                    return knowledgeBaserepo.GetByName(responseText);
                 }
-            } else if (symphonyConfig.isAutonomous()) {
-                    logger.info("Agentic mode enabled via property file for knowledge: {}", response.trim());
-                    Knowledge agenticKnowledge = new Knowledge();
-                    agenticKnowledge.setType(QueryType.AGENTIC);
-                    agenticKnowledge.setName("dynamic-agentic");
-                    agenticKnowledge.setSystemPrompt("Find the appropriate agents and approach to handle the user query. If no agent is suitable, respond with 'Unable to handle the request'.");
-                    return agenticKnowledge;                    
-                } else {
+            } else {
                 String query = queryHandler.matchSelectQuery(question, params);
                 if (query != null) {
                     Knowledge k = new Knowledge();
                     k.setType(QueryType.SQL);
                     k.setData(query);
                     return k;
+                }
+                Knowledge mcpKnowledge = mcpDiscoveryKnowledge();
+                if (mcpKnowledge != null) {
+                    return mcpKnowledge;
+                }
+                if (symphonyConfig.isAutonomous()) {
+                    String routingHint = response == null ? "NONE" : response.trim();
+                    logger.info("Agentic mode enabled via property file for knowledge: {}", routingHint);
+                    Knowledge agenticKnowledge = new Knowledge();
+                    agenticKnowledge.setType(QueryType.AGENTIC);
+                    agenticKnowledge.setName("dynamic-agentic");
+                    agenticKnowledge.setSystemPrompt("Find the appropriate agents and approach to handle the user query. If no agent is suitable, respond with 'Unable to handle the request'.");
+                    return agenticKnowledge;
                 }
             }
         } catch (JsonProcessingException e) {
@@ -1115,6 +1691,16 @@ public class KnowledgeGraphBuilder {
         return null;
     }
 
+    private Knowledge mcpDiscoveryKnowledge() {
+        if (!mcpChatFallback || mcpClientService == null || mcpClientService.getRegisteredServers().isEmpty()) {
+            return null;
+        }
+        Knowledge knowledge = new Knowledge();
+        knowledge.setName(MCP_DISCOVERY_KNOWLEDGE);
+        knowledge.setType(QueryType.MCP);
+        knowledge.setData("{\"discover\":true}");
+        return knowledge;
+    }
 
 
 

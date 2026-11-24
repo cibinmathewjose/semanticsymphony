@@ -113,6 +113,7 @@ public class ExecutionContext {
         setHttpHeaderProvider(ctx.getHttpHeaderProvider());
         setUsersQuery(ctx.getUsersQuery());
         setChatHistory(ctx.getChatHistory());
+        this.request = ctx.getRequest();
         resolvedValues=new java.util.HashMap<>(ctx.getResolvedValues());
         if(ctx.getCurrentFlowItem()!=null)
         	setCurrentFlowItem(ctx.getCurrentFlowItem().copy());

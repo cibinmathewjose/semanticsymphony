@@ -1919,53 +1919,56 @@ let startChatStream = async (prompt) => {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let sseBuffer = '';
 
     status.textContent = 'Streaming response…';
-    let isGenerating = false; // The "gate" to start rendering only after we see the first "data:" chunk
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      let chunk = decoder.decode(value, { stream: true });
-    
-      // 1. Split by the standard SSE delimiter (double newline or data: prefix)
-     const lines = chunk.split('\n\n');
-      lines.forEach(line => {
-        // Only process lines that actually start with "data:"
+      sseBuffer += decoder.decode(value, { stream: true });
 
-        // Remove ONLY the "data:" prefix, keep the rest of the string exactly as is
-        let content = line.replace('data:', '');
+      const events = sseBuffer.split('\n\n');
+      sseBuffer = events.pop() || '';
 
-        // 2. Logic to skip logs and start capturing the report
-        if (!isGenerating) {
-            if (content.includes("Generating output:")) {
-                isGenerating = true;                
-                console.log(currentMarkdown);
-                currentMarkdown = ""; // Clear any pre-generation logs from the markdown content
-                status.textContent = 'Generating output…';
-                // Capture everything AFTER the trigger phrase
-                content = content.split("Generating output:")[1] || "";
-            }  
-            else if (content.length > 0) {
-               currentMarkdown += content+ "\n"; // Capture any logs that come before generation starts, if needed      
-               status.textContent = "Thinking..."; // Update status with any pre-generation messages (like "Analyzing query..." etc.)
-               
-              renderMarkdownTab();
-            }
-        }else {
-            // We use trimEnd() or keep spaces based on how your Flux sends them
-             const dataBlocks = content.split('data:');
-            dataBlocks.forEach(block => {
-               currentMarkdown += block;
-            });
-          
-            // Add a newline if the data line was effectively empty to preserve spacing
-           // if (content === "" ) {
-            //    currentMarkdown += "\n";
-          //  } 
-            renderMarkdownTab();
+      events.forEach((evt) => {
+        if (!evt) return;
+        const dataLines = evt
+          .split('\n')
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trimStart());
+        if (!dataLines.length) return;
+
+        const raw = dataLines.join('\n');
+        let envelope = null;
+        try {
+          envelope = JSON.parse(raw);
+        } catch (e) {
+          return;
         }
-    });
-  
+
+        if (!envelope || envelope.schemaVersion !== '1.0') {
+          return;
+        }
+
+        const eventType = envelope.eventType || '';
+        const stage = envelope.stage || '';
+        const message = envelope.message || '';
+        const content = typeof envelope.content === 'string' ? envelope.content : '';
+
+        if (eventType === 'status') {
+          status.textContent = message || 'Processing…';
+        } else if (eventType === 'error') {
+          status.textContent = message || 'Error';
+        } else if (eventType === 'content') {
+          currentMarkdown += content;
+          renderMarkdownTab();
+          if (stage === 'final_response' || stage === 'response' || stage === 'followup') {
+            status.textContent = 'Generating output…';
+          }
+        } else if (eventType === 'complete') {
+          status.textContent = message || 'Completed';
+        }
+      });
     }
 
     // After streaming completes, render the HTML tab from the accumulated markdown
@@ -2305,8 +2308,7 @@ window.addEventListener('load', () => {
             const botResponse = item.botResponse || '';
             if (botResponse) {
               createBotMessage();
-              var content = botResponse.split("Generating output:")[1] || "";
-              currentMarkdown = content;
+              currentMarkdown = botResponse;
               renderMarkdownTab();
               renderHtmlTab();
               if (activeBotTimestampEl && item.createDt) {

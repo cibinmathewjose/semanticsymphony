@@ -728,6 +728,35 @@ symphony.mcp.client.servers[0].name=example-server
 symphony.mcp.client.servers[0].url=http://localhost:3001
 ```
 
+Streamable HTTP is the default. Set `symphony.mcp.client.transport=sse` for a legacy default, or
+`auto` to try legacy SSE before Streamable HTTP. A per-server `transport` overrides the global choice
+in Spring configuration or in flat and nested MCP knowledge registrations.
+
+Register multiple Spring servers by using successive indexes, or list multiple entries under `mcpServers`
+in one MCP knowledge document. Chat tries configured MCP servers when normal knowledge and SQL routing
+do not match. Set `symphony.mcp.client.chat-fallback=false` to disable this fallback. A dedicated `MCP`
+knowledge entry can scope discovery to a named server, to its nested `mcpServers` entries, or to all
+registered servers with `{"discover":true}`. The model uses qualified tool IDs across multiple servers,
+so two servers can expose the same tool name. An unreachable server does not block the remaining catalog.
+
+The model answers capability questions from discovery without executing tools. For a live lookup it
+can call one eligible tool per turn. Related chat follow-ups retain the MCP scope and recent context.
+Tools marked read-only
+by a trusted server are eligible. If the server omits annotations, operators can list verified read-only
+tools using `symphony.mcp.client.servers[0].chat-read-only-tools[0]=lookup_example`, or
+`"chatReadOnlyTools": ["lookup_example"]` in the server's knowledge configuration. Never list tools
+that change state. Explicit `tool` and `arguments` payloads continue to use the direct dispatch path.
+
+**Workflow steps:** Create an `MCP` knowledge entry with `{"name":"warehouse","tool":"get_stock"}`
+where `warehouse` is a registered server. In the Symphony `Flow`, reference that knowledge entry with
+`Name` and choose a `Key` such as `stock`. Its `Payload` can be `input` or a prior result key; use a
+JSON object of tool arguments, or an object containing `arguments`. To let a workflow step choose an
+eligible read-only tool from its catalog, omit `tool` from its knowledge configuration. Payload data
+does not override the workflow's tool selection. Later stages can reuse the native result with `"Payload":"stock"` or
+reference it in prompts as `{{$stock}}`. A `HUMANLOOP` stage can use the same data in its question;
+after the reply, execution resumes with the earlier values and the reply under the human stage's key,
+without repeating completed MCP calls. Workflow follow-ups can use persisted stage results.
+
 **Key Classes**:
 - `MCPClientService`: Connects to external MCP servers, discovers tools
 - `MCPToolRegistry`: Central registry of all available tools (Symphony + external)

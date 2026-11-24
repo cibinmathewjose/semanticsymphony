@@ -14,6 +14,7 @@ import org.symphonykernel.steps.DocumentStep;
 import org.symphonykernel.steps.EmailStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.HumanInLoopStep;
+import org.symphonykernel.steps.MCPStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;
 import org.symphonykernel.steps.SqlStep;
@@ -75,6 +76,10 @@ public class KnowledgeExecuterFactory {
     @Autowired
     @Qualifier("HumanInLoopStep")
     HumanInLoopStep humanInLoopStep;
+
+    @Autowired
+    @Qualifier("MCPStep")
+    MCPStep mcpStep;
 
     
     Symphony symphony;    
@@ -144,6 +149,9 @@ public class KnowledgeExecuterFactory {
             }
             case HUMANLOOP -> {
                 return humanInLoopStep;
+            }
+            case MCP -> {
+                return mcpStep;
             }
             default -> {
                 logger.warn("Unhandled QueryType: " + knowledge.getType());

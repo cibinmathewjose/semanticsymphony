@@ -51,6 +51,9 @@ import reactor.core.publisher.Flux;
  */
 public abstract class BaseStep  implements IStep {
 
+    private static final String STREAM_SCHEMA_VERSION = "1.0";
+    private static final String EVENT_TYPE_CONTENT = "content";
+
     /** Logger instance. */
     protected static final Logger logger = LoggerFactory.getLogger(BaseStep.class);
     /** Jackson ObjectMapper for JSON processing. */
@@ -80,20 +83,9 @@ public abstract class BaseStep  implements IStep {
 	}
     @Override
     public Flux<String> streamQueryByName(ExecutionContext context) {
-        final ArrayNode[] array = new ArrayNode[1];
         Knowledge kb = knowledgeBase.GetByName(context.getName());
         if (kb != null) {
-            JsonNode var = context.getVariables();
-            if (context.getConvert()) {
-                try {
-                    JsonTransformer transformer = new JsonTransformer();
-                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                    context.setVariables(var);
-                    context.setKnowledge(kb);       		  
-                } catch (Exception e) {
-                   logger.error("Error in Json Transformation", e);
-                }
-            }
+            prepareNamedStep(context, kb);
            return getResponseStream(context);
         }
         return Flux.empty();
@@ -103,17 +95,7 @@ public abstract class BaseStep  implements IStep {
         final ArrayNode[] array = new ArrayNode[1];
         Knowledge kb = knowledgeBase.GetByName(context.getName());
         if (kb != null) {
-            JsonNode var = context.getVariables();
-            if (context.getConvert()) {
-                try {
-                    JsonTransformer transformer = new JsonTransformer();
-                    var = transformer.compareAndReplaceJson(kb.getParams(), context.getVariables());
-                    context.setVariables(var);
-                    context.setKnowledge(kb);       		  
-                } catch (Exception e) {
-                   logger.error("Error in Json Transformation", e);
-                }
-            }
+            prepareNamedStep(context, kb);
             ChatResponse a = getResponse(context);
             if (a != null) {
                 if (a.getData() != null) {
@@ -124,6 +106,17 @@ public abstract class BaseStep  implements IStep {
             }
         }
         return array[0];
+    }
+
+    private void prepareNamedStep(ExecutionContext context, Knowledge kb) {
+        context.setKnowledge(kb);
+        if (context.getConvert() && kb.getParams() != null && !kb.getParams().isBlank()) {
+            try {
+                context.setVariables(new JsonTransformer().compareAndReplaceJson(kb.getParams(), context.getVariables()));
+            } catch (Exception e) {
+                logger.error("Error in Json Transformation", e);
+            }
+        }
     }
     /**
      * Saves step data as a JsonNode to the session store.
@@ -180,6 +173,93 @@ public abstract class BaseStep  implements IStep {
         ObjectNode objectNode = objectMapper.createObjectNode();
         objectNode.put("TextOutput", jsonString);
         return objectNode;
+    }
+
+    /**
+     * Builds a strict JSON stream envelope.
+     *
+     * @param ctx execution context
+     * @param eventType event type (status/content/error/complete)
+     * @param stage stream stage
+     * @param message human-friendly message
+     * @param content content chunk when eventType is content
+     * @param sequence event sequence number
+     * @param elapsedMs optional elapsed milliseconds
+     * @return serialized JSON envelope
+     */
+    protected String streamEnvelope(
+            ExecutionContext ctx,
+            String eventType,
+            String stage,
+            String message,
+            String content,
+            long sequence,
+            Long elapsedMs) {
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("schemaVersion", STREAM_SCHEMA_VERSION);
+        node.put("eventType", eventType == null ? "status" : eventType);
+        node.put("stage", stage == null ? "unknown" : stage);
+        node.put("sequence", sequence);
+        node.put("timestamp", java.time.Instant.now().toString());
+        node.put("source", getClass().getSimpleName());
+        node.put("requestId", ctx != null ? ctx.getRequestId() : "");
+        String conversationId = "";
+        if (ctx != null && ctx.getRequest() != null && ctx.getRequest().getConversationId() != null) {
+            conversationId = ctx.getRequest().getConversationId();
+        }
+        node.put("conversationId", conversationId);
+        node.put("message", message == null ? "" : message);
+        if (content != null) {
+            node.put("content", content);
+        }
+        if (elapsedMs != null) {
+            node.put("elapsedMs", elapsedMs);
+        }
+        return node.toString();
+    }
+
+    protected String streamStatus(ExecutionContext ctx, String stage, String message, long sequence) {
+        return streamEnvelope(ctx, "status", stage, message, null, sequence, null);
+    }
+
+    protected String streamError(ExecutionContext ctx, String stage, String message, long sequence) {
+        return streamEnvelope(ctx, "error", stage, message, null, sequence, null);
+    }
+
+    protected String streamContent(ExecutionContext ctx, String stage, String content, long sequence) {
+        return streamEnvelope(ctx, EVENT_TYPE_CONTENT, stage, "", content, sequence, null);
+    }
+
+    protected String streamComplete(ExecutionContext ctx, String stage, String message, long sequence) {
+        return streamEnvelope(ctx, "complete", stage, message, null, sequence, null);
+    }
+
+    protected boolean isStreamEnvelope(String chunk) {
+        if (chunk == null || chunk.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(chunk);
+            return node.isObject() && node.has("schemaVersion") && node.has("eventType") && node.has("stage");
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    protected String extractContentFromEnvelope(String chunk) {
+        if (!isStreamEnvelope(chunk)) {
+            return chunk;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(chunk);
+            String eventType = node.path("eventType").asText();
+            if (!EVENT_TYPE_CONTENT.equalsIgnoreCase(eventType)) {
+                return "";
+            }
+            return node.path("content").asText("");
+        } catch (Exception ex) {
+            return "";
+        }
     }
       /**
      * Parses a JSON string into a JsonNode.
