@@ -9,7 +9,7 @@
     </parent>
     <groupId>org.symphonykernel</groupId>
     <artifactId>symphony-ai</artifactId>
-    <version>1.1.0-SNAPSHOT</version> 
+    <version>1.1.1-SNAPSHOT</version> 
     <packaging>jar</packaging>
     <name>Symphony AI</name>
     <description>Defines a chat agentic framework with Spring AI and SpringBoot</description>

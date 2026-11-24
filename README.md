@@ -75,6 +75,13 @@ Solutions for common issues:
 
 **Use this** when you encounter problems.
 
+### Companion projects: runnable demo and evaluations
+
+- [Symphony AI Demo](https://github.com/cibinmathewjose/symphony-ai-demo) is a runnable Spring Boot application that shows how to define knowledge and workflows in YAML, stream chat replies, and pause a workflow for human approval. Start here to see Symphony AI in action.
+- [Symphony Eval](https://github.com/cibinmathewjose/symphony-eval) runs YAML-defined regression suites against an application's API and produces JSON and HTML batch reports. It supports deterministic checks and optional LLM-based scoring. It is built separately and is not required by the Symphony runtime.
+
+To try them together, run the demo locally, then point Symphony Eval's SSE adapter at `http://localhost:8085/directchat/stream`. Start with read-only cases such as inventory lookups or return-policy questions, then adapt those suites for your own application.
+
 ---
 
 ## 🚀 Quick Start
