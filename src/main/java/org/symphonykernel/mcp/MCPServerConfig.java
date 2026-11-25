@@ -72,12 +72,16 @@ public class MCPServerConfig {
          * @return the list of MCP tool specifications
          */
     @Bean
-    public List<SyncToolSpecification> symphonyMcpTools() {
+        public List<SyncToolSpecification> symphonyMcpTools(
+            @org.springframework.beans.factory.annotation.Value("${symphony.mcp.server.human-loop-tools-enabled:true}")
+            boolean humanLoopToolsEnabled) {
         List<SyncToolSpecification> tools = new ArrayList<>();
 
         tools.add(buildListPredefinedWorkflowsTool());
-        tools.add(buildSubmitHumanInputTool());
-        tools.add(buildResumeWorkflowTool());
+        if (humanLoopToolsEnabled) {
+            tools.add(buildSubmitHumanInputTool());
+            tools.add(buildResumeWorkflowTool());
+        }
 
         for (MCPToolDescriptor descriptor : toolRegistry.listTools()) {
             if (!isPredefinedWorkflow(descriptor)) {

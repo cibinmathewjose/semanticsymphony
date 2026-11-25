@@ -47,4 +47,9 @@ public interface IAIClient {
      * @return the LLM response
      */
     String processImage(String systemMessage, String base64Image);
+
+    /** Processes a normalized PNG with a user prompt and a vision-capable model. */
+    default String processPng(String systemMessage, String userPrompt, String base64Image, String modelName) {
+        return processImage(systemMessage + "\n\n" + userPrompt, base64Image);
+    }
 }

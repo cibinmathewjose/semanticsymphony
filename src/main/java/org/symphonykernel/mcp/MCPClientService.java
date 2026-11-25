@@ -227,7 +227,7 @@ public class MCPClientService {
         var builder = HttpClientSseClientTransport.builder(serverOrigin(uri))
             .sseEndpoint(endpointPath(uri, "/sse"));
         applyHeaderAuthIfConfigured(builder, server, resolvedAuthKey);
-        return initializeClient(server.getName(), McpClient.sync(builder.build()).build());
+        return initializeClient(server.getName(), withDeadlines(McpClient.sync(builder.build())).build());
     }
 
     private McpSyncClient connectUsingStreamableTransport(MCPClientProperties.ServerConfig server, String url, String resolvedAuthKey) {
@@ -235,7 +235,12 @@ public class MCPClientService {
         var builder = HttpClientStreamableHttpTransport.builder(serverOrigin(uri))
             .endpoint(endpointPath(uri, "/mcp"));
         applyHeaderAuthIfConfigured(builder, server, resolvedAuthKey);
-        return initializeClient(server.getName(), McpClient.sync(builder.build()).build());
+        return initializeClient(server.getName(), withDeadlines(McpClient.sync(builder.build())).build());
+    }
+
+    private McpClient.SyncSpec withDeadlines(McpClient.SyncSpec spec) {
+        return spec.requestTimeout(clientProperties.getRequestTimeout())
+                .initializationTimeout(clientProperties.getInitializationTimeout());
     }
 
     private McpSyncClient initializeClient(String serverName, McpSyncClient client) {
@@ -273,11 +278,15 @@ public class MCPClientService {
         return uri.getRawQuery() == null ? path : path + "?" + uri.getRawQuery();
     }
 
-    private void registerDiscoveredTools(String serverName, McpSyncClient client) {
+    void registerDiscoveredTools(String serverName, McpSyncClient client) {
         List<MCPToolDescriptor> descriptors = new ArrayList<>();
         Set<String> seenCursors = new HashSet<>();
         String cursor = null;
+        int pages = 0;
         do {
+            if (++pages > clientProperties.getMaxToolDiscoveryPages()) {
+                throw new IllegalStateException("MCP tool discovery exceeded its page limit");
+            }
             McpSchema.ListToolsResult page = cursor == null ? client.listTools() : client.listTools(cursor);
             if (page == null) {
                 break;
@@ -294,7 +303,10 @@ public class MCPClientService {
                 }
             }
             cursor = page.nextCursor();
-        } while (cursor != null && !cursor.isBlank() && seenCursors.add(cursor));
+            if (cursor != null && !cursor.isBlank() && !seenCursors.add(cursor)) {
+                throw new IllegalStateException("MCP tool discovery returned a repeated cursor");
+            }
+        } while (cursor != null && !cursor.isBlank());
         descriptors.forEach(toolRegistry::registerExternalTool);
         logger.info("Discovered {} tools from MCP server '{}'", descriptors.size(), serverName);
     }
@@ -349,7 +361,14 @@ public class MCPClientService {
     }
 
     private List<MCPClientProperties.ServerConfig> loadFromKnowledgeBase() {
-        Map<String, String> activeDescriptions = knowledgeBase.getActiveKnowledgeDescriptions();
+        Map<String, String> activeDescriptions;
+        try {
+            activeDescriptions = knowledgeBase.getActiveKnowledgeDescriptions();
+        } catch (RuntimeException e) {
+            logger.warn("Skipping Knowledge-backed MCP server registrations; configured servers are unaffected: {}",
+                    e.getMessage());
+            return Collections.emptyList();
+        }
         if (activeDescriptions == null || activeDescriptions.isEmpty()) {
             return Collections.emptyList();
         }

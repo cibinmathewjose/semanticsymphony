@@ -942,7 +942,7 @@ footer {
   }
 
   body::before {
-    content: 'Cornerstone Copilot - AI generated document';
+    content: 'Copilot - AI generated document';
     position: fixed;
     top: 50%;
     left: 50%;
@@ -1059,10 +1059,14 @@ footer {
     <script type="module">
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked@15.0.7/+esm';
 import DOMPurify from 'https://cdn.jsdelivr.net/npm/dompurify@3.2.5/+esm';
+import { pendingQuestion, readChatStream } from './chat-stream.mjs';
 
 const localStorageNamespace = 'com.markdownlivepreview';
 const localStorageThemeKey = 'theme_settings';
 const JWT_TOKEN_STORAGE_KEY = 'jwttknkey';
+// Keep approval replies in the same backend session, without sharing it across tabs.
+const chatSession = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+  byte => byte.toString(16).padStart(2, '0')).join('');
 let currentMarkdown = '';
 let currentController = null;
 let isStreaming = false;
@@ -1224,6 +1228,7 @@ let buildRequestConfig = (prompt, model) => {
   const payload = {
     key: 'CHAT',
     user,
+    session: chatSession,
     fromUrl: fromUrl,
     query: prompt
   };
@@ -1880,6 +1885,10 @@ let enhanceTableInteractions = (table) => {
   });
 };
 
+const approvalMarkdown = ({ question, options }) => options.length
+  ? `${question}\n\n${options.map(option => '- ' + option).join('\n')}\n\nEnter your choice in the chat.`
+  : question;
+
 // Stream chat response from API and render progressively
 let startChatStream = async (prompt) => {
   const status = document.querySelector('#chat-status');
@@ -1904,82 +1913,45 @@ let startChatStream = async (prompt) => {
 
     const response = await fetch('/copilot/api/v1/directchat/stream', {
       method: 'POST',
-      headers,
+      headers: { ...headers, Accept: 'text/event-stream' },
       body: JSON.stringify(payload),
       signal: controller.signal
     });
 
-    if (!response.body) {
-      throw new Error('Streaming response body is not available');
-    }
-
-    if (!response.ok) {
-      throw new Error('Request failed with status ' + response.status);
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let sseBuffer = '';
-
     status.textContent = 'Streaming response…';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      sseBuffer += decoder.decode(value, { stream: true });
-
-      const events = sseBuffer.split('\n\n');
-      sseBuffer = events.pop() || '';
-
-      events.forEach((evt) => {
-        if (!evt) return;
-        const dataLines = evt
-          .split('\n')
-          .filter(line => line.startsWith('data:'))
-          .map(line => line.slice(5).trimStart());
-        if (!dataLines.length) return;
-
-        const raw = dataLines.join('\n');
-        let envelope = null;
-        try {
-          envelope = JSON.parse(raw);
-        } catch (e) {
-          return;
-        }
-
-        if (!envelope || envelope.schemaVersion !== '1.0') {
-          return;
-        }
-
-        const eventType = envelope.eventType || '';
-        const stage = envelope.stage || '';
-        const message = envelope.message || '';
-        const content = typeof envelope.content === 'string' ? envelope.content : '';
-
-        if (eventType === 'status') {
-          status.textContent = message || 'Processing…';
-        } else if (eventType === 'error') {
-          status.textContent = message || 'Error';
-        } else if (eventType === 'content') {
+    let failed = false;
+    const outcome = await readChatStream(response, ({ eventType, stage, message, content }, approval) => {
+      if (eventType === 'error') {
+        failed = true;
+        status.textContent = 'Error: ' + (message || 'The server reported a streaming error.');
+      } else if (eventType === 'content') {
+        if (approval) {
+          if (currentMarkdown) currentMarkdown += '\n\n';
+          currentMarkdown += approvalMarkdown(approval);
+        } else if (typeof content === 'string') {
           currentMarkdown += content;
-          renderMarkdownTab();
-          if (stage === 'final_response' || stage === 'response' || stage === 'followup') {
-            status.textContent = 'Generating output…';
-          }
-        } else if (eventType === 'complete') {
-          status.textContent = message || 'Completed';
         }
-      });
-    }
+        renderMarkdownTab();
+        if (!failed && approval) status.textContent = 'Awaiting your input…';
+        if (!failed && ['final_response', 'response', 'followup'].includes(stage)) {
+          status.textContent = 'Generating output…';
+        }
+      } else if (!failed && (eventType === 'status' || eventType === 'complete')) {
+        status.textContent = message || 'Processing…';
+      }
+    });
 
     // After streaming completes, render the HTML tab from the accumulated markdown
     renderHtmlTab();
 
-    status.textContent = 'Done';
-    if (activeBotTimestampEl) {
+    status.textContent = outcome.error ? 'Error: ' + outcome.error
+      : outcome.pending ? 'Awaiting your input…' : 'Done';
+    if (!outcome.error && activeBotTimestampEl) {
       activeBotTimestampEl.textContent = 'Received: ' + formatTimestamp(new Date());
     }
   } catch (e) {
     console.error(e);
+    if (currentMarkdown) renderHtmlTab();
     if (e && e.name === 'AbortError') {
       status.textContent = 'Stopped.';
     } else {
@@ -2030,11 +2002,15 @@ let startChatOnce = async (prompt) => {
 
     status.textContent = 'Waiting for response…';
     const data = await response.json();
-    currentMarkdown = (data && typeof data.message === 'string') ? data.message : '';
+    if (['ERROR', 'FAILED'].includes(data?.statusCode)) {
+      throw new Error(data.message || 'The server could not complete the request.');
+    }
+    const approval = pendingQuestion(data?.data);
+    currentMarkdown = approval ? approvalMarkdown(approval) : typeof data?.message === 'string' ? data.message : '';
     renderMarkdownTab();
     renderHtmlTab();
 
-    status.textContent = 'Done';
+    status.textContent = approval ? 'Awaiting your input…' : 'Done';
     if (activeBotTimestampEl) {
       activeBotTimestampEl.textContent = 'Received: ' + formatTimestamp(new Date());
     }
@@ -2183,7 +2159,7 @@ let initModelDropdown = async () => {
 };
 
 function extractUserFromJwt(jwt) {
-  if (jwt && jwt.endsWith('~RDS')) {
+  if (jwt && jwt.includes('~')) {
     const dashIndex = jwt.lastIndexOf('-');
     const tildeIndex = jwt.lastIndexOf('~');
     if (dashIndex !== -1 && tildeIndex > dashIndex + 1) {
@@ -2328,14 +2304,14 @@ window.addEventListener('load', () => {
 });
     </script>
 
-    <title>Cornerstone Copilot</title>
+    <title>Copilot</title>
   </head>
 
   <body>
     <header>
       <div id="menu-items">
         <div style="display: flex; align-items: center; gap: 8px;">
-          <div>Cornerstone Copilot</div>
+          <div>Copilot</div>
         </div>
       </div>
       <div>

@@ -19,6 +19,12 @@ public interface HumanInLoopStateStore {
      */
     void putPending(String requestId, String sessionId, String question, CompletableFuture<String> future);
 
+    /** Registers pending input with the caller identity used for session routing. */
+    default void putPending(String requestId, String sessionId, String user, String question,
+            CompletableFuture<String> future) {
+        putPending(requestId, sessionId, question, future);
+    }
+
     /**
      * Submits input for a pending request.
      *
@@ -52,6 +58,11 @@ public interface HumanInLoopStateStore {
      */
     String getPendingRequestIdBySession(String sessionId);
 
+    /** Resolves pending input for a caller and session. */
+    default String getPendingRequestIdBySession(String sessionId, String user) {
+        return getPendingRequestIdBySession(sessionId);
+    }
+
     /**
      * Consumes submitted user input for a pending request.
      *
@@ -59,6 +70,15 @@ public interface HumanInLoopStateStore {
      * @return submitted input if present, otherwise null
      */
     String consumeSubmittedInput(String requestId);
+
+    /** Claims the answer for a saved checkpoint, optionally supplying it directly. */
+    default String claimAnswer(WorkflowCheckpoint checkpoint, String answer) {
+        String id = checkpoint.getRequestId();
+        if (answer != null && !answer.isBlank() && !submitInput(id, answer)) {
+            return null;
+        }
+        return consumeSubmittedInput(id);
+    }
 
     /**
      * Clears pending state for request.

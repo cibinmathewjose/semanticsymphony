@@ -50,7 +50,13 @@ public class MCPToolRegistry {
      */
     public void refreshRegistry() {
         toolRegistry.clear();
-        Map<String, String> descriptions = knowledgeBase.getActiveKnowledgeDescriptions();
+        Map<String, String> descriptions;
+        try {
+            descriptions = knowledgeBase.getActiveKnowledgeDescriptions();
+        } catch (RuntimeException e) {
+            logger.warn("Skipping MCP tool discovery because the Knowledge catalog is unavailable: {}", e.getMessage());
+            return;
+        }
         if (descriptions == null || descriptions.isEmpty()) {
             logger.warn("No knowledge descriptions found for MCP tool registry");
             return;

@@ -10,6 +10,8 @@
 7. [Database Intelligence](#database-intelligence)
 8. [Document Processing](#document-processing)
 9. [Web Search](#web-search)
+  - [SharePoint Search](#sharepoint-search)
+  - [Azure AI Search](#azure-ai-search)
 10. [Human-in-the-Loop](#human-in-the-loop)
 11. [Authentication Step](#authentication-step)
 12. [Error Handling](#error-handling)
@@ -386,14 +388,14 @@ JsonNode chartData = response.getData();
 
 ## Agentic Workflows
 
-The Agentic step uses the ReAct (Reason + Act) pattern where the LLM dynamically plans which tools to use.
+The Agentic step can plan with eligible read-only tools by default. The host and individual agents can restrict the catalog further.
 
 ### Example 1: Basic Agentic Request
 
 ```java
 // The Agentic step doesn't require predefined flows — the LLM decides which tools to call
 ChatRequest request = new ChatRequest();
-request.setQuery("Find recent orders for customer ACME Corp and send a summary email to the sales team");
+request.setQuery("Find and summarize recent orders for customer ACME Corp");
 request.setUser("analyst_001");
 
 ChatResponse response = agent.process(request);
@@ -405,26 +407,25 @@ ChatResponse response = agent.process(request);
 {
   "name": "smart-assistant",
   "type": "Agentic",
-  "description": "An intelligent assistant that can access databases, APIs, and send emails",
-  "systemPrompt": "You are a helpful business assistant. Use the available tools to answer questions about customers, orders, and products. Always verify data before sending emails.",
-  "data": {
-    "maxIterations": 10
-  }
+  "description": "A read-only assistant for recent order lookups",
+  "systemPrompt": "Summarize the available order data and indicate missing information.",
+  "data": "{\"allowedTools\":[\"recent-orders\"],\"maxIterations\":4}"
 }
 ```
 
 ### Example 3: Agentic with MCP Tools
 
-When MCP client is enabled, the agentic planner can use both Symphony steps and external MCP tools:
+Configure the MCP server and list any write-capable tools so the agent cannot call them. Local tools are otherwise treated as read-only unless a descriptor or built-in rule blocks them. The optional `read-only-tools` restriction limits the catalog further:
 
 ```properties
-# Enable MCP client to augment agentic planning with external tools
+symphony.agentic.read-only-tools=recent-orders,warehouse/get-stock
+symphony.agentic.write-tools=update-order,warehouse/adjust-stock
 symphony.mcp.client.enabled=true
-symphony.mcp.client.servers[0].name=filesystem-server
-symphony.mcp.client.servers[0].url=http://localhost:3001
-symphony.mcp.client.servers[1].name=database-server
-symphony.mcp.client.servers[1].url=http://localhost:3002
+symphony.mcp.client.servers[0].name=warehouse
+symphony.mcp.client.servers[0].url=https://warehouse.example.com/mcp
 ```
+
+To let the example agent use `warehouse/get-stock`, also add it to its Knowledge `allowedTools`. The tool must pass the MCP server's read-only chat rules. See [AgenticStep configuration and limits](DEVELOPER_DOCUMENTATION.md#8-agenticstep). Use an explicit approval-gated Symphony workflow for changes such as sending email.
 
 ---
 
@@ -557,7 +558,7 @@ ChatResponse response = agent.process(request);
 
 ## Document Processing
 
-The DocumentStep processes multiple document formats including PDF, DOCX, Excel, and images.
+`DocumentStep` answers a question using evidence extracted from a document at a trusted HTTPS URL.
 
 ### Example 1: Analyze a PDF Document
 
@@ -567,30 +568,30 @@ The DocumentStep processes multiple document formats including PDF, DOCX, Excel,
   "name": "analyze-document",
   "type": "Document",
   "description": "Extract and analyze document content",
-  "data": {
-    "chunkSize": 4000,
-    "chunkOverlap": 200,
-    "parallelThreads": 4
-  }
+  "data": "{\"SystemPrompt\":\"Cite page numbers when present.\",\"UserPrompt\":\"Summarize the key findings.\",\"ChunkSize\":4000}"
 }
 ```
 
 **Configuration** (`application.properties`):
 ```properties
+symphony.document.allowed-hosts=documents.example.com
+# Optional: follow up to five HTTPS redirects, all within allowed-hosts
+symphony.document.follow-redirects=false
+# Optional: configured vision-capable model alias for scanned PDFs and images
+# symphony.document.vision-model=
 symphony.document.chunk-size=4000
 symphony.document.chunk-overlap=200
 symphony.document.scanned-text-threshold=50
 symphony.document.pdf-image-dpi=150
-symphony.document.parallel-threads=4
 ```
 
-**Supported Formats**: PDF (text + scanned), DOCX, Excel (.xlsx, .xls), plain text, images (JPEG, PNG, TIFF, BMP, GIF, WebP)
+Pass `variables.url` (or configure the Knowledge URL). `variables.userPrompt` overrides Knowledge data `UserPrompt`; if neither is supplied, the chat question is used. See [supported formats and deployment limits](DEVELOPER_DOCUMENTATION.md#12-documentstep).
 
 ---
 
 ## Web Search
 
-The WebSearchStep integrates internet search with optional LLM summarization.
+`WEBSEARCH` uses Microsoft's [Foundry Web Search tool](https://learn.microsoft.com/azure/foundry/openai/how-to/web-search) through the Responses API to return a grounded answer with citations, not a ranked list of snippets.
 
 ### Example 1: Search the Web
 
@@ -598,25 +599,69 @@ The WebSearchStep integrates internet search with optional LLM summarization.
 ```json
 {
   "name": "web-search",
-  "type": "WebSearch",
+  "type": "WEBSEARCH",
   "description": "Search the internet for information",
-  "data": {
-    "provider": "bing",
-    "resultCount": 5,
-    "summarize": true
-  }
+  "data": "{\"SystemPrompt\":\"Prefer official sources.\"}"
 }
 ```
 
 **Configuration** (`application.properties`):
 ```properties
-symphony.websearch.bing.api-key=${BING_API_KEY}
-# Or for Google:
-# symphony.websearch.google.api-key=${GOOGLE_API_KEY}
-# symphony.websearch.google.cx=${GOOGLE_CX}
+symphony.websearch.foundry.endpoint=${FOUNDRY_WEBSEARCH_ENDPOINT:}
+symphony.websearch.foundry.deployment=${FOUNDRY_WEBSEARCH_DEPLOYMENT:}
+symphony.websearch.foundry.api-key=${FOUNDRY_WEBSEARCH_API_KEY:}
 ```
 
-**Providers**: `bing`, `google`, `serpapi`
+Set the endpoint to the HTTPS **resource origin**, not a project URL or full API path. Set the deployment to an existing Azure OpenAI deployment that supports `web_search`. For production, prefer a host-provided Microsoft Entra `TokenCredential` bean named `foundryWebSearchCredential` instead of setting a key. See [setup and migration](DEVELOPER_DOCUMENTATION.md#13-websearchstep).
+
+---
+
+## SharePoint Search
+
+`SHAREPOINT` uses [Microsoft Search in Graph](https://learn.microsoft.com/en-us/graph/search-concept-files) to run a keyword search against indexed files and list items. Symphony scopes the search to the configured URL, checks each returned link against that scope, and asks the configured model to answer only from the search excerpts. The step does not download full documents or replicate Copilot Studio’s retrieval and ranking.
+
+```json
+{
+  "name": "hr-sharepoint",
+  "type": "SHAREPOINT",
+  "description": "Answer questions about HR policies",
+  "url": "https://contoso.sharepoint.com/sites/HR/Shared%20Documents/Policies"
+}
+```
+
+- Use a direct SharePoint Online site, library, or folder URL on `*.sharepoint.com`. Do not use a sharing link or a library view URL. Set `symphony.sharepoint.url` as the fallback for Knowledge entries without a URL. Request variables cannot override the scope.
+- Register a `SharePointTokenProvider` Spring bean in the host application. It must resolve a Microsoft Graph **delegated** token for the authenticated work or school user from trusted server-side identity and OAuth state (for example, via an existing delegated connection or an on-behalf-of flow). Configure the appropriate read permissions for `driveItem` and `listItem` search; see the [Graph search permissions](https://learn.microsoft.com/en-us/graph/api/search-query?view=graph-rest-1.0#permissions). A token issued for an A2A or Foundry endpoint is not a Graph token. The step does not start a sign-in flow or fall back to app-only credentials.
+- The step uses `variables.query` if present, otherwise the chat question. It returns `[{"query":"…","summary":"… [1]","sources":[{"id":1,"title":"…","url":"…"}]}]`. Missing evidence produces a no-answer response with an empty source list. The streaming API emits the complete result with citations together.
+- Search excerpts are sent to the configured text model; answers and citations are saved through the normal step session store. Review model and session retention policies before enabling this for sensitive sites.
+
+---
+
+## Azure AI Search
+
+`AZURE_AI_SEARCH` runs a read-only keyword query against an existing Azure AI Search index. It returns ranked documents for a downstream workflow step; it does not generate an answer, run vector or hybrid search, or create or populate an index.
+
+Configure the host with the Azure public-cloud service origin, not an index or API URL:
+
+```properties
+symphony.azure-ai-search.endpoint=https://my-search.search.windows.net
+# Only needed if the host does not provide the named Entra credential:
+symphony.azure-ai-search.query-key=${AZURE_SEARCH_QUERY_KEY:}
+```
+
+Prefer a Spring `TokenCredential` bean named `azureAISearchStepCredential` (for example, a managed identity) with **Search Index Data Reader** scoped to the intended index where possible. For key authentication use a **query key**, not an admin key. These settings are independent of Symphony's internal indexing connection.
+
+```json
+{
+  "name": "search-product-docs",
+  "type": "AZURE_AI_SEARCH",
+  "description": "Retrieve product documentation",
+  "data": "{\"index\":\"product-docs\",\"searchFields\":[\"title\",\"content\"],\"select\":[\"id\",\"title\",\"content\",\"url\"],\"top\":5}"
+}
+```
+
+`select` is required and lists retrievable fields; `searchFields` is optional and lists searchable fields. `top` defaults to 5 (range 1–20). The step uses `variables.query` or the chat question, treating it as keyword text rather than Lucene syntax. Requests cannot override the endpoint, index, credential, or field selection.
+
+The response is `[{"query":"…","index":"product-docs","hits":[{"score":1.23,"document":{"id":"…","title":"…","content":"…","url":"…"}}]}]`. A successful query without matches returns `hits: []`. Results are saved through the step session store. Restrict access to this Knowledge entry to users entitled to see its results: unlike `SHAREPOINT`, this step uses a service credential and does not enforce per-user document permissions.
 
 ---
 

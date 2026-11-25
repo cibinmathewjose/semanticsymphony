@@ -105,7 +105,7 @@ public class HumanInLoopStep extends BaseStep {
 
             logger.info("HumanInLoopStep [{}]: presenting question to user", requestId);
 
-            stateStore.putPending(requestId, sessionId, question, null);
+            stateStore.putPending(requestId, sessionId, ctx.getRequest() == null ? null : ctx.getRequest().getUser(), question, null);
 
             // Build and save the question details so the caller can retrieve them
             ObjectNode questionNode = buildQuestionNode(question, config, requestId);
@@ -135,7 +135,7 @@ public class HumanInLoopStep extends BaseStep {
             String sessionId = ctx.getRequest() != null ? ctx.getRequest().getSession() : null;
             String question = resolveQuestion(config, resolvedValues);
 
-            stateStore.putPending(requestId, sessionId, question, null);
+            stateStore.putPending(requestId, sessionId, ctx.getRequest() == null ? null : ctx.getRequest().getUser(), question, null);
 
             ObjectNode questionNode = buildQuestionNode(question, config, requestId);
             ArrayNode arr = objectMapper.createArrayNode();

@@ -114,6 +114,7 @@ public class Symphony extends BaseStep {
             StringBuilder responseAccumulator = new StringBuilder();
             AtomicLong sequence = new AtomicLong(0);
             AtomicReference<ObjectNode> pausedNode = new AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean flowFailed = new java.util.concurrent.atomic.AtomicBoolean();
             logger.info("stream.start requestId={} conversationId={} stage=symphony", ctx.getRequestId(),
                     ctx.getRequest() != null ? ctx.getRequest().getConversationId() : "");
             return Flux.just(streamStatus(ctx, "symphony", "Gathering information...", sequence.incrementAndGet()))
@@ -125,6 +126,7 @@ public class Symphony extends BaseStep {
                                 pausedNode.set(paused.getAwaitingInputNode());
                                 return buildPauseStream(ctx, paused.getAwaitingInputNode(), sequence);
                             }
+                            flowFailed.set(true);
                             logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
                             return Flux.just(streamError(ctx, "flow_items", "Error: " + e.getMessage(), sequence.incrementAndGet()));
                         })
@@ -132,7 +134,7 @@ public class Symphony extends BaseStep {
                 .concatWith(
                     // After all flow items complete, stream the final response
                     Flux.defer(() -> {
-                        if (pausedNode.get() != null) {
+                        if (pausedNode.get() != null || flowFailed.get()) {
                             return Flux.empty();
                         }
                         logger.info("Completed processing flow items, now processing final response as stream");
@@ -236,7 +238,7 @@ public class Symphony extends BaseStep {
                 .doOnNext(msg -> logger.info("Flux emitting: {}", msg))
                 .doOnComplete(() -> logger.info("Stream sequence finished for: {}", itemName))
                 .onErrorResume(e -> {
-                    if (e instanceof WorkflowPausedException) {
+                    if (e instanceof WorkflowPausedException || isHumanInputItem(item)) {
                         return Flux.error(e);
                     }
                     logger.error("Error in {}: {}", itemName, e.getMessage());
@@ -277,6 +279,9 @@ public class Symphony extends BaseStep {
             if (awaitingNode != null) {
                 saveWorkflowCheckpoint(ctx, item, resolvedValues);
                 return awaitingNode;
+            }
+            if (kb.getType() == org.symphonykernel.QueryType.HUMANLOOP) {
+                throw new IllegalStateException("Could not save the pending approval");
             }
             addResultMap(resolvedValues, item, result);
             processPrompt(item.getKey().toLowerCase(), resolvedValues, item.SystemPrompt);

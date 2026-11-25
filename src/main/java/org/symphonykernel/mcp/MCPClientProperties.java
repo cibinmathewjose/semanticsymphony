@@ -1,5 +1,6 @@
 package org.symphonykernel.mcp;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,6 +22,49 @@ import org.springframework.stereotype.Component;
 public class MCPClientProperties {
 
     private List<ServerConfig> servers = new ArrayList<>();
+    private Duration requestTimeout = Duration.ofSeconds(20);
+    private Duration initializationTimeout = Duration.ofSeconds(20);
+    private int maxToolDiscoveryPages = 10;
+
+    /** @return deadline for each MCP request */
+    public Duration getRequestTimeout() {
+        return requestTimeout;
+    }
+
+    /** @param timeout positive MCP request deadline */
+    public void setRequestTimeout(Duration timeout) {
+        requestTimeout = positiveTimeout(timeout);
+    }
+
+    /** @return deadline for MCP initialization */
+    public Duration getInitializationTimeout() {
+        return initializationTimeout;
+    }
+
+    /** @param timeout positive MCP initialization deadline */
+    public void setInitializationTimeout(Duration timeout) {
+        initializationTimeout = positiveTimeout(timeout);
+    }
+
+    /** @return maximum number of pages requested during tool discovery */
+    public int getMaxToolDiscoveryPages() {
+        return maxToolDiscoveryPages;
+    }
+
+    /** @param pages positive page limit for tool discovery */
+    public void setMaxToolDiscoveryPages(int pages) {
+        if (pages < 1) {
+            throw new IllegalArgumentException("MCP tool discovery page limit must be positive");
+        }
+        maxToolDiscoveryPages = pages;
+    }
+
+    private static Duration positiveTimeout(Duration timeout) {
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            throw new IllegalArgumentException("MCP timeout must be positive");
+        }
+        return timeout;
+    }
 
     /** @return the list of server configurations */
     public List<ServerConfig> getServers() {

@@ -357,16 +357,18 @@ symphony.agentic.max-iterations=10
 # symphony.db.<dbname>.driver-class-name=
 
 # Document Processing
+# symphony.document.allowed-hosts=documents.example.com
+# symphony.document.follow-redirects=false
+# symphony.document.vision-model=
 symphony.document.chunk-size=4000
 symphony.document.chunk-overlap=200
 symphony.document.scanned-text-threshold=50
 symphony.document.pdf-image-dpi=150
-symphony.document.parallel-threads=4
 
 # Web Search
-# symphony.websearch.bing.api-key=
-# symphony.websearch.google.api-key=
-# symphony.websearch.google.cx=
+# symphony.websearch.foundry.endpoint=${FOUNDRY_WEBSEARCH_ENDPOINT:}
+# symphony.websearch.foundry.deployment=${FOUNDRY_WEBSEARCH_DEPLOYMENT:}
+# symphony.websearch.foundry.api-key=${FOUNDRY_WEBSEARCH_API_KEY:}
 
 # Email (Spring Mail)
 spring.mail.host=smtp.example.com
@@ -559,22 +561,45 @@ Handles file operations (PDF extraction, document parsing).
 ### 8. AgenticStep
 **Class**: `org.symphonykernel.steps.AgenticStep`
 
-Executes agentic workflows using the ReAct (Reason + Act) pattern. The LLM dynamically plans which tools to use without predefined flows.
+Plans and runs eligible read-only tools. If `symphony.agentic.read-only-tools` is omitted or blank, all eligible read-only tools can be considered for the planning catalog, subject to catalog limits. Set it to a comma-separated list of exact, case-sensitive names to restrict the catalog further:
 
-**Configuration**:
+```properties
+# Optional restriction: only these eligible read-only tools
+symphony.agentic.read-only-tools=inventory-lookup,warehouse/get-stock
+# Exclude write-capable tools from agentic execution
+symphony.agentic.write-tools=update-inventory,warehouse/adjust-stock
+symphony.agentic.max-iterations=10
+symphony.agentic.max-actions=12
+symphony.agentic.timeout=PT60S
+```
+
+Optional Knowledge `data` (a JSON string):
 ```json
 {
-  "type": "Agentic",
-  "systemPrompt": "You are a helpful assistant with access to tools.",
-  "maxIterations": 10
+  "allowedTools": ["inventory-lookup"],
+  "systemPrompt": "Use concise inventory terminology.",
+  "maxIterations": 4
 }
 ```
 
-**Features**:
-- LLM-driven dynamic planning
-- Supports both Symphony steps and external MCP tools
-- Configurable max iterations (default: 10)
-- Thread pool semaphore for concurrent LLM calls
+`allowedTools` can only narrow the eligible catalog and any host restriction; an empty array disables tools for that agent. `maxIterations` can only lower the host cap. The Knowledge system prompt is the fallback for `systemPrompt`; planning uses the request's model. The catalog shown to the model is enforced at dispatch, and every action in a batch must pass JSON Schema validation before any run. Schemas containing references are not supported. Local tools use their registered parameter schema; tools without one take no arguments. Earlier results can be used as evidence by later actions, but each child request gets its own validated input and payload.
+
+Local tools are treated as read-only unless listed in `symphony.agentic.write-tools`, explicitly marked non-read-only, or of a blocked type. The write list takes precedence over both `read-only-tools` and `allowedTools`. Remove the old `verified-local-read-only-tools` property and list any write-capable tools before deploying; the planner cannot infer side effects. Use read-only credentials where possible. External MCP tools still have to pass the server's existing read-only chat eligibility checks, and the write list can exclude them by their qualified names. Nested agents, workflow delegation, authentication, email, and other blocked types remain unavailable. **Writes remain outside `AGENTIC`:** put them in an explicit Symphony workflow with a `HUMANLOOP` step and an explicit approval check before the write.
+
+Sync and streaming save the same successful final result. Streaming emits tool start/completion/failure notices and the final answer, not model reasoning. The deadline limits how long callers wait and stops scheduling further actions; a downstream client that ignores cancellation may still finish a call already in flight. Set timeouts on downstream clients as well.
+
+#### Default Knowledge on no match
+
+```properties
+symphony.ai.autonomous=true
+symphony.ai.default-knowledge=inventory-database,web-search,product-docs-search
+```
+
+Use exact names of active local Knowledge entries, not type names. Explicit and normal intent matches still take precedence. When no registered Knowledge matches, autonomous routing with a nonempty default list runs every eligible default with the same question, then generates one answer from the available results. This takes precedence over generated SQL, MCP discovery, and dynamic agent planning. Without a default list, the existing fallback chain applies.
+
+Use read-only steps that can run directly from the question without additional variables, such as `DATABASE`, `WEBSEARCH`, and `AZURE_AI_SEARCH`. The list does not bypass tool restrictions: include these names in `symphony.agentic.read-only-tools` if set, and do not list write-capable entries as defaults. Nested `AGENTIC`, `SYMPHONY`, and external MCP tools are not valid defaults. Each name is attempted once, up to four at a time, within the agentic timeout. Keep the list within `symphony.agentic.max-actions` and the hard cap of 20. Failed or timed-out sources do not prevent synthesis from the others; if none returns usable evidence, the request fails without asking the model to guess.
+
+Only configure defaults appropriate for every caller who can reach this fallback. Each source receives the question, including public web search if enabled, and bounded excerpts of the results are sent to the configured language model.
 
 ### 9. DatabaseStep
 **Class**: `org.symphonykernel.steps.DatabaseStep`
@@ -640,41 +665,24 @@ Sends emails with template resolution via Spring Mail.
 ### 12. DocumentStep
 **Class**: `org.symphonykernel.steps.DocumentStep`
 
-Multi-format document analysis and extraction.
+**Supported formats:** PDF (digital, scanned and mixed), Word (`.docx`, `.doc`), Excel (`.xlsx`, `.xls`), text (including CSV, JSON and XML), JPEG, PNG, BMP, GIF, and multipage TIFF. WebP requires an installed ImageIO decoder. Unsupported or encrypted files fail explicitly. Excel uses cached formula values; formulas are not recalculated. PDF vision fallback is per page and only applies to pages with insufficient extractable text; it does not perform OCR on every digital page.
 
-**Supported Formats**: PDF (text + scanned), DOCX, Excel, plain text, images (JPEG, PNG, TIFF, BMP, GIF, WebP)
+**Required migration:** Set `symphony.document.allowed-hosts` to a comma-separated list of exact, trusted document hostnames. The list is empty by default. Only HTTPS on the default port or 443 is accepted, and caller request headers are not forwarded. Redirects are off by default. Set `symphony.document.follow-redirects=true` to follow up to five redirects; each destination must independently pass the same HTTPS and hostname checks. Use a short-lived signed download URL when authorization is needed. Only allow storage hosts you control, enforce outbound network policy, and avoid logging signed links in callers.
 
-**Configuration**:
-```json
-{
-  "type": "Document",
-  "chunkSize": 4000,
-  "chunkOverlap": 200,
-  "parallelThreads": 4
-}
-```
+`variables.url` overrides the Knowledge URL. The system prompt comes from Knowledge JSON `SystemPrompt`, then the Knowledge system prompt, then the built-in default. The user prompt comes from `variables.userPrompt`, then Knowledge JSON `UserPrompt`, then the chat question. Set `symphony.document.vision-model` to a configured vision-capable alias if the request model cannot handle PNG inputs. Documents and rendered pages are sent to the configured AI provider; review your data-handling policy before enabling this step.
 
-**Features**:
-- Chunk-based processing with overlap
-- Parallel processing (configurable threads)
-- Vision model support for scanned pages and images
+Processing is limited to 20 MiB per download, 50 PDF pages or image frames, 12 megapixels per rendered/decoded page, 8 MiB per encoded PNG, 128,000 extracted characters and 64 chunks. Page transcription and chunk extraction run sequentially per document; `parallel-threads` is no longer used. Streaming emits the final answer after preparation.
 
 ### 13. WebSearchStep
 **Class**: `org.symphonykernel.steps.WebSearchStep`
 
-Internet search with optional LLM summarization.
+`WEBSEARCH` uses the [Foundry Models Responses API](https://learn.microsoft.com/azure/foundry/openai/how-to/web-search) with hosted `web_search` (Web IQ). No persistent agent, Bing key, or second LLM call is required.
 
-**Configuration**:
-```json
-{
-  "type": "WebSearch",
-  "provider": "bing",
-  "resultCount": 5,
-  "summarize": true
-}
-```
+1. Use an Azure OpenAI deployment that supports the tool and verify that Web Search isn't blocked in your subscription. Set `symphony.websearch.foundry.endpoint` to the resource origin (for example, `https://your-resource.openai.azure.com`) and `symphony.websearch.foundry.deployment` to the deployment name.
+2. For Entra authentication, expose a cached Azure SDK `TokenCredential` (such as managed identity) as a Spring bean named `foundryWebSearchCredential`, and grant it inference permissions on the Azure OpenAI resource. The step requests `https://ai.azure.com/.default`. Without this bean, configure `symphony.websearch.foundry.api-key` from a secret store. Credentials and endpoint are never read from workflow data.
+3. Keep existing knowledge entries of type `WEBSEARCH`. Remove legacy `provider`, `count`, and Google/Bing/SerpApi key settings; they are ignored. Optional `SystemPrompt` in the Knowledge data JSON is passed as supplemental instructions. `variables.query` takes precedence over the user's query.
 
-**Providers**: Bing, Google, SerpAPI
+The step always returns one item with `query`, `summary`, and `sources` (deduplicated `title`/`url` citations), or an `errors` item. Streaming emits the same JSON array in one chunk after completion. Update consumers that expect `results`, snippets, or token deltas, and display citation links with the answer. Review [Web IQ terms](https://www.microsoft.com/en-us/webiq/webiq-legal), billing, and the data boundary before enabling this step for user queries or sending internal data to it.
 
 ### 14. HumanInLoopStep
 **Class**: `org.symphonykernel.steps.HumanInLoopStep`

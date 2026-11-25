@@ -98,9 +98,9 @@ class MCPWorkflowTest {
         var paused = graph.streamResponse(context).collectList().block(Duration.ofSeconds(5));
         assertThat(paused).anyMatch(event -> event.contains("AWAITING_INPUT") && event.contains("quantity"));
         assertThat(checkpoint.get().getResolvedValues().get("stock").path("quantity").asInt()).isEqualTo(7);
-        when(humanState.getPendingRequestIdBySession("session-1")).thenReturn("request-1");
-        when(humanState.submitInput("request-1", "Continue")).thenReturn(true);
-        when(humanState.consumeSubmittedInput("request-1")).thenReturn("Continue");
+        when(humanState.getPendingRequestIdBySession("session-1", "operator")).thenReturn("request-1");
+        when(humanState.claimAnswer(any(WorkflowCheckpoint.class), org.mockito.ArgumentMatchers.eq("Continue")))
+            .thenReturn("Continue");
 
         var completed = graph.streamProcess(request("Continue")).collectList().block(Duration.ofSeconds(5));
         assertThat(completed).anyMatch(event -> event.contains("final_response") && event.contains("checked"));

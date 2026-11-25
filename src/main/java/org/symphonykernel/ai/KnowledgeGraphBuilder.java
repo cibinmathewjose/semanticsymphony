@@ -30,7 +30,7 @@ import org.symphonykernel.core.IStep;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.providers.SessionProvider;
-import org.symphonykernel.steps.AgenticStep;
+import org.symphonykernel.agentic.AgenticPlanner;
 import org.symphonykernel.steps.AuthenticationStep;
 import org.symphonykernel.steps.DatabaseStep;
 import org.symphonykernel.steps.DocumentStep;
@@ -1039,33 +1039,25 @@ public class KnowledgeGraphBuilder {
         }
 
         String sessionId = request.getSession();
-        String pendingRequestId = humanInLoopStateStore.getPendingRequestIdBySession(sessionId);
+        String pendingRequestId = humanInLoopStateStore.getPendingRequestIdBySession(sessionId, request.getUser());
         if (pendingRequestId != null && !pendingRequestId.isBlank()
             && belongsToRequest(findExistingSessionQuietly(pendingRequestId), request)) {
-            boolean accepted = humanInLoopStateStore.submitInput(pendingRequestId, query);
-            if (accepted) {
-                logger.info("Accepted human-loop input for sessionId={} requestId={}", sessionId, pendingRequestId);
-                return pendingRequestId;
-            }
+            return pendingRequestId;
         }
 
         String conversationId = request.getConversationId();
         if (conversationId != null && !conversationId.isBlank() && humanInLoopStateStore.isAwaitingInput(conversationId)
             && belongsToRequest(findExistingSessionQuietly(conversationId), request)) {
-            boolean accepted = humanInLoopStateStore.submitInput(conversationId, query);
-            if (accepted) {
-                logger.info("Accepted human-loop input for conversationId={}", conversationId);
-                return conversationId;
-            }
+            return conversationId;
         }
         return null;
     }
 
-    private ChatResponse buildResumeAcceptedResponse(String requestId) {
+    private ChatResponse buildResumeUnavailableResponse(String requestId) {
         ChatResponse response = new ChatResponse();
         response.setRequestId(requestId);
-        response.setStatusCode(Status.PROCESSING);
-        response.setMessage("Input received. Resuming request...");
+        response.setStatusCode(Status.ERROR);
+        response.setMessage("Approval could not be resumed. It may not be ready, may have expired, or may already have been handled.");
         return response;
     }
 
@@ -1085,11 +1077,7 @@ public class KnowledgeGraphBuilder {
             return response;
         }
 
-        if (userInput != null && !userInput.isBlank()) {
-            humanInLoopStateStore.submitInput(pausedRequestId, userInput);
-        }
-
-        ExecutionContext ctx = buildResumeExecutionContext(null, pausedRequestId);
+        ExecutionContext ctx = buildResumeExecutionContext(null, pausedRequestId, userInput);
         if (ctx == null) {
             ChatResponse response = new ChatResponse();
             response.setRequestId(pausedRequestId);
@@ -1101,24 +1089,24 @@ public class KnowledgeGraphBuilder {
     }
 
     private ChatResponse resumePendingRequest(ChatRequest request, String pausedRequestId) {
-        ExecutionContext ctx = buildResumeExecutionContext(request, pausedRequestId);
+        ExecutionContext ctx = buildResumeExecutionContext(request, pausedRequestId, request.getQuery());
         if (ctx == null) {
-            return buildResumeAcceptedResponse(pausedRequestId);
+            return buildResumeUnavailableResponse(pausedRequestId);
         }
         return process(ctx);
     }
 
     private Flux<String> streamResumePendingRequest(ChatRequest request, String pausedRequestId) {
-        ExecutionContext ctx = buildResumeExecutionContext(request, pausedRequestId);
+        ExecutionContext ctx = buildResumeExecutionContext(request, pausedRequestId, request.getQuery());
         if (ctx == null) {
             AtomicLong sequence = new AtomicLong(0);
-            return Flux.just(streamEnvelope(null, request, "status", "resume", "Input received. Resuming request...", null,
-                    sequence.incrementAndGet(), null));
+                return Flux.just(streamEnvelope(null, request, "error", "resume",
+                    buildResumeUnavailableResponse(pausedRequestId).getMessage(), null, sequence.incrementAndGet(), null));
         }
         return streamResponse(ctx);
     }
 
-    private ExecutionContext buildResumeExecutionContext(ChatRequest request, String pausedRequestId) {
+    private ExecutionContext buildResumeExecutionContext(ChatRequest request, String pausedRequestId, String answer) {
         if (pausedRequestId == null || pausedRequestId.isBlank()) {
             return null;
         }
@@ -1131,16 +1119,16 @@ public class KnowledgeGraphBuilder {
         if (ctx == null || ctx.getUserSession() == null) {
             return null;
         }
+        if (request != null && !belongsToRequest(ctx.getUserSession(), request)) {
+            return null;
+        }
 
         Knowledge knowledge = knowledgeBaserepo.GetByName(checkpoint.getKnowledgeName());
         if (knowledge == null) {
             return null;
         }
 
-        String resumedInput = humanInLoopStateStore.consumeSubmittedInput(pausedRequestId);
-        if ((resumedInput == null || resumedInput.isBlank()) && request != null) {
-            resumedInput = request.getQuery();
-        }
+        String resumedInput = humanInLoopStateStore.claimAnswer(checkpoint, answer);
         if (resumedInput == null || resumedInput.isBlank()) {
             return null;
         }
@@ -1166,7 +1154,7 @@ public class KnowledgeGraphBuilder {
             ctx.getResolvedValues().putAll(checkpoint.getResolvedValues());
         }
         ctx.setVariables(ctx.getResolvedValues().getOrDefault("input", objectMapper.createObjectNode()));
-        if (checkpoint.getWaitingStepKey() != null && resumedInput != null) {
+        if (checkpoint.getWaitingStepKey() != null) {
             ctx.put(checkpoint.getWaitingStepKey(), resumedInput);
         }
 
@@ -1426,6 +1414,9 @@ public class KnowledgeGraphBuilder {
         response.setRequestId(ctx.getRequestId());
         if (isAwaitingInputResponse(response)) {
             response.setStatusCode(Status.PROCESSING);
+        } else if (knowledge != null && QueryType.AGENTIC.equals(knowledge.getType())
+                && "ERROR".equalsIgnoreCase(response.getStatusCode())) {
+            response.setStatusCode(Status.FAILED);
         } else {
             response.setStatusCode(Status.SUCCESS);
         }
@@ -1437,6 +1428,7 @@ public class KnowledgeGraphBuilder {
 		AtomicLong sequence = new AtomicLong(0);
     	StringBuilder responseAccumulator = new StringBuilder();
 		final boolean[] awaitingInput = new boolean[] { false };
+        final boolean[] failed = new boolean[] { false };
 	    return step.getResponseStream(ctx)
 	    		.map(chunk -> normalizeStreamChunk(ctx, chunk, sequence))
 	    		.doOnNext(chunk -> {
@@ -1444,12 +1436,15 @@ public class KnowledgeGraphBuilder {
 	    			if (isAwaitingInputEnvelope(chunk)) {
 	    				awaitingInput[0] = true;
 	    			}
+                    if (isAgenticErrorEnvelope(chunk)) {
+                        failed[0] = true;
+                    }
 	    		})
                 .doFinally(signalType -> {
                     // 3. This runs only when the stream completes or errors out
                     String fullResponse = responseAccumulator.toString();
                     sessionManager.updateUserSession(ctx.getUserSession(), fullResponse,
-                            awaitingInput[0] ? Status.PROCESSING : Status.SUCCESS);
+                            failed[0] ? Status.FAILED : awaitingInput[0] ? Status.PROCESSING : Status.SUCCESS);
                     logger.info("stream.complete requestId={} conversationId={} stage=request signal={}",
                             ctx.getRequestId(),
                             ctx.getRequest() != null ? ctx.getRequest().getConversationId() : "",
@@ -1568,6 +1563,15 @@ public class KnowledgeGraphBuilder {
         }
     }
 
+    private boolean isAgenticErrorEnvelope(String chunk) {
+        try {
+            JsonNode node = objectMapper.readTree(chunk);
+            return "error".equals(node.path("eventType").asText()) && "agentic".equals(node.path("stage").asText());
+        } catch (JsonProcessingException ex) {
+            return false;
+        }
+    }
+
     /**
      * Matches a query to a knowledge description or SQL query.
      *
@@ -1577,9 +1581,36 @@ public class KnowledgeGraphBuilder {
      * is found
      */
     private Knowledge matchKnowledge(String question, JsonNode params) {
+        Knowledge matched = matchRegisteredKnowledge(question, params);
+        if (matched != null || question == null || question.isBlank()) {
+            return matched;
+        }
+        if (symphonyConfig.isAutonomous() && !symphonyConfig.getDefaultKnowledge().isEmpty()) {
+            return AgenticPlanner.defaultKnowledge(symphonyConfig.getDefaultKnowledge());
+        }
+        String query = queryHandler.matchSelectQuery(question, params);
+        if (query != null) {
+            Knowledge knowledge = new Knowledge();
+            knowledge.setType(QueryType.SQL);
+            knowledge.setData(query);
+            return knowledge;
+        }
+        Knowledge mcpKnowledge = mcpDiscoveryKnowledge();
+        if (mcpKnowledge != null || !symphonyConfig.isAutonomous()) {
+            return mcpKnowledge;
+        }
+        Knowledge agenticKnowledge = new Knowledge();
+        agenticKnowledge.setType(QueryType.AGENTIC);
+        agenticKnowledge.setName("dynamic-agentic");
+        agenticKnowledge.setSystemPrompt("Find the appropriate agents and approach to handle the user query. If no agent is suitable, respond with 'Unable to handle the request'.");
+        return agenticKnowledge;
+    }
+
+    private Knowledge matchRegisteredKnowledge(String question, JsonNode params) {
         Map<String, String> knowledgeDescCache = new HashMap<>();
+        String parameters = params == null ? "{}" : params.toString();
         try {
-            if(question==null || question.isEmpty())
+            if(question==null || question.isBlank())
                 return null;
             if(question.startsWith("Key:"))
             {
@@ -1633,56 +1664,27 @@ public class KnowledgeGraphBuilder {
                     logger.debug("Vector matches not validated against params, falling back to LLM matching");
                 }
             }
-            String prompt = fileContentProvider.prepareMatchKnowledgePrompt(jsonString, question, params.toString());
+            String prompt = fileContentProvider.prepareMatchKnowledgePrompt(jsonString, question, parameters);
             String response = openAI.evaluatePrompt(prompt);
             String responseText = response == null ? "" : response.trim();
-            int matchCount = -1;
-            if(!responseText.isEmpty() && !Status.NONE.equalsIgnoreCase(responseText))
-            {
-                matchCount  = responseText.split(",").length;
+            String[] matches = responseText.split(",");
+            if (responseText.isEmpty() || Status.NONE.equalsIgnoreCase(responseText) || matches.length >= 5) {
+                return null;
             }
-            if (matchCount>=0 && matchCount < 5) {
-                Knowledge knowledge = null;
-                if (matchCount > 0) {
-                    String[] matches = responseText.split(",");
-                    for (String match : matches) {
-                        knowledge = knowledgeBaserepo.GetByName(match.trim());
-                        if (knowledge != null && knowledge.getParams() != null) {
-                            prompt = fileContentProvider.prepareMatchParamsPrompt(knowledge.getParams(), params.toString(), question);
-                            String isMatch = openAI.evaluatePrompt(prompt);
-                            if ("YES".equalsIgnoreCase(isMatch)) {
-                                logger.debug("Matching knowldge mapped {} from multiple matches", match);
-                                return knowledge;
-                            }
-                            logger.debug("Knowldge not matching with context {}", match);
-                        }
-                    }
-                    logger.debug("No matching knowldge found for the query based on parameters returning one match");
+            for (String match : matches) {
+                if (match.isBlank()) {
+                    continue;
+                }
+                Knowledge knowledge = knowledgeBaserepo.GetByName(match.trim());
+                if (knowledge == null) {
+                    continue;
+                }
+                if (knowledge.getParams() == null || knowledge.getParams().isBlank() || params == null || params.isEmpty()) {
                     return knowledge;
-                } else {
-                    logger.debug("question matched with knowledge {}", responseText);
-                    return knowledgeBaserepo.GetByName(responseText);
                 }
-            } else {
-                String query = queryHandler.matchSelectQuery(question, params);
-                if (query != null) {
-                    Knowledge k = new Knowledge();
-                    k.setType(QueryType.SQL);
-                    k.setData(query);
-                    return k;
-                }
-                Knowledge mcpKnowledge = mcpDiscoveryKnowledge();
-                if (mcpKnowledge != null) {
-                    return mcpKnowledge;
-                }
-                if (symphonyConfig.isAutonomous()) {
-                    String routingHint = response == null ? "NONE" : response.trim();
-                    logger.info("Agentic mode enabled via property file for knowledge: {}", routingHint);
-                    Knowledge agenticKnowledge = new Knowledge();
-                    agenticKnowledge.setType(QueryType.AGENTIC);
-                    agenticKnowledge.setName("dynamic-agentic");
-                    agenticKnowledge.setSystemPrompt("Find the appropriate agents and approach to handle the user query. If no agent is suitable, respond with 'Unable to handle the request'.");
-                    return agenticKnowledge;
+                prompt = fileContentProvider.prepareMatchParamsPrompt(knowledge.getParams(), parameters, question);
+                if ("YES".equalsIgnoreCase(openAI.evaluatePrompt(prompt))) {
+                    return knowledge;
                 }
             }
         } catch (JsonProcessingException e) {
@@ -1704,7 +1706,7 @@ public class KnowledgeGraphBuilder {
 
 
 
-    private static Map<String, String> parameterTranslationMap = new HashMap<>();
+    private static final Map<String, String> parameterTranslationMap = new HashMap<>();
 
     /**
      * Creates and prepares ExecutionContext from ChatRequest.

@@ -1,5 +1,7 @@
 package org.symphonykernel.steps;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -7,8 +9,6 @@ import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatResponse;
 import org.symphonykernel.ExecutionContext;
 import org.symphonykernel.agentic.AgenticPlanner;
-
-import com.fasterxml.jackson.databind.node.ArrayNode;
 
 import reactor.core.publisher.Flux;
 
@@ -18,8 +18,7 @@ import reactor.core.publisher.Flux;
  * a predefined flow, the LLM decides which tools to call and in what order.
  * <p>
  * Register a Knowledge entry with QueryType.AGENTIC to use this step.
- * The Knowledge data field can contain an optional system prompt to guide
- * the agent's behavior.
+ * Only eligible read-only tools can be invoked, subject to host and agent restrictions.
  * </p>
  */
 @Service
@@ -34,23 +33,34 @@ public class AgenticStep extends BaseStep {
     public ChatResponse getResponse(ExecutionContext ctx) {
         logger.info("Executing AgenticStep for: {}", ctx.getName());
         ChatResponse response = agenticPlanner.execute(ctx);
+        saveFinalResult(ctx, response);
+        return response;
+    }
+
+    private void saveFinalResult(ExecutionContext ctx, ChatResponse response) {
+        if (!"SUCCESS".equals(response.getStatusCode())) return;
         if (response.getData() != null) {
             saveStepData(ctx, response.getData());
         } else if (response.getMessage() != null) {
             saveStepData(ctx, response.getMessage());
         }
-        return response;
     }
 
     @Override
     public Flux<String> getResponseStream(ExecutionContext ctx) {
         logger.info("Executing AgenticStep stream for: {}", ctx.getName());
-        StringBuilder responseAccumulator = new StringBuilder();
-        return Flux.just("Agent analyzing request...\n")
-            .concatWith(agenticPlanner.executeStream(ctx))
-            .doOnNext(responseAccumulator::append)
-            .doFinally(signalType -> {
-                saveStepData(ctx, responseAccumulator.toString());
+        return Flux.defer(() -> {
+            var sequence = new AtomicLong();
+            return agenticPlanner.streamEvents(ctx).map(event -> {
+                long position = sequence.incrementAndGet();
+                if (event.result() != null) {
+                    saveFinalResult(ctx, event.result());
+                    if ("ERROR".equals(event.result().getStatusCode())) {
+                        return streamError(ctx, "agentic", event.message(), position);
+                    }
+                }
+                return event.message();
             });
+        });
     }
 }

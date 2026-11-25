@@ -1,5 +1,7 @@
 package org.symphonykernel.config;
 
+import java.util.List;
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -23,6 +25,7 @@ public class SymphonyConfig {
     public static final String CONFIG_PREFIX = "symphony.ai";
 
     private boolean autonomous;
+    private List<String> defaultKnowledge = List.of();
     private int threadPoolSize = 25;
     private long cacheTtlMs = 60000L;
 
@@ -33,6 +36,17 @@ public class SymphonyConfig {
      */
     public boolean isAutonomous() {
         return autonomous;
+    }
+
+    /** @return Knowledge names to query together when autonomous routing has no match */
+    public List<String> getDefaultKnowledge() {
+        return defaultKnowledge;
+    }
+
+    /** @param names configured Knowledge names in source order */
+    public void setDefaultKnowledge(List<String> names) {
+        defaultKnowledge = names == null ? List.of() : names.stream().filter(name -> name != null).map(name -> name.strip())
+                .filter(name -> !name.isEmpty()).distinct().toList();
     }
 
     /**
