@@ -34,6 +34,7 @@ import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.mcp.MCPClientService;
 import org.symphonykernel.mcp.MCPToolDescriptor;
 import org.symphonykernel.mcp.MCPToolRegistry;
+import org.symphonykernel.steps.DatabaseStep;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -57,6 +58,7 @@ import reactor.core.scheduler.Schedulers;
 public class AgenticPlanner {
     private static final Logger LOG = LoggerFactory.getLogger(AgenticPlanner.class);
     private static final String EXTERNAL = "MCP_EXTERNAL";
+    private static final String TOOL_NAME_FORMAT = "[A-Za-z0-9_.-]{1,128}(/[A-Za-z0-9_.-]{1,128})?";
     private static final Set<String> BLOCKED = Set.of("AGENTIC", "SYMPHONY", "HUMANLOOP", "AUTH",
             "EMAIL", "A2A", "MCP", "UNKNOWN");
     private static final int MAX_TEXT = 64_000;
@@ -130,7 +132,11 @@ public class AgenticPlanner {
             if (!validTimeout()) return Flux.just(terminal(failure("Invalid agentic timeout.")));
             long end = System.nanoTime() + timeout.toNanos();
             return Flux.<AgentEvent>create(sink -> {
-                ChatResponse result = run(ctx, text -> sink.next(new AgentEvent(text, null)), new Budget(end, sink::isCancelled));
+                ChatResponse result = run(ctx, text -> {
+                    if (!sink.isCancelled()) {
+                        sink.next(new AgentEvent(text, null));
+                    }
+                }, new Budget(end, sink::isCancelled));
                 if (!sink.isCancelled()) {
                     sink.next(terminal(result));
                     sink.complete();
@@ -211,7 +217,7 @@ public class AgenticPlanner {
                     budget.remaining();
                     String name = call.tool().name();
                     progress.accept("Executing: " + name + "\n");
-                    JsonNode result = dispatch(call, ctx, resolved, budget);
+                    JsonNode result = dispatch(call, ctx, resolved, budget, progress);
                     budget.remaining();
                     progress.accept((result != null ? "Completed: " : "Failed: ") + name + "\n");
                     observations.add(name + ": " + (result == null ? "Tool execution failed." : clip(result.toString(), 1000)));
@@ -241,7 +247,7 @@ public class AgenticPlanner {
         Duration sourceTimeout = Duration.ofNanos(Math.max(1, (remaining / 3 * 2) / waves));
         progress.accept("Gathering information...");
         List<SourceResult> results = Flux.fromIterable(names)
-            .flatMapSequential(name -> queryDefault(name, restriction, ctx, budget, sourceTimeout), DEFAULT_CONCURRENCY)
+            .flatMapSequential(name -> queryDefault(name, restriction, ctx, budget, sourceTimeout, progress), DEFAULT_CONCURRENCY)
                 .collectList().block(Duration.ofNanos(remaining));
         budget.remaining();
         if (results == null || results.stream().noneMatch(result -> result.evidence() != null)) {
@@ -264,27 +270,42 @@ public class AgenticPlanner {
     }
 
     private Mono<SourceResult> queryDefault(String name, Set<String> restriction, ExecutionContext ctx,
-            Budget parent, Duration sourceTimeout) {
+            Budget parent, Duration sourceTimeout, Consumer<String> progress) {
         return Mono.defer(() -> {
             long deadline = System.nanoTime() + Math.min(parent.remaining(), sourceTimeout.toNanos());
             Budget sourceBudget = new Budget(deadline, parent.cancelled());
-            SourceResult unavailable = new SourceResult(name, null);
-            return Mono.fromCallable(() -> defaultSource(name, restriction, ctx, sourceBudget))
-                    .subscribeOn(defaultWorkers).timeout(sourceTimeout, Mono.just(unavailable)).onErrorReturn(unavailable);
+            return Mono.fromCallable(() -> defaultSource(name, restriction, ctx, sourceBudget, progress))
+                    .subscribeOn(defaultWorkers)
+                    .timeout(sourceTimeout, Mono.fromSupplier(() -> unavailable(name, "source timed out")))
+                    .onErrorResume(ex -> Mono.fromSupplier(() -> unavailable(name, "source execution failed")));
         });
     }
 
-    private SourceResult defaultSource(String name, Set<String> restriction, ExecutionContext ctx, Budget budget) {
+        private SourceResult defaultSource(String name, Set<String> restriction, ExecutionContext ctx, Budget budget,
+            Consumer<String> progress) {
         budget.remaining();
+        if (!restriction.isEmpty() && !restriction.contains(name)) {
+            return unavailable(name, "not in the configured read-only tool list");
+        }
         MCPToolDescriptor descriptor = toolRegistry.getTool(name);
-        if (descriptor == null || !name.equals(descriptor.getName()) || EXTERNAL.equals(descriptor.getQueryType())
-                || (!restriction.isEmpty() && !restriction.contains(name)) || !eligible(descriptor)) {
-            return new SourceResult(name, null);
+        if (descriptor == null) {
+            return unavailable(name, "not registered; check the exact name and active status in the Knowledge catalog");
+        }
+        if (!name.equals(descriptor.getName()) || EXTERNAL.equals(descriptor.getQueryType()) || !eligible(descriptor)) {
+            return unavailable(name, "not eligible as a local read-only tool");
         }
         var call = new Call(new Tool(name, descriptor.getQueryType(), "", mapper.createObjectNode()), mapper.createObjectNode());
-        JsonNode result = dispatch(call, ctx, Map.of(), budget);
-        return new SourceResult(name, result == null || result.isNull() || result.isMissingNode()
-                || result.isContainerNode() && result.isEmpty() || result.isTextual() && result.asText().isBlank() ? null : result);
+        JsonNode result = dispatch(call, ctx, Map.of(), budget, progress);
+        if (result == null || result.isNull() || result.isMissingNode()
+                || result.isContainerNode() && result.isEmpty() || result.isTextual() && result.asText().isBlank()) {
+            return unavailable(name, "step could not be dispatched, failed, or returned no usable result");
+        }
+        return new SourceResult(name, result);
+    }
+
+    private static SourceResult unavailable(String name, String reason) {
+        LOG.warn("Default Knowledge '{}' unavailable: {}.", safeToolName(name), reason);
+        return new SourceResult(name, null);
     }
 
     private String modelText(LLMRequest request, Budget budget) throws InterruptedException {
@@ -356,7 +377,7 @@ public class AgenticPlanner {
             if (result.size() >= maxTools) break;
             String name = descriptor.getName();
             String type = descriptor.getQueryType();
-            if (!name.matches("[A-Za-z0-9_.-]{1,128}(/[A-Za-z0-9_.-]{1,128})?") || type == null
+                if (!name.matches(TOOL_NAME_FORMAT) || type == null
                     || BLOCKED.contains(type) || !eligible(descriptor)) continue;
             ObjectNode schema = mapper.valueToTree(descriptor.getInputSchema() == null ? Map.of() : descriptor.getInputSchema());
             if (!schema.has("type")) schema.put("type", "object");
@@ -399,8 +420,14 @@ public class AgenticPlanner {
     private Call validate(JsonNode action, Map<String, Tool> tools) {
         JsonNode name = action.path("tool");
         if (!name.isTextual()) throw invalidPlan();
-        Tool tool = tools.get(name.textValue());
-        if (tool == null) throw new AgentFailure("Agent requested a tool that is not allowed.");
+        String requestedName = name.textValue();
+        Tool tool = tools.get(requestedName);
+        if (tool == null) {
+            // The model controls this value; only echo it if it has the format of a tool identifier.
+            String displayName = safeToolName(requestedName);
+            LOG.warn("Agent requested a tool that is not allowed: '{}'.", displayName);
+            throw new AgentFailure("Agent requested a tool that is not allowed: '" + displayName + "'.");
+        }
         JsonNode args = action.path("arguments");
         if (args.isMissingNode()) args = mapper.createObjectNode();
         if (!args.isObject()) throw invalidPlan();
@@ -414,7 +441,12 @@ public class AgenticPlanner {
         return new Call(tool, args);
     }
 
-    private JsonNode dispatch(Call call, ExecutionContext ctx, Map<String, JsonNode> resolved, Budget budget) {
+    private static String safeToolName(String name) {
+        return name.matches(TOOL_NAME_FORMAT) ? name : "<invalid tool name>";
+    }
+
+        private JsonNode dispatch(Call call, ExecutionContext ctx, Map<String, JsonNode> resolved, Budget budget,
+            Consumer<String> progress) {
         Tool tool = call.tool();
         try {
             MCPToolDescriptor live = toolRegistry.getTool(tool.name());
@@ -430,7 +462,11 @@ public class AgenticPlanner {
             if (step == null) return null;
             ExecutionContext child = childContext(ctx, kb, call, resolved);
             budget.remaining();
-            ChatResponse result = step.getResponse(child);
+            ChatResponse result = step instanceof DatabaseStep database
+                    ? database.getResponse(child, message -> {
+                        budget.remaining();
+                        progress.accept(message);
+                    }) : step.getResponse(child);
             if (result == null || "ERROR".equalsIgnoreCase(result.getStatusCode())
                     || "FAILED".equalsIgnoreCase(result.getStatusCode())
                     || "PROCESSING".equalsIgnoreCase(result.getStatusCode())) {

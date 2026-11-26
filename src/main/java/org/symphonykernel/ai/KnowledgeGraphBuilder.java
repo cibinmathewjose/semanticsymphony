@@ -357,13 +357,13 @@ public class KnowledgeGraphBuilder {
         if (resumeRequestId != null) {
             return resumePendingRequest(request, resumeRequestId);
         }
-        FollowupRoute followupRoute = resolveFollowupRoute(request);
-        if (followupRoute == FollowupRoute.NORMAL_FOLLOWUP) {
-            ExecutionContext mcpContext = prepareMcpFollowup(request);
-            return mcpContext == null ? getFollowupResponse(request) : getResponse(mcpContext);
-        }
         try {
-            ExecutionContext ctx = prepareContext(request);
+            Knowledge configuredKnowledge = matchRegisteredOrDefaultKnowledge(request.getQuery(), request.getVariables());
+            if (configuredKnowledge == null && resolveFollowupRoute(request) == FollowupRoute.NORMAL_FOLLOWUP) {
+                ExecutionContext mcpContext = prepareMcpFollowup(request);
+                return mcpContext == null ? getFollowupResponse(request) : getResponse(mcpContext);
+            }
+            ExecutionContext ctx = prepareMatchedContext(request, configuredKnowledge);
             ChatResponse response = getResponse(ctx);
             long durationMs = (System.nanoTime() - start) / 1_000_000;
             logger.info("Processed request in {} ms", durationMs);
@@ -387,13 +387,13 @@ public class KnowledgeGraphBuilder {
         if (resumeRequestId != null) {
             return streamResumePendingRequest(request, resumeRequestId);
         }
-        FollowupRoute followupRoute = resolveFollowupRoute(request);
-        if (followupRoute == FollowupRoute.NORMAL_FOLLOWUP) {
-            ExecutionContext mcpContext = prepareMcpFollowup(request);
-            return mcpContext == null ? streamFollowupResponse(request) : streamResponse(mcpContext);
-        }
         try {
-            ExecutionContext ctx = prepareContext(request);
+            Knowledge configuredKnowledge = matchRegisteredOrDefaultKnowledge(request.getQuery(), request.getVariables());
+            if (configuredKnowledge == null && resolveFollowupRoute(request) == FollowupRoute.NORMAL_FOLLOWUP) {
+                ExecutionContext mcpContext = prepareMcpFollowup(request);
+                return mcpContext == null ? streamFollowupResponse(request) : streamResponse(mcpContext);
+            }
+            ExecutionContext ctx = prepareMatchedContext(request, configuredKnowledge);
             return streamResponse(ctx);
         } catch (Exception ex) {
             throw new RuntimeException("Error processing request", ex);
@@ -1581,12 +1581,25 @@ public class KnowledgeGraphBuilder {
      * is found
      */
     private Knowledge matchKnowledge(String question, JsonNode params) {
+        Knowledge matched = matchRegisteredOrDefaultKnowledge(question, params);
+        return matched != null ? matched : matchFallbackKnowledge(question, params);
+    }
+
+    private Knowledge matchRegisteredOrDefaultKnowledge(String question, JsonNode params) {
+        if (question == null || question.isBlank()) {
+            return null;
+        }
         Knowledge matched = matchRegisteredKnowledge(question, params);
-        if (matched != null || question == null || question.isBlank()) {
+        if (matched != null) {
             return matched;
         }
-        if (symphonyConfig.isAutonomous() && !symphonyConfig.getDefaultKnowledge().isEmpty()) {
-            return AgenticPlanner.defaultKnowledge(symphonyConfig.getDefaultKnowledge());
+        var defaults = symphonyConfig.getDefaultKnowledge();
+        return defaults.isEmpty() ? null : AgenticPlanner.defaultKnowledge(defaults);
+    }
+
+    private Knowledge matchFallbackKnowledge(String question, JsonNode params) {
+        if (question == null || question.isBlank()) {
+            return null;
         }
         String query = queryHandler.matchSelectQuery(question, params);
         if (query != null) {
@@ -1717,9 +1730,21 @@ public class KnowledgeGraphBuilder {
      * @throws Exception if any step fails
      */
     public ExecutionContext prepareContext(ChatRequest request) throws Exception {
+        return setParameters(identifyIntent(createContext(request)));
+    }
+
+    private ExecutionContext prepareMatchedContext(ChatRequest request, Knowledge configuredKnowledge) {
         ExecutionContext ctx = createContext(request);
-        ctx = identifyIntent(ctx);
-        ctx = setParameters(ctx);
-        return ctx;
+        Knowledge knowledge = configuredKnowledge;
+        if (knowledge == null) {
+            knowledge = matchFallbackKnowledge(ctx.getUsersQuery(), request.getVariables());
+            if (knowledge == null) {
+                knowledge = mcpDiscoveryKnowledge();
+            }
+        }
+        if (knowledge == null) {
+            throw new IllegalStateException("No matching knowledge found");
+        }
+        return setParameters(assignKnowledge(ctx, knowledge));
     }
 }

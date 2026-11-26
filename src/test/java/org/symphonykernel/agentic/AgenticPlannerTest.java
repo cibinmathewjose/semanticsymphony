@@ -1,22 +1,25 @@
 package org.symphonykernel.agentic;
 
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
@@ -27,13 +30,17 @@ import org.symphonykernel.QueryType;
 import org.symphonykernel.ai.KnowledgeExecuterFactory;
 import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IStep;
+import org.symphonykernel.core.IUserSessionBase;
 import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.mcp.MCPClientService;
 import org.symphonykernel.mcp.MCPToolDescriptor;
 import org.symphonykernel.mcp.MCPToolRegistry;
+import org.symphonykernel.steps.AgenticStep;
+import org.symphonykernel.steps.DatabaseStep;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+@ExtendWith(OutputCaptureExtension.class)
 class AgenticPlannerTest {
     private static final String LOOKUP = "{\"tool\":\"lookup\",\"arguments\":{\"id\":7}}";
     private final ObjectMapper mapper = new ObjectMapper();
@@ -80,6 +87,31 @@ class AgenticPlannerTest {
             assertThat(planner.execute(context("{\"allowedTools\":[\"" + name + "\"]}")).getMessage())
                     .contains("not allowed");
         }
+        verifyNoInteractions(knowledge, factory, tool);
+    }
+
+    @Test
+    void reportsRejectedToolInStatusAndWarning(CapturedOutput output) {
+        ReflectionTestUtils.setField(planner, "readOnlyTools", "lookup");
+        when(ai.execute(any())).thenReturn(actions(LOOKUP + ",{\"tool\":\"warehouse/get-stock\"}"));
+        String message = "Agent requested a tool that is not allowed: 'warehouse/get-stock'.";
+
+        ChatResponse response = planner.execute(context("{}"));
+        assertThat(response.getStatusCode()).isEqualTo("ERROR");
+        assertThat(response.getMessage()).isEqualTo(message);
+        assertThat(planner.executeStream(context("{}")).collectList().block(Duration.ofSeconds(5)))
+                .containsExactly(message);
+        assertThat(output.getAll()).contains(message);
+        verifyNoInteractions(knowledge, factory, tool);
+    }
+
+    @Test
+    void doesNotEchoMalformedToolNames(CapturedOutput output) {
+        when(ai.execute(any())).thenReturn(actions("{\"tool\":\"lookup\\r\\nforged-log-line\"}"));
+        String message = "Agent requested a tool that is not allowed: '<invalid tool name>'.";
+
+        assertThat(planner.execute(context("{}")).getMessage()).isEqualTo(message);
+        assertThat(output.getAll()).contains(message).doesNotContain("forged-log-line");
         verifyNoInteractions(knowledge, factory, tool);
     }
 
@@ -187,6 +219,59 @@ class AgenticPlannerTest {
         verify(docs, times(2)).getResponse(any());
         verify(ai, times(2)).execute(any());
         assertThat(ctx.getRequest().getPayload()).isEqualTo("parent");
+    }
+
+    @Test
+    void streamsDatabaseMilestonesBeforeSourceFinishesAndKeepsThemOutOfAnswer() {
+        var ctx = context("{}");
+        ctx.setKnowledge(AgenticPlanner.defaultKnowledge(List.of("database-source")));
+        var kb = new Knowledge();
+        kb.setName("database-source");
+        kb.setType(QueryType.DATABASE);
+        var db = mock(DatabaseStep.class);
+        when(registry.getTool(kb.getName())).thenReturn(new MCPToolDescriptor(kb.getName(), "", Map.of(), "DATABASE"));
+        when(knowledge.GetByName(kb.getName())).thenReturn(kb);
+        when(factory.getExecuter(kb)).thenReturn(db);
+        var seen = new CountDownLatch(1);
+        when(db.getResponse(any(), any())).thenAnswer(call -> {
+            Consumer<String> progress = call.getArgument(1);
+            progress.accept("Generating database query...");
+            progress.accept("Executing database query...");
+            assertThat(seen.await(2, TimeUnit.SECONDS)).isTrue();
+            return new ChatResponse("Stock: 12 units");
+        });
+        when(ai.execute(any())).thenAnswer(call -> {
+            LLMRequest request = call.getArgument(0);
+            assertThat(request.getUserPrompt()).contains("Stock: 12 units").doesNotContain("Executing database query");
+            return "12 units in stock";
+        });
+        var step = new AgenticStep();
+        ReflectionTestUtils.setField(step, "agenticPlanner", planner);
+        ReflectionTestUtils.setField(step, "objectMapper", mapper);
+        ReflectionTestUtils.setField(step, "sessionBase", mock(IUserSessionBase.class));
+
+        var events = step.getResponseStream(ctx).doOnNext(event -> {
+            if (event.contains("Executing database query...")) seen.countDown();
+        }).collectList().block(Duration.ofSeconds(5));
+
+        assertThat(events).hasSize(5);
+        assertThat(events.get(1)).contains("\"eventType\":\"status\"", "Generating database query...");
+        assertThat(events.get(2)).contains("\"eventType\":\"status\"", "Executing database query...");
+        assertThat(events.get(4)).contains("\"eventType\":\"content\"", "12 units in stock");
+        verify(db).getResponse(any(), any());
+    }
+
+    @Test
+    void logsWhenConfiguredDefaultIsNotRegistered(CapturedOutput output) {
+        String sourceName = "missing-source";
+        var ctx = context("{}");
+        ctx.setKnowledge(AgenticPlanner.defaultKnowledge(List.of(sourceName)));
+        ReflectionTestUtils.setField(planner, "readOnlyTools", sourceName);
+
+        assertThat(planner.execute(ctx).getMessage())
+                .isEqualTo("No configured default Knowledge source returned usable evidence.");
+        assertThat(output.getAll()).contains("Default Knowledge '" + sourceName + "' unavailable: not registered");
+        verifyNoInteractions(ai, knowledge, factory, tool);
     }
 
     @Test

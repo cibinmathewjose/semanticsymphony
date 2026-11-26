@@ -53,13 +53,16 @@ public class AgenticStep extends BaseStep {
             var sequence = new AtomicLong();
             return agenticPlanner.streamEvents(ctx).map(event -> {
                 long position = sequence.incrementAndGet();
-                if (event.result() != null) {
-                    saveFinalResult(ctx, event.result());
-                    if ("ERROR".equals(event.result().getStatusCode())) {
-                        return streamError(ctx, "agentic", event.message(), position);
-                    }
+                if (event.result() == null) {
+                    String message = event.message().strip();
+                    return streamStatus(ctx, "agentic", "Generating output:".equals(message)
+                            ? "Generating output..." : message, position);
                 }
-                return event.message();
+                saveFinalResult(ctx, event.result());
+                if ("ERROR".equals(event.result().getStatusCode())) {
+                    return streamError(ctx, "agentic", event.message(), position);
+                }
+                return streamContent(ctx, "response", event.message(), position);
             });
         });
     }

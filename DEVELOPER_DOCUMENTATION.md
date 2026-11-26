@@ -588,14 +588,16 @@ Local tools are treated as read-only unless listed in `symphony.agentic.write-to
 
 Sync and streaming save the same successful final result. Streaming emits tool start/completion/failure notices and the final answer, not model reasoning. The deadline limits how long callers wait and stops scheduling further actions; a downstream client that ignores cancellation may still finish a call already in flight. Set timeouts on downstream clients as well.
 
-#### Default Knowledge on no match
+#### Default Knowledge routing
 
 ```properties
 symphony.ai.autonomous=true
 symphony.ai.default-knowledge=inventory-database,web-search,product-docs-search
 ```
 
-Use exact names of active local Knowledge entries, not type names. Explicit and normal intent matches still take precedence. When no registered Knowledge matches, autonomous routing with a nonempty default list runs every eligible default with the same question, then generates one answer from the available results. This takes precedence over generated SQL, MCP discovery, and dynamic agent planning. Without a default list, the existing fallback chain applies.
+Use exact names of active local Knowledge entries, not type names. Registered intent and `Key:` matches take priority regardless of the autonomy setting. On a miss, the configured default list takes priority over automatic conversation follow-ups, generated SQL, MCP discovery, and dynamic agent planning. Pending workflow input still resumes first. Without a default list, the existing fallback chain applies; disabling autonomy prevents the dynamic agent fallback but does not disable registered Knowledge matching.
+
+In both modes, the default runner executes the eligible configured sources with the same question and generates one answer from the available results. Logs still label that runner `default-agentic`; it does not let the model select tools.
 
 Use read-only steps that can run directly from the question without additional variables, such as `DATABASE`, `WEBSEARCH`, and `AZURE_AI_SEARCH`. The list does not bypass tool restrictions: include these names in `symphony.agentic.read-only-tools` if set, and do not list write-capable entries as defaults. Nested `AGENTIC`, `SYMPHONY`, and external MCP tools are not valid defaults. Each name is attempted once, up to four at a time, within the agentic timeout. Keep the list within `symphony.agentic.max-actions` and the hard cap of 20. Failed or timed-out sources do not prevent synthesis from the others; if none returns usable evidence, the request fails without asking the model to guess.
 
@@ -605,6 +607,8 @@ Only configure defaults appropriate for every caller who can reach this fallback
 **Class**: `org.symphonykernel.steps.DatabaseStep`
 
 Intelligent database querying with natural language to SQL conversion.
+
+To show generated SQL in streaming progress, set `symphony.database.stream-query=true` in the host application's Spring configuration and restart. The default is `false`. When enabled, SQL that passes the step's read-only check is sent as a status update before each execution attempt, not as final answer content. Enable only in trusted environments: every caller who can stream an applicable database step can see query literals and schema identifiers.
 
 **Configuration**:
 ```json

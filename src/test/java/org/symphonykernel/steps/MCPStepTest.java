@@ -8,6 +8,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -21,9 +24,12 @@ import org.symphonykernel.LLMRequest;
 import org.symphonykernel.UserSession;
 import org.symphonykernel.ai.KnowledgeExecuterFactory;
 import org.symphonykernel.ai.KnowledgeGraphBuilder;
+import org.symphonykernel.config.SymphonyConfig;
 import org.symphonykernel.core.IAIClient;
+import org.symphonykernel.core.IknowledgeBase;
 import org.symphonykernel.mcp.MCPClientService;
 import org.symphonykernel.mcp.MCPToolDescriptor;
+import org.symphonykernel.providers.FileContentProvider;
 import org.symphonykernel.providers.SessionProvider;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -140,6 +146,12 @@ class MCPStepTest {
         var graph = new KnowledgeGraphBuilder();
         var sessions = mock(SessionProvider.class);
         var factory = mock(KnowledgeExecuterFactory.class);
+        var knowledgeBase = mock(IknowledgeBase.class);
+        var prompts = mock(FileContentProvider.class);
+        ReflectionTestUtils.setField(graph, "knowledgeBaserepo", knowledgeBase);
+        ReflectionTestUtils.setField(graph, "fileContentProvider", prompts);
+        ReflectionTestUtils.setField(graph, "objectMapper", mapper);
+        ReflectionTestUtils.setField(graph, "symphonyConfig", new SymphonyConfig());
         ReflectionTestUtils.setField(graph, "sessionManager", sessions);
         ReflectionTestUtils.setField(graph, "knowledgeExecuterFactory", factory);
         ReflectionTestUtils.setField(graph, "humanInLoopStateStore", mock(HumanInLoopStateStore.class));
@@ -164,7 +176,11 @@ class MCPStepTest {
         when(sessions.createUserSession(request)).thenReturn(current);
         when(sessions.getChatHistory(request)).thenReturn(List.of(new UserMessage("Find the product name")));
         when(factory.getExecuter(any())).thenReturn(step);
-        when(model.evaluatePrompt(anyString())).thenReturn("FOLLOWUP");
+        when(knowledgeBase.getActiveKnowledgeDescriptions()).thenReturn(Map.of());
+        when(prompts.prepareMatchKnowledgePrompt(anyString(), eq(request.getQuery()), anyString()))
+            .thenReturn("registered knowledge match prompt");
+        when(model.evaluatePrompt("registered knowledge match prompt")).thenReturn("NONE");
+        when(model.evaluatePrompt(startsWith("Decide whether the user message"))).thenReturn("FOLLOWUP");
         when(mcp.getRegisteredServers()).thenReturn(List.of(INVENTORY));
         when(mcp.callTool(INVENTORY + "/get_product", Map.of("id", "P17"))).thenReturn("Night Cream");
         when(model.execute(any())).thenAnswer(call -> {
@@ -175,6 +191,9 @@ class MCPStepTest {
         });
 
         assertThat(graph.process(request).getMessage()).contains("Night Cream");
+    var routing = inOrder(model);
+    routing.verify(model).evaluatePrompt("registered knowledge match prompt");
+    routing.verify(model).evaluatePrompt(startsWith("Decide whether the user message"));
         verify(mcp).callTool(INVENTORY + "/get_product", Map.of("id", "P17"));
     }
 

@@ -7,26 +7,20 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
-import reactor.core.publisher.Flux;
-
-import org.symphonykernel.steps.db.DbIntrospector;
-import org.symphonykernel.steps.db.JdbcDbIntrospector;
-import org.symphonykernel.steps.db.OracleDbIntrospector;
+import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import javax.sql.DataSource;
-
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,10 +33,16 @@ import org.symphonykernel.LLMRequest;
 import org.symphonykernel.QueryCorrectionLearning;
 import org.symphonykernel.core.IAIClient;
 import org.symphonykernel.core.IQueryCorrectionRepository;
+import org.symphonykernel.steps.db.DbIntrospector;
+import org.symphonykernel.steps.db.JdbcDbIntrospector;
+import org.symphonykernel.steps.db.OracleDbIntrospector;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * DatabaseStep connects to a named database, introspects its schema,
@@ -87,6 +87,9 @@ public class DatabaseStep extends BaseStep {
 
     private final ConcurrentHashMap<String, String> schemaCache = new ConcurrentHashMap<>();
 
+    @Value("${symphony.database.stream-query:false}")
+    private boolean streamQuery;
+
     @Value("${symphony.agentic.chat-history-count:2}")
     private int chatHistoryCount;
 
@@ -125,8 +128,14 @@ public class DatabaseStep extends BaseStep {
 
     @Override
     public ChatResponse getResponse(ExecutionContext ctx) {
+        return getResponse(ctx, ignored -> { });
+    }
+
+    /** Executes once and reports progress, with SQL omitted unless explicitly enabled. */
+    public ChatResponse getResponse(ExecutionContext ctx, Consumer<String> progress) {
         Knowledge kb = ctx.getKnowledge();
         ArrayNode jsonArray = objectMapper.createArrayNode();
+        ChatResponse response = new ChatResponse();
 
         try {
             JsonNode config = objectMapper.readTree(kb.getData());
@@ -146,6 +155,7 @@ public class DatabaseStep extends BaseStep {
             }
 
             // Step 1: Rewrite the question using chat history for better context
+            progress.accept("Preparing database request...");
             String chatHistoryText = buildChatHistoryText(ctx.getChatHistory());
             String rewrittenQuery = rewriteQuestion(userQuery, chatHistoryText, ctx.getModelName());
             logger.info("Original query: {} | Rewritten query: {}", userQuery, rewrittenQuery);
@@ -168,9 +178,10 @@ public class DatabaseStep extends BaseStep {
                         String contextVariables = buildContextVariables(ctx);
                         String knowledgePrompt = kb.getSystemPrompt();
                         String learnings = loadRelevantLearnings(dbName, tables);
+                        progress.accept("Generating database query...");
                         String generatedSql = generateQuery(rewrittenQuery, schemaDescription,
                                 contextVariables, knowledgePrompt, chatHistoryText, learnings, ctx.getModelName());
-                        validateReadOnly(generatedSql);
+                        reportExecutingQuery(generatedSql, progress);
                         logger.info("DatabaseStep executing query: {}", generatedSql);
                         try (PreparedStatement stmt = connection.prepareStatement(generatedSql)) {
                             stmt.setMaxRows(maxRows);
@@ -180,9 +191,10 @@ public class DatabaseStep extends BaseStep {
                         } catch (SQLException e) {
                             // Single-shot also gets error correction now
                             logger.warn("Single-shot query failed: {}. Attempting LLM correction...", e.getMessage());
+                            progress.accept("Revising database query...");
                             String correctedSql = correctFailedQuery(rewrittenQuery, generatedSql,
                                     e.getMessage(), schemaDescription, learnings, ctx.getModelName());
-                            validateReadOnly(correctedSql);
+                            reportExecutingQuery(correctedSql, progress);
                             logger.info("Retrying with corrected query: {}", correctedSql);
                             try (PreparedStatement stmt2 = connection.prepareStatement(correctedSql)) {
                                 stmt2.setMaxRows(maxRows);
@@ -203,7 +215,7 @@ public class DatabaseStep extends BaseStep {
 
                     String knowledgePrompt = kb.getSystemPrompt();
                     ArrayNode results = executeAgenticPlan(connection, introspector, rewrittenQuery, allTableNames,
-                            allViewNames, schemas, dbName, maxRows, knowledgePrompt, chatHistoryText, ctx);
+                            allViewNames, schemas, dbName, maxRows, knowledgePrompt, chatHistoryText, ctx, progress);
                     jsonArray.addAll(results);
                 }
             }
@@ -213,9 +225,9 @@ public class DatabaseStep extends BaseStep {
             ObjectNode err = objectMapper.createObjectNode();
             err.put("error", e.getMessage());
             jsonArray.add(err);
+            response.setStatusCode("ERROR");
         }
 
-        ChatResponse response = new ChatResponse();
         response.setData(jsonArray);
         saveStepData(ctx, jsonArray);
         return response;
@@ -238,7 +250,7 @@ public class DatabaseStep extends BaseStep {
                                          List<String> allTableNames, List<String> allViewNames,
                                          List<String> schemas, String dbName, int maxRows,
                                          String knowledgePrompt, String chatHistoryText,
-                                         ExecutionContext ctx) throws SQLException {
+                                         ExecutionContext ctx, Consumer<String> progress) throws SQLException {
         ArrayNode finalResults = objectMapper.createArrayNode();
         List<StepResult> stepResults = new ArrayList<>();
         String modelName = ctx.getModelName();
@@ -247,6 +259,7 @@ public class DatabaseStep extends BaseStep {
             logger.info("Agentic iteration {}/{}", iteration + 1, MAX_PLAN_STEPS);
 
             // Step 1: Ask LLM to identify relevant tables for the current (sub-)question
+            progress.accept("Identifying relevant database tables...");
             String previousContext = buildStepContext(stepResults, ctx);
             String learnings = loadRelevantLearnings(dbName, allTableNames);
             List<String> relevantTables = identifyRelevantTables(
@@ -279,14 +292,16 @@ public class DatabaseStep extends BaseStep {
                 try {
                     if (lastErrorMessage != null && lastFailedSql != null) {
                         // Use dedicated correction prompt for retries
+                        progress.accept("Revising database query...");
                         sql = correctFailedQuery(userQuery, lastFailedSql, lastErrorMessage,
                                 schemaDescription, tableLearnings, modelName);
                     } else {
+                        progress.accept("Generating database query...");
                         sql = generateIterativeQuery(
                                 userQuery, schemaDescription, previousContext, knowledgePrompt,
                                 chatHistoryText, tableLearnings, modelName);
                     }
-                    validateReadOnly(sql);
+                    reportExecutingQuery(sql, progress);
                     logger.info("Iteration {} query (attempt {}): {}", iteration + 1, retry + 1, sql);
 
                     // Step 5: Execute the query
@@ -340,6 +355,7 @@ public class DatabaseStep extends BaseStep {
             }
 
             // Step 6: Ask LLM if the question is fully answered or more queries are needed
+            progress.accept("Reviewing database results...");
             if (!needsMoreQueries(userQuery, stepResults, modelName)) {
                 logger.info("AI determined question is fully answered after {} iteration(s)", iteration + 1);
                 break;
@@ -805,6 +821,11 @@ public class DatabaseStep extends BaseStep {
 
     // ==================== VALIDATION ====================
 
+    void reportExecutingQuery(String sql, Consumer<String> progress) {
+        validateReadOnly(sql);
+        progress.accept(streamQuery ? "Executing database query:\n" + sql : "Executing database query...");
+    }
+
     /**
      * Validates that the generated SQL is a read-only SELECT statement.
      *
@@ -919,17 +940,30 @@ public class DatabaseStep extends BaseStep {
 
     @Override
     public Flux<String> getResponseStream(ExecutionContext ctx) {
-        ChatResponse response = getResponse(ctx);
-        ArrayNode data = response.getData();
-        if (data != null && data.size() > 0) {
-            String markdown = jsonArrayToMarkdownTable(data);
-            return Flux.just("Generating output:").concatWith(Flux.just(markdown));
-        }
-        String message = response.getMessage();
-        if (message != null && !message.isBlank()) {
-            return Flux.just("Generating output:").concatWith(Flux.just(message));
-        }
-        return Flux.just("No results found.");
+        return Flux.<String>create(sink -> {
+            var sequence = new AtomicLong();
+            Consumer<String> progress = message -> {
+                if (!sink.isCancelled()) {
+                    sink.next(streamStatus(ctx, "database", message, sequence.incrementAndGet()));
+                }
+            };
+            ChatResponse response = getResponse(ctx, progress);
+            if (sink.isCancelled()) {
+                return;
+            }
+            ArrayNode data = response.getData();
+            String message = response.getMessage();
+            if (data != null && !data.isEmpty()) {
+                progress.accept("Generating output...");
+                message = jsonArrayToMarkdownTable(data);
+            } else if (message != null && !message.isBlank()) {
+                progress.accept("Generating output...");
+            } else {
+                message = "No results found.";
+            }
+            sink.next(streamContent(ctx, "response", message, sequence.incrementAndGet()));
+            sink.complete();
+        }).subscribeOn(Schedulers.boundedElastic(), false);
     }
 
     /**
