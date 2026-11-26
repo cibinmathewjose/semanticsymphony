@@ -7,15 +7,19 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.symphonykernel.Knowledge;
 import org.symphonykernel.core.IStep;
+import org.symphonykernel.steps.A2AStep;
 import org.symphonykernel.steps.AgenticStep;
 import org.symphonykernel.steps.AuthenticationStep;
+import org.symphonykernel.steps.AzureAISearchStep;
 import org.symphonykernel.steps.DatabaseStep;
 import org.symphonykernel.steps.DocumentStep;
 import org.symphonykernel.steps.EmailStep;
 import org.symphonykernel.steps.GraphQLStep;
 import org.symphonykernel.steps.HumanInLoopStep;
+import org.symphonykernel.steps.MCPStep;
 import org.symphonykernel.steps.PluginStep;
 import org.symphonykernel.steps.RESTStep;
+import org.symphonykernel.steps.SharePointStep;
 import org.symphonykernel.steps.SqlStep;
 import org.symphonykernel.steps.Symphony;
 import org.symphonykernel.steps.ToolStep;
@@ -76,6 +80,10 @@ public class KnowledgeExecuterFactory {
     @Qualifier("HumanInLoopStep")
     HumanInLoopStep humanInLoopStep;
 
+    @Autowired
+    @Qualifier("MCPStep")
+    MCPStep mcpStep;
+
     
     Symphony symphony;    
     AgenticStep agenticStep;
@@ -122,7 +130,10 @@ public class KnowledgeExecuterFactory {
                 return documentStep;
             }
             case SHAREPOINT -> {
-                throw new UnsupportedOperationException("SHAREPOINT QueryType is not implemented");
+                return initClass(SharePointStep.class);
+            }
+            case AZURE_AI_SEARCH -> {
+                return initClass(AzureAISearchStep.class);
             }
            case AGENTIC -> {
                if(agenticStep == null){
@@ -144,6 +155,12 @@ public class KnowledgeExecuterFactory {
             }
             case HUMANLOOP -> {
                 return humanInLoopStep;
+            }
+            case MCP -> {
+                return mcpStep;
+            }
+            case A2A -> {
+                return initClass(A2AStep.class);
             }
             default -> {
                 logger.warn("Unhandled QueryType: " + knowledge.getType());

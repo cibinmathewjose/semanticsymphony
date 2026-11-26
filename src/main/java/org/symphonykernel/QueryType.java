@@ -29,13 +29,20 @@ public enum QueryType {
     /** Represents an agentic workflow where the LLM dynamically plans and executes steps */
      AGENTIC,   
     /** Represents a dynamic database introspection and query step */
-     DATABASE,
+     DATABASE,    
+    /** Represents a human-in-the-loop step that pauses for user input */
+     HUMANLOOP,
+    /** Represents an MCP step for external MCP server/tool execution */
+     MCP,
+    /** Delegates a text turn to an outbound Agent2Agent endpoint. */
+    A2A,
+    /** Searches an existing Azure AI Search index. */
+    AZURE_AI_SEARCH,    
+     /** Represents a web search step to find information on the internet */
+     WEBSEARCH,
     /** Represents an authentication step to acquire tokens for API calls */
      AUTH,
-    /** Represents a web search step to find information on the internet */
-     WEBSEARCH,
     /** Represents an email sending step */
-     EMAIL,
-    /** Represents a human-in-the-loop step that pauses for user input */
-     HUMANLOOP
+    EMAIL
+  
 }

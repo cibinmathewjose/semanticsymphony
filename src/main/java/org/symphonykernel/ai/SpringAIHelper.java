@@ -314,4 +314,17 @@ public class SpringAIHelper extends AIClientBase implements IAIClient {
         return client.call().content();
     }
 
+    @Override
+    public String processPng(String systemMessage, String userPrompt, String base64Image, String modelName) {
+        var userMessage = UserMessage.builder()
+                .text(userPrompt)
+                .media(new Media(MimeTypeUtils.IMAGE_PNG,
+                        new ByteArrayResource(Base64.getDecoder().decode(base64Image))))
+                .build();
+        var messages = List.<Message>of(new SystemMessage(systemMessage), userMessage);
+        var options = "anthropic".equalsIgnoreCase(conProperties.getProvider(modelName))
+                ? resolveOptionsForAnthropic(modelName) : resolveOptionsForAzureOpenAi(modelName, false);
+        return getClient(new Prompt(messages, options), null).call().content();
+    }
+
 }

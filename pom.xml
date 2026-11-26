@@ -9,7 +9,7 @@
     </parent>
     <groupId>org.symphonykernel</groupId>
     <artifactId>symphony-ai</artifactId>
-    <version>1.0.1</version> 
+    <version>1.1.1-SNAPSHOT</version> 
     <packaging>jar</packaging>
     <name>Symphony AI</name>
     <description>Defines a chat agentic framework with Spring AI and SpringBoot</description>
@@ -110,6 +110,11 @@
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
             <version>5.4.1</version>
         </dependency>
         <dependency>

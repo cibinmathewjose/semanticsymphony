@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.symphonykernel.ChatRequest;
 import org.symphonykernel.ChatResponse;
-import org.symphonykernel.ExecutionContext;
 
 import reactor.core.publisher.Flux;
 /**
@@ -88,5 +87,16 @@ public class Agent {
     public ChatResponse processFollowUp(String requestId, String query)
     {       
         return knowledgeGraphBuilder.getFollowupResponse(requestId,query);       
+    }
+
+    /**
+     * Resumes a paused Human-In-Loop workflow by request id.
+     *
+     * @param requestId paused workflow request id
+     * @param userInput optional user input for the waiting step
+     * @return resumed workflow response
+     */
+    public ChatResponse resumePausedWorkflow(String requestId, String userInput) {
+        return knowledgeGraphBuilder.resumePausedWorkflow(requestId, userInput);
     }
 }

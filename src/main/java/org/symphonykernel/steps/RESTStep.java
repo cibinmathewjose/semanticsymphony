@@ -1,5 +1,8 @@
 package org.symphonykernel.steps;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,21 +57,22 @@ public class RESTStep extends BaseStep {
 
         Knowledge kb = ctx.getKnowledge();
         try {
-            if (kb != null && kb.getUrl() != null && !kb.getUrl().isEmpty()) {             
-                logger.info("Executing REST " + kb.getName() + " with " + ctx.getVariables());
-                ctx.setTmplate(getTemplate(ctx))
-                        .setBody(createRequestBody(ctx))
-                        .setHeaders(createRequestHeader(ctx))
-                        .setMethod(ctx.getTmplate().getMethod())
-                        .setUrl(createUrl(ctx));
-                JsonNode root = invokeAPI(ctx);
-                JsonNode res = processResponse(ctx, root);
-                jsonArray.add(res);
-                saveStepData(ctx, jsonArray);              
+            if (kb != null && kb.getUrl() != null && !kb.getUrl().isEmpty()) {
+              
+                    logger.info("Executing REST step: {}", kb.getName());
+                    ctx.setTmplate(getTemplate(ctx))
+                            .setBody(createRequestBody(ctx))
+                            .setHeaders(createRequestHeader(ctx))
+                            .setMethod(ctx.getTmplate().getMethod())
+                            .setUrl(createUrl(ctx));
+                    JsonNode root = invokeAPI(ctx);
+                    JsonNode res = processResponse(ctx, root);
+                    jsonArray.add(res);
+                    saveStepData(ctx, jsonArray);              
             }
 
         } catch (Exception e) {
-            logger.error("Error executing RESTStep: ", e);
+            logger.error("Error executing REST step: {}", kb != null ? kb.getName() : "unknown", e);
             ObjectNode err = objectMapper.createObjectNode();
             err.put("errors", e.getMessage());
             jsonArray.add(err);
@@ -82,37 +86,32 @@ public class RESTStep extends BaseStep {
         if (ctx.getTmplate() == null || ctx.getTmplate().getUrlParams() == null) {
             return ctx.getKnowledge().getUrl();
         } else {
-            String inputString = ctx.getTmplate().getUrlParams();
-            JsonNode jsonNode = ctx.getVariables();
-            String output = replacePlaceholders(inputString, jsonNode);
+            String urlParamsTemplate = ctx.getTmplate().getUrlParams();
+            String output = replacePlaceholders(urlParamsTemplate, ctx.getVariables());
             return ctx.getKnowledge().getUrl() + output;
         }
     }
 
     private String replacePlaceholders(String inputString, JsonNode jsonNode) {
-        StringBuilder output = new StringBuilder();
-        int i = 0;
-        while (i < inputString.length()) {
-            if (inputString.charAt(i) == '{') {
-                int j = i + 1;
-                StringBuilder keyBuilder = new StringBuilder();
-                while (j < inputString.length() && inputString.charAt(j) != '}') {
-                    keyBuilder.append(inputString.charAt(j));
-                    j++;
-                }
-                String key = keyBuilder.toString();
-                if (jsonNode.has(key)) {
-                    output.append(jsonNode.get(key).asText());
-                } else {
-                    output.append("{").append(key).append("}");
-                    logger.warn("Key not found in JSON: {}", key);
-                }
-                i = j + 1; // Skip the closing '}'
+        if (inputString == null || inputString.isEmpty()) {
+            return inputString;
+        }
+
+        Pattern pattern = Pattern.compile("\\{\\{\\$([a-zA-Z0-9_\\-]+)\\}\\}");
+        Matcher matcher = pattern.matcher(inputString);
+        StringBuffer output = new StringBuffer();
+
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            if (jsonNode != null && jsonNode.has(key)) {
+                String replacement = jsonNode.get(key).asText();
+                matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
             } else {
-                output.append(inputString.charAt(i));
-                i++;
+                logger.warn("Key not found in JSON: {}", key);
+                matcher.appendReplacement(output, Matcher.quoteReplacement(matcher.group(0)));
             }
         }
+        matcher.appendTail(output);
         return output.toString();
     }
 
@@ -155,7 +154,7 @@ public class RESTStep extends BaseStep {
 
         JsonNode root = response.getBody();
         
-        logger.info("url: {} method: {} responseBody: {}", url, method, root!=null?root.toString():"null");
+        logger.info("url: {} method: {} responseStatus: {}", url, method, response.getStatusCode());
 		return root;
 	}
 
@@ -184,11 +183,18 @@ public class RESTStep extends BaseStep {
      * @param ctx the execution context containing the template and variables
      * @return the HTTP headers for the API call
      */
-    protected HttpHeaders createRequestHeader(ExecutionContext ctx) {
+    protected HttpHeaders createRequestHeader(ExecutionContext ctx) throws JsonProcessingException {
         HttpHeaders headers = ctx.getHttpHeaderProvider() != null ? ctx.getHttpHeaderProvider().getHeader() : null;
         if (headers == null) {
             headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+        }
+        if (ctx.getTmplate().getHeaderTemplate() != null) {
+            String resolved = replacePlaceholders(ctx.getTmplate().getHeaderTemplate().toString(), ctx.getVariables());
+            JsonNode resolvedNode = objectMapper.readTree(resolved);
+            final HttpHeaders finalHeaders = headers;
+            resolvedNode.fields().forEachRemaining(entry ->
+                finalHeaders.set(entry.getKey(), entry.getValue().asText()));
         }
         return headers;
     }
@@ -199,11 +205,12 @@ public class RESTStep extends BaseStep {
      * @param ctx the execution context containing the template and variables
      * @return the JSON node representing the request body
      */
-    protected JsonNode createRequestBody(ExecutionContext ctx) {
+    protected JsonNode createRequestBody(ExecutionContext ctx) throws JsonProcessingException {
 
         if (ctx.getTmplate().isIncludeRequestBody()) {
             if (ctx.getTmplate().getBodyTemplate() != null) {
-                return ctx.getTmplate().getBodyTemplate();
+                String resolved = replacePlaceholders(ctx.getTmplate().getBodyTemplate().toString(), ctx.getVariables());
+                return objectMapper.readTree(resolved);
             } else {
                 return ctx.getVariables();
             }
@@ -222,19 +229,12 @@ public class RESTStep extends BaseStep {
     protected RestRequestTemplate getTemplate(ExecutionContext ctx) throws JsonProcessingException {
         String data = ctx.getKnowledge().getData();
         RestRequestTemplate tmp = RestRequestTemplate.getDefault();
+
         if (data != null && !data.isEmpty()) {
-            if (data.contains("{{$params}}")) {
-                if (ctx.getVariables() == null) {
-                    throw new IllegalArgumentException("Variables cannot be null");
-                } else {
-                    data = data.replace("{{$params}}", ctx.getVariables().toString());
-                }
-            }
-            
             JsonNode templateNode = objectMapper.readTree(data);
             tmp = objectMapper.convertValue(templateNode, RestRequestTemplate.class);
-            
         }
+
         return tmp;
     }
 }

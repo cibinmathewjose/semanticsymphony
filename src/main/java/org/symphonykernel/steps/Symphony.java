@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,6 +65,11 @@ public class Symphony extends BaseStep {
     
     @Autowired
     IAIClient azureOpenAIHelper;
+
+    @Autowired
+    WorkflowCheckpointStore workflowCheckpointStore;
+
+    private static final String AWAITING_INPUT_STATUS = "AWAITING_INPUT";
     
 
     @Override
@@ -72,16 +79,19 @@ public class Symphony extends BaseStep {
         ArrayNode jsonArray = objectMapper.createArrayNode();
         logger.info("Executing Symphony {} with {}", _symphony.getName(), input);
         ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
-        resolvedValues.put("input", input);
+        resolvedValues.putIfAbsent("input", input == null ? objectMapper.createObjectNode() : input);
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
             processFlowItemsByOrder(parsed, ctx, resolvedValues)
-            .doOnNext(item -> logger.info("Processing item: {}", item))
-            .onErrorContinue((e, o) -> logger.error("Error in processFlowItemsByOrder: {}", e.getMessage()))
             .then()
             .block();
             processFinalResponse(parsed, ctx, _symphony, resolvedValues, jsonArray);
-           
+        } catch (WorkflowPausedException paused) {
+            jsonArray.removeAll();
+            if (paused.getAwaitingInputNode() != null) {
+                jsonArray.add(paused.getAwaitingInputNode());
+            }
+            saveStepData(ctx, jsonArray);
         } catch (JsonProcessingException e) {
             handleJsonProcessingException(e, jsonArray);
         }
@@ -95,55 +105,91 @@ public class Symphony extends BaseStep {
     public Flux<String> getResponseStream(ExecutionContext ctx) {       
         Knowledge _symphony = ctx.getKnowledge();       
         ConcurrentHashMap<String, JsonNode> resolvedValues = new ConcurrentHashMap<>(ctx.getResolvedValues());
+        resolvedValues.putIfAbsent("input", ctx.getVariables() == null ? objectMapper.createObjectNode() : ctx.getVariables());
         logger.info("Executing Symphony {} with {}", _symphony.getName(), ctx.getVariables());
         try {
             FlowJson parsed = objectMapper.readValue(_symphony.getData(), FlowJson.class);
             // If Result references a flow item, defer its processing to the final response phase
-            String resultKey = parsed.Result;
+            String resultKey = deferredResultKey(parsed);
             StringBuilder responseAccumulator = new StringBuilder();
-            return Flux.just("Thinking...")
+            AtomicLong sequence = new AtomicLong(0);
+            AtomicReference<ObjectNode> pausedNode = new AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean flowFailed = new java.util.concurrent.atomic.AtomicBoolean();
+            logger.info("stream.start requestId={} conversationId={} stage=symphony", ctx.getRequestId(),
+                    ctx.getRequest() != null ? ctx.getRequest().getConversationId() : "");
+            return Flux.just(streamStatus(ctx, "symphony", "Gathering information...", sequence.incrementAndGet()))
                 .concatWith(
                     // Stream progress items immediately as they arrive
-                    processFlowItemsByOrder(parsed, ctx, resolvedValues, resultKey)
+                    processFlowItemsByOrder(parsed, ctx, resolvedValues, resultKey, sequence)
                         .onErrorResume(e -> {
+                            if (e instanceof WorkflowPausedException paused) {
+                                pausedNode.set(paused.getAwaitingInputNode());
+                                return buildPauseStream(ctx, paused.getAwaitingInputNode(), sequence);
+                            }
+                            flowFailed.set(true);
                             logger.error("Error in processFlowItemsByOrder: {}", e.getMessage());
-                            return Flux.just("Error: " + e.getMessage());
+                            return Flux.just(streamError(ctx, "flow_items", "Error: " + e.getMessage(), sequence.incrementAndGet()));
                         })
                 )
                 .concatWith(
                     // After all flow items complete, stream the final response
                     Flux.defer(() -> {
+                        if (pausedNode.get() != null || flowFailed.get()) {
+                            return Flux.empty();
+                        }
                         logger.info("Completed processing flow items, now processing final response as stream");
-                        return processFinalResponseAsStream(parsed, ctx, _symphony, resolvedValues)
+                        return processFinalResponseAsStream(parsed, ctx, _symphony, resolvedValues, sequence)
                             .onErrorResume(e -> {
                                 logger.error("Error in processFinalResponseAsStream: {}", e.getMessage());
-                                return Flux.just("Error: " + e.getMessage());
+                                return Flux.just(streamError(ctx, "final_response", "Error: " + e.getMessage(), sequence.incrementAndGet()));
                             });
                     })
                 )
-                .doOnNext(responseAccumulator::append)
+                .doOnNext(chunk -> responseAccumulator.append(extractContentFromEnvelope(chunk)))
                 .doFinally(signalType -> {
-                    saveStepData(ctx, responseAccumulator.toString());
+                    if (pausedNode.get() == null) {
+                        saveStepData(ctx, responseAccumulator.toString());
+                    }
+                    logger.info("stream.complete requestId={} conversationId={} stage=symphony signal={}",
+                            ctx.getRequestId(),
+                            ctx.getRequest() != null ? ctx.getRequest().getConversationId() : "",
+                            signalType);
                 });
         } catch (Exception e) {
             saveStepData(ctx, e.getMessage());
-            return Flux.just("Error processing Symphony: " + e.getMessage());
+            return Flux.just(streamError(ctx, "symphony", "Error processing Symphony: " + e.getMessage(), 1));
         }
     }
 
     // ==================== FLOW PROCESSING ====================
-    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
-        return processFlowItemsByOrder(parsed, ctx, resolvedValues, null);
+    private String deferredResultKey(FlowJson flow) {
+        if (flow.Result == null || (flow.SystemPrompt != null && !flow.SystemPrompt.isBlank())) {
+            return null;
+        }
+        for (FlowItem item : flow.Flow) {
+            if (flow.Result.equalsIgnoreCase(item.getKey())) {
+                Knowledge knowledge = knowledgeBase.GetByName(item.getName());
+                if (knowledge != null && (knowledge.getType() == org.symphonykernel.QueryType.MCP
+                        || knowledge.getType() == org.symphonykernel.QueryType.HUMANLOOP)) {
+                    return null;
+                }
+            }
+        }
+        return flow.Result;
     }
 
-    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues, String skipResultKey) {
+    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
+        return processFlowItemsByOrder(parsed, ctx, resolvedValues, null, new AtomicLong(0));
+    }
+
+    private Flux<String> processFlowItemsByOrder(FlowJson parsed, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues, String skipResultKey, AtomicLong sequence) {
         Map<Integer, List<FlowItem>> flowItemsByOrder = new TreeMap<>();
         for (FlowItem item : parsed.Flow) {
             if (skipResultKey != null && item.getKey() != null && item.getKey().equalsIgnoreCase(skipResultKey)) {
                 logger.info("Deferring flow item '{}' to final response (matches Result field)", item.getKey());
                 continue;
             }
-            Integer order = item.getOrder() != null ? item.getOrder() : 0;
+            int order = item.getOrder() != null ? item.getOrder().intValue() : 0;
             flowItemsByOrder.computeIfAbsent(order, k -> new ArrayList<>()).add(item);
         }
 
@@ -152,59 +198,127 @@ public class Symphony extends BaseStep {
                 Integer order = entry.getKey();
                 List<FlowItem> items = entry.getValue();
 
-                if (order == 0 || items.size() == 1) {
+                if (order == 0 || items.size() == 1 || items.stream().anyMatch(this::isHumanInputItem)) {
                     // SEQUENTIAL PROCESSING
                     return Flux.fromIterable(items)
-                        .concatMap(item -> executeWithStatus(item, ctx, resolvedValues));
+                        .concatMap(item -> executeWithStatus(item, ctx, resolvedValues, sequence));
                 } else {
                     // PARALLEL PROCESSING (for items within the same order group)
                     return Flux.fromIterable(items)
-                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues), 8);
+                        .flatMap(item -> executeWithStatus(item, ctx, resolvedValues, sequence), 8);
                 }
             });
     }
-    private Flux<String> executeWithStatus(FlowItem item, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
+
+    private boolean isHumanInputItem(FlowItem item) {
+        Knowledge knowledge = knowledgeBase.GetByName(item.getName());
+        return knowledge != null && knowledge.getType() == org.symphonykernel.QueryType.HUMANLOOP;
+    }
+
+    private Flux<String> executeWithStatus(FlowItem item, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues, AtomicLong sequence) {
         String itemName = item.getKey() != null ? item.getKey() : "Unknown Item";
 
         return Flux.defer(() -> {
             // 1. Start with the status message
-            return Flux.just(knowledgeBase.getKnowledgeDescriptions(itemName) +"("+itemName +")")
+            return Flux.just(streamStatus(ctx, "flow_item", knowledgeBase.getKnowledgeDescriptions(itemName) +"("+itemName +")", sequence.incrementAndGet()))
                 .concatWith(
                     // 2. Perform work and directly emit COMPLETED as the Mono's value
                     Mono.fromCallable(() -> {
                         logger.info("Actually starting work for: {}", itemName);
                         long startTime = System.currentTimeMillis();
-                        processFlowItem(item, ctx, resolvedValues);                        
-                        return itemName +" completed in " + (System.currentTimeMillis() - startTime) + " ms";
+                        ObjectNode awaitingNode = processFlowItem(item, ctx, resolvedValues);
+                        if (awaitingNode != null) {
+                            throw new WorkflowPausedException(awaitingNode);
+                        }
+                        long elapsedMs = System.currentTimeMillis() - startTime;
+                        return streamEnvelope(ctx, "complete", "flow_item", itemName +" completed in " + elapsedMs + " ms", null, sequence.incrementAndGet(), elapsedMs);
                     })
                     .subscribeOn(Schedulers.boundedElastic()) // Offload blocking I/O
                 )
                 .doOnNext(msg -> logger.info("Flux emitting: {}", msg))
                 .doOnComplete(() -> logger.info("Stream sequence finished for: {}", itemName))
                 .onErrorResume(e -> {
+                    if (e instanceof WorkflowPausedException || isHumanInputItem(item)) {
+                        return Flux.error(e);
+                    }
                     logger.error("Error in {}: {}", itemName, e.getMessage());
-                    return Flux.just("ERROR: " + itemName + " - " + e.getMessage());
+                    return Flux.just(streamError(ctx, "flow_item", "ERROR: " + itemName + " - " + e.getMessage(), sequence.incrementAndGet()));
                 });
         });
     }
 
-    private void processFlowItem(FlowItem item, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
+    private ObjectNode processFlowItem(FlowItem item, ExecutionContext ctx, ConcurrentHashMap<String, JsonNode> resolvedValues) {
+        String itemKey = item.getKey() != null ? item.getKey().toLowerCase() : null;
+        if (itemKey != null && resolvedValues.containsKey(itemKey)) {
+            logger.info("Skipping already resolved step {}", item.getKey());
+            return null;
+        }
         if (shouldSkipItem(item, resolvedValues)) {
-            return;
+            return null;
         }
         
         Knowledge kb = knowledgeBase.GetByName(item.getName());
         if (kb == null) {
-            return;
+            return null;
         }
         logger.info("Executing Symphony: {} with Payload: {}", item.getName(), item.getPayload());
         
         JsonNode resolverPayload = resolvePayload(item, resolvedValues);
+        if (item.getPayload() == null && (kb.getType() == org.symphonykernel.QueryType.MCP
+                || kb.getType() == org.symphonykernel.QueryType.HUMANLOOP)) {
+            resolverPayload = objectMapper.createObjectNode();
+        }
         if (resolverPayload != null) {
-            JsonNode result = processPayload(item, ctx, kb, resolverPayload);
+            ExecutionContext itemContext = new ExecutionContext(ctx);
+            itemContext.getResolvedValues().putAll(resolvedValues);
+            JsonNode result = processPayload(item, itemContext, kb, resolverPayload);
+            if (itemContext.getHttpHeaderProvider() != null) {
+                ctx.setHttpHeaderProvider(itemContext.getHttpHeaderProvider());
+            }
+            ObjectNode awaitingNode = extractAwaitingInputNode(result);
+            if (awaitingNode != null) {
+                saveWorkflowCheckpoint(ctx, item, resolvedValues);
+                return awaitingNode;
+            }
+            if (kb.getType() == org.symphonykernel.QueryType.HUMANLOOP) {
+                throw new IllegalStateException("Could not save the pending approval");
+            }
             addResultMap(resolvedValues, item, result);
             processPrompt(item.getKey().toLowerCase(), resolvedValues, item.SystemPrompt);
         }
+        return null;
+    }
+
+    private void saveWorkflowCheckpoint(ExecutionContext ctx, FlowItem waitingItem, Map<String, JsonNode> resolvedValues) {
+        WorkflowCheckpoint checkpoint = new WorkflowCheckpoint();
+        checkpoint.setRequestId(ctx.getRequestId());
+        checkpoint.setKnowledgeName(ctx.getKnowledge() != null ? ctx.getKnowledge().getName() : null);
+        checkpoint.setWaitingStepKey(waitingItem != null && waitingItem.getKey() != null ? waitingItem.getKey().toLowerCase() : null);
+        checkpoint.setModelName(ctx.getModelName());
+        checkpoint.setResolvedValues(new HashMap<>(resolvedValues));
+        workflowCheckpointStore.save(checkpoint);
+    }
+
+    private ObjectNode extractAwaitingInputNode(JsonNode result) {
+        if (result == null) {
+            return null;
+        }
+        JsonNode node = result;
+        if (result.isArray() && result.size() > 0) {
+            node = result.get(0);
+        }
+        if (node != null && node.isObject() && AWAITING_INPUT_STATUS.equalsIgnoreCase(node.path("status").asText())) {
+            return (ObjectNode) node.deepCopy();
+        }
+        return null;
+    }
+
+    private Flux<String> buildPauseStream(ExecutionContext ctx, ObjectNode awaitingNode, AtomicLong sequence) {
+        String content = awaitingNode == null ? "" : awaitingNode.toString();
+        return Flux.just(
+                streamStatus(ctx, "human_loop", "Awaiting your input", sequence.incrementAndGet()),
+                streamContent(ctx, "human_loop", content, sequence.incrementAndGet()),
+                streamComplete(ctx, "human_loop", "Paused for user input", sequence.incrementAndGet()));
     }
 
     private boolean shouldSkipItem(FlowItem item, Map<String, JsonNode> resolvedValues) {
@@ -336,7 +450,7 @@ public class Symphony extends BaseStep {
             jsonArray.add(objectNode);
         }
     }
-    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, ConcurrentHashMap<String, JsonNode> resolvedValues) {
+    private Flux<String> processFinalResponseAsStream(FlowJson parsed, ExecutionContext ctx, Knowledge _symphony, ConcurrentHashMap<String, JsonNode> resolvedValues, AtomicLong sequence) {
         if (parsed.SystemPrompt != null && !parsed.SystemPrompt.isEmpty()) {
             logger.info("Processing final response");
             String systemPrompt = templateResolver.resolvePlaceholders(parsed.SystemPrompt, resolvedValues);
@@ -351,22 +465,29 @@ public class Symphony extends BaseStep {
            
             if ((systemPrompt.indexOf(JsonTransformer.JSON) >= 0 || systemPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0) &&
                 (userPrompt.indexOf(JsonTransformer.JSON) >= 0 || userPrompt.indexOf(TemplateResolver.NO_DATA_FOUND) < 0)) {
-                Flux<String> generatingMsg = Flux.just("Generating output:");
+                Flux<String> generatingMsg = Flux.just(streamStatus(ctx, "final_response", "Generating output...", sequence.incrementAndGet()));
                 if (_symphony.getTools() != null && _symphony.getTools().length() > 0) {
                     return generatingMsg.concatWith(
                         azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, loadTools(_symphony.getTools()), ctx.getModelName(),true))
+                                .map(chunk -> streamContent(ctx, "final_response", chunk, sequence.incrementAndGet()))
                     );
                 } else {
                     return generatingMsg.concatWith(
                         azureOpenAIHelper.streamExecute(new LLMRequest(systemPrompt, userPrompt, null, ctx.getModelName(),true))
+                                .map(chunk -> streamContent(ctx, "final_response", chunk, sequence.incrementAndGet()))
                     );
                 }
             } else {
                  String result = "Unable to process request, data not availabe";
                 logger.warn("Missing Data, Avoid LLM Call, systemPrompt {} userPrompt {}", systemPrompt, userPrompt);
-                return Flux.just(result);
+                return Flux.just(streamError(ctx, "final_response", result, sequence.incrementAndGet()));
             }
         } else if (parsed.Result != null && !parsed.Result.isEmpty()) {
+            JsonNode resolved = resolvedValues.get(parsed.Result.toLowerCase());
+            if (resolved != null || deferredResultKey(parsed) == null) {
+                JsonNode result = resolved == null ? objectMapper.nullNode() : resolved;
+                return Flux.just(streamContent(ctx, "final_response", result.toString(), sequence.incrementAndGet()));
+            }
             // Find the deferred flow item matching Result and stream its execution
             FlowItem resultItem = null;
             for (FlowItem fi : parsed.Flow) {
@@ -380,29 +501,42 @@ public class Symphony extends BaseStep {
                 if (kb != null) {
                     JsonNode resolverPayload = resolvePayload(resultItem, resolvedValues);
                     if (resolverPayload != null) {
-                        return Flux.just("Generating output:")
-                            .concatWith(getResultsStream(ctx, kb, resultItem, resolverPayload));
+                        return Flux.just(streamStatus(ctx, "final_response", "Generating output...", sequence.incrementAndGet()))
+                            .concatWith(getResultsStream(ctx, kb, resultItem, resolverPayload)
+                                .map(chunk -> {
+                                    if (isStreamEnvelope(chunk)) {
+                                        return chunk;
+                                    }
+                                    String trimmed = chunk == null ? "" : chunk.trim();
+                                    if ("Generating output:".equalsIgnoreCase(trimmed)) {
+                                        return streamStatus(ctx, "final_response", "Generating output...", sequence.incrementAndGet());
+                                    }
+                                    if ("Gathering information...".equalsIgnoreCase(trimmed)) {
+                                        return streamStatus(ctx, "final_response", "Gathering information...", sequence.incrementAndGet());
+                                    }
+                                    return streamContent(ctx, "final_response", chunk, sequence.incrementAndGet());
+                                }));
                     }
                 }
                 // Fallback: execute blocking if payload/kb is null
                 final FlowItem deferredItem = resultItem;
-                return Flux.just("Generating output:")
+                return Flux.just(streamStatus(ctx, "final_response", "Generating output...", sequence.incrementAndGet()))
                     .concatWith(Mono.fromCallable(() -> {
                         processFlowItem(deferredItem, ctx, resolvedValues);
                         JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
-                        return resultNode.toString();
+                        return streamContent(ctx, "final_response", resultNode.toString(), sequence.incrementAndGet());
                     }).subscribeOn(Schedulers.boundedElastic()).flux());
             }
             // Result key doesn't match any flow item return already-resolved value
             JsonNode resultNode = resolvedValues.getOrDefault(parsed.Result.toLowerCase(), objectMapper.nullNode());
-            return Flux.just("Generating output:" + resultNode.toString());
+            return Flux.just(streamContent(ctx, "final_response", resultNode.toString(), sequence.incrementAndGet()));
         } else {
             ObjectNode objectNode = objectMapper.createObjectNode();
             for (Map.Entry<String, JsonNode> entry : resolvedValues.entrySet()) {
                 objectNode.set(entry.getKey(), entry.getValue());
             }
             
-            return Flux.just(objectNode.toString());
+            return Flux.just(streamContent(ctx, "final_response", objectNode.toString(), sequence.incrementAndGet()));
         }
     }
     
@@ -498,7 +632,7 @@ public class Symphony extends BaseStep {
         JsonNode result;
         ExecutionContext newCtx = new ExecutionContext(ctx);
         newCtx.setCurrentFlowItem(item);
-        newCtx.setName(kb.getName());
+        newCtx.setKnowledge(kb);
         newCtx.setVariables(idNode);
         newCtx.setConvert(true);
         result = getResult(kb, newCtx);

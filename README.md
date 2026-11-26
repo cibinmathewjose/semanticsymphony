@@ -6,6 +6,22 @@ Welcome to the **Symphony AI** Developer Documentation. This comprehensive guide
 
 ## 📚 Documentation Structure
 
+### Outbound MCP pilot
+
+For a published agent that exposes a supported MCP endpoint, enable `symphony.mcp.client.enabled=true` and opt into `symphony.mcp.client.servers[0].transport=streamable` for that registration. Set its name and URL in trusted application configuration. Use only targets approved for the data the workflow sends.
+
+Outbound MCP defaults to `symphony.mcp.client.request-timeout=20s`, `symphony.mcp.client.initialization-timeout=20s`, and `symphony.mcp.client.max-tool-discovery-pages=10`. The request deadline applies to each call or discovery page, not the entire workflow. A repeated discovery cursor or page-limit overflow fails discovery rather than publishing a partial tool list. The existing shared client uses registration credentials, not delegated end-user identity; do not use it for endpoints that require per-user authorization.
+
+### Outbound A2A workflow step
+
+1. Configure `symphony.a2a.targets.microsoft-agent.url` in trusted application configuration with the agent's HTTPS JSON-RPC endpoint. Use the URL and binding published by the agent; the step does not fetch Agent Cards. Set `symphony.a2a.targets.microsoft-agent.version` to `1.0` (default) or `0.3`, as advertised by that endpoint.
+2. Register an `A2ATokenProvider` Spring bean. For Microsoft, acquire a delegated Entra access token for the current signed-in user and target API. Resolve the user from trusted host authentication and make that identity available on workflow workers; do not use a username supplied in workflow data. The step does not perform OAuth sign-in or token exchange, and does not share tokens between turns.
+3. Define a knowledge entry of type `A2A` with data `{"target":"microsoft-agent"}` and reference the entry from a workflow. The step uses the text input variable `message` when supplied, otherwise the current question. The result contains `text` and, when returned, `taskId` and `contextId`. This implementation starts a new remote turn each time; it does not send previous task or context IDs.
+
+For [Copilot Studio's preview A2A channel](https://learn.microsoft.com/en-us/microsoft-copilot-studio/agents-experience/publication-channels-mcp-agent-to-agent), copy the URL from **Channels → A2A client**, confirm the JSON-RPC version for the endpoint, and request the delegated `MCS.InvokeAsA2A` scope for its Power Platform environment. For [Microsoft 365 Work IQ](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/a2a/overview), use the target Agent Card's JSON-RPC URL and Work IQ delegated permissions instead.
+
+This step sends one text message, then polls the returned task if needed, within a 30-second budget. It does not retry the message or switch routes after a failure. Remote SSE, task resume/cancellation, and the backup adapter are not implemented by this step.
+
 ### 1. **DEVELOPER_DOCUMENTATION.md** - Main Developer Guide
 The complete guide covering:
 - Project overview and architecture
@@ -74,6 +90,13 @@ Solutions for common issues:
 - FAQ and common questions
 
 **Use this** when you encounter problems.
+
+### Companion projects: runnable demo and evaluations
+
+- [Symphony AI Demo](https://github.com/cibinmathewjose/symphony-ai-demo) is a runnable Spring Boot application that shows how to define knowledge and workflows in YAML, stream chat replies, and pause a workflow for human approval. Start here to see Symphony AI in action.
+- [Symphony Eval](https://github.com/cibinmathewjose/symphony-eval) runs YAML-defined regression suites against an application's API and produces JSON and HTML batch reports. It supports deterministic checks and optional LLM-based scoring. It is built separately and is not required by the Symphony runtime.
+
+To try them together, run the demo locally, then point Symphony Eval's SSE adapter at `http://localhost:8085/directchat/stream`. Start with read-only cases such as inventory lookups or return-policy questions, then adapt those suites for your own application.
 
 ---
 
@@ -160,8 +183,8 @@ Solutions for common issues:
 - **AgenticStep**: [AgenticStep](DEVELOPER_DOCUMENTATION.md#6-agenticstep)
 - **DatabaseStep**: [DatabaseStep](DEVELOPER_DOCUMENTATION.md#7-databasestyle)
 - **EmailStep**: [EmailStep](DEVELOPER_DOCUMENTATION.md#8-emailstep)
-- **DocumentStep**: [DocumentStep](DEVELOPER_DOCUMENTATION.md#9-documentstep)
-- **WebSearchStep**: [WebSearchStep](DEVELOPER_DOCUMENTATION.md#10-websearchstep)
+- **DocumentStep**: [DocumentStep](DEVELOPER_DOCUMENTATION.md#12-documentstep)
+- **WebSearchStep**: [Microsoft Foundry Web Search](DEVELOPER_DOCUMENTATION.md#13-websearchstep)
 - **HumanInLoopStep**: [HumanInLoopStep](DEVELOPER_DOCUMENTATION.md#11-humaninloopstep)
 - **AuthenticationStep**: [AuthenticationStep](DEVELOPER_DOCUMENTATION.md#12-authenticationstep)
 

@@ -78,6 +78,15 @@ public class AzureOpenAIConnectionProperties {
      * @return the deployment name
      */
     public String getDeploymentName() {
+        if (deploymentName != null && !deploymentName.isBlank()) {
+            return deploymentName;
+        }
+        if (environment != null) {
+            String springDefaultDeployment = environment.getProperty("spring.ai.azure.openai.chat.options.deployment-name");
+            if (springDefaultDeployment != null && !springDefaultDeployment.isBlank()) {
+                return springDefaultDeployment;
+            }
+        }
         return deploymentName;
     }
 
@@ -223,11 +232,23 @@ public class AzureOpenAIConnectionProperties {
      * @return the max completion tokens for this model, or {@code null} if not defined
      */
     public Integer getMaxCompletionTokens(String modelName) {
-        Integer maxCompletionTokens = null;
-        if (modelName != null && !modelName.isBlank() && environment != null) {
-            maxCompletionTokens = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.maxCompletionTokens", Integer.class);           
+        if (environment == null) {
+            return null;
         }
-        return maxCompletionTokens;
+        Integer maxCompletionTokens = null;
+        if (modelName != null && !modelName.isBlank()) {
+            maxCompletionTokens = readIntegerKeys(
+                CONFIG_PREFIX + "." + modelName + ".options.maxCompletionTokens",
+                CONFIG_PREFIX + "." + modelName + ".options.max_completion_tokens",
+                CONFIG_PREFIX + "." + modelName + ".options.max-completion-tokens");
+        }
+        if (maxCompletionTokens != null) {
+            return maxCompletionTokens;
+        }
+        return readIntegerKeys(
+            CONFIG_PREFIX + ".options.maxCompletionTokens",
+            CONFIG_PREFIX + ".options.max_completion_tokens",
+            CONFIG_PREFIX + ".options.max-completion-tokens");
     }
     /**
      * Returns the max tokens configured for the given model name.
@@ -239,11 +260,23 @@ public class AzureOpenAIConnectionProperties {
      * @return the max tokens for this model, or {@code null} if not defined
      */
     public Integer getMaxTokens(String modelName) {
-        Integer maxTokens = null;
-        if (modelName != null && !modelName.isBlank() && environment != null) {
-            maxTokens = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.maxTokens", Integer.class);           
+        if (environment == null) {
+            return null;
         }
-        return maxTokens;
+        Integer modelMaxTokens = null;
+        if (modelName != null && !modelName.isBlank()) {
+            modelMaxTokens = readIntegerKeys(
+                CONFIG_PREFIX + "." + modelName + ".options.maxTokens",
+                CONFIG_PREFIX + "." + modelName + ".options.max_tokens",
+                CONFIG_PREFIX + "." + modelName + ".options.max-tokens");
+        }
+        if (modelMaxTokens != null) {
+            return modelMaxTokens;
+        }
+        return readIntegerKeys(
+            CONFIG_PREFIX + ".options.maxTokens",
+            CONFIG_PREFIX + ".options.max_tokens",
+            CONFIG_PREFIX + ".options.max-tokens");
     }
     /**
      * Returns the temperature configured for the given model name.
@@ -255,11 +288,27 @@ public class AzureOpenAIConnectionProperties {
      * @return the temperature for this model, or {@code null} if not defined
      */
     public Double getTemperature(String modelName) {
-        Double temperature = null;
+        Double configuredTemperature = null;
         if (modelName != null && !modelName.isBlank() && environment != null) {
-            temperature = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.temperature", Double.class);           
+            configuredTemperature = environment.getProperty( CONFIG_PREFIX + "." + modelName + ".options.temperature", Double.class);           
         }
-        return temperature;     
+        return configuredTemperature;
+    }
+
+    private Integer readIntegerKeys(String... keys) {
+        if (environment == null || keys == null) {
+            return null;
+        }
+        for (String propertyKey : keys) {
+            if (propertyKey == null || propertyKey.isBlank()) {
+                continue;
+            }
+            Integer val = environment.getProperty(propertyKey, Integer.class);
+            if (val != null) {
+                return val;
+            }
+        }
+        return null;
     }
    /**
     * Returns the endpoint for the given model name, falling back to the default endpoint.

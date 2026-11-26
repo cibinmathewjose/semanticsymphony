@@ -4,7 +4,7 @@
   <head>
     <meta http-equiv="content-type" content="text/html; charset=UTF-8">
     <meta http-equiv="content-language" content="en">
-    <meta name="description" content="Cornerstone Copilot Agent Builder">
+    <meta name="description" content="Copilot Agent Builder">
 
     <!-- Boot theme from localStorage before paint -->
     <script>
@@ -2119,7 +2119,7 @@ select.edit-modal-input:focus {
     </style>
 
     <link rel="icon" type="image/png" href="favicon.png">
-    <title>Agent Builder - Cornerstone Copilot</title>
+    <title>Agent Builder - Copilot</title>
   </head>
 
   <body>
@@ -2299,12 +2299,13 @@ select.edit-modal-input:focus {
         if (kb.module !== undefined) fields.module = kb.module || '';
         if (kb.systemPrompt !== undefined) fields.systemPrompt = kb.systemPrompt || '';
         if (kb.data !== undefined) fields.data = kb.data || '';
+        if (kb.url !== undefined) fields.url = kb.url;
         if (kb.parameters !== undefined) {
           fields.params = typeof kb.parameters === 'string'
             ? kb.parameters
             : JSON.stringify(kb.parameters);
         }
-        // Map YAML type string to QueryType ordinal name
+        // Send the enum name, not a database code.
         if (kb.type !== undefined) fields.type = String(kb.type);
         return fields;
       }
@@ -3393,7 +3394,6 @@ async function saveSettings() {
       // ===== QueryType enum options for dropdowns =====
       const QUERY_TYPE_OPTIONS = [
         { value: '', label: '— Select Type —' },
-        { value: 'UNKNOWN', label: 'UNKNOWN' },
         { value: 'SQL', label: 'SQL' },
         { value: 'REST', label: 'REST' },
         { value: 'SYMPHONY', label: 'SYMPHONY' },
@@ -3403,7 +3403,15 @@ async function saveSettings() {
         { value: 'VELOCITY', label: 'VELOCITY' },
         { value: 'FILE', label: 'FILE' },
         { value: 'SHAREPOINT', label: 'SHAREPOINT' },
-        { value: 'RFC', label: 'RFC' }
+        { value: 'AGENTIC', label: 'AGENTIC' },
+        { value: 'DATABASE', label: 'DATABASE' },
+        { value: 'HUMANLOOP', label: 'HUMANLOOP' },
+        { value: 'MCP', label: 'MCP' },
+        { value: 'A2A', label: 'A2A' },
+        { value: 'AZURE_AI_SEARCH', label: 'Azure AI Search' },
+        { value: 'WEBSEARCH', label: 'WEBSEARCH' },
+        { value: 'AUTH', label: 'AUTH' },
+        { value: 'EMAIL', label: 'EMAIL' }
       ];
 
       // ===== Designer Rendering =====
@@ -3552,6 +3560,7 @@ async function saveSettings() {
           { key: 'name', label: 'Name', value: kb.name || '', type: 'text' },
           { key: 'description', label: 'Description', value: kb.description || '', type: 'text' },
           { key: 'type', label: 'Type', value: kb.type || '', type: 'select', options: QUERY_TYPE_OPTIONS },
+          { key: 'url', label: 'URL', value: kb.url || '', type: 'text' },
           { key: 'module', label: 'Module', value: kb.module || '', type: 'text' },
           { key: 'service', label: 'Service', value: kb.service || '', type: 'text' },
           { key: 'status', label: 'Status', value: kb.status || '', type: 'text' }
@@ -3855,6 +3864,7 @@ async function saveSettings() {
               { key: 'order', label: 'Order', value: String(stepOrder), type: 'text', hint: 'Steps with same order run in parallel' },
               { key: 'payload', label: 'Payload', value: stepPayload, type: 'multiselect', options: payloadOptions },
               { key: 'type', label: 'Type', value: detail ? (detail.type || '') : '', type: 'select', options: QUERY_TYPE_OPTIONS },
+              { key: 'url', label: 'URL', value: detail?.url || '', type: 'text' },
               { key: 'description', label: 'Description', value: detail ? (String(detail.description || '').trim()) : '', type: 'text' },
               { key: 'status', label: 'Status', value: detail ? (detail.status || '') : '', type: 'text' },
               { key: 'service', label: 'Service', value: detail ? (detail.service || '') : '', type: 'text' },
@@ -4193,11 +4203,16 @@ async function saveSettings() {
           } else if (f.type === 'select' && Array.isArray(f.options)) {
             input = document.createElement('select');
             input.className = 'edit-modal-input';
-            f.options.forEach(opt => {
+            const current = String(f.value ?? '').trim();
+            const selected = f.options.find(opt => opt.value.toUpperCase() === current.toUpperCase());
+            const options = !selected && current
+              ? [...f.options, { value: current, label: current + ' (existing value)' }]
+              : f.options;
+            options.forEach(opt => {
               const option = document.createElement('option');
               option.value = opt.value;
               option.textContent = opt.label;
-              if (opt.value === f.value || opt.value.toUpperCase() === (f.value || '').toUpperCase()) {
+              if (opt.value === (selected?.value ?? current)) {
                 option.selected = true;
               }
               input.appendChild(option);
@@ -4412,6 +4427,9 @@ async function saveSettings() {
             if (vals.name !== undefined) kb.name = vals.name;
             if (vals.description !== undefined) kb.description = vals.description;
             if (vals.type !== undefined) kb.type = vals.type;
+            if (vals.url !== undefined && (vals.url.trim() || Object.hasOwn(kb, 'url'))) {
+              kb.url = vals.url.trim() || null;
+            }
             if (vals.module !== undefined) kb.module = vals.module;
             if (vals.service !== undefined) kb.service = vals.service;
             if (vals.status !== undefined) kb.status = vals.status;
@@ -4452,6 +4470,9 @@ async function saveSettings() {
             const oldName = step.name;
             if (vals.name !== undefined) step.name = vals.name;
             if (vals.type !== undefined) step.type = vals.type;
+            if (vals.url !== undefined && (vals.url.trim() || Object.hasOwn(step, 'url'))) {
+              step.url = vals.url.trim() || null;
+            }
             if (vals.description !== undefined) step.description = vals.description;
             if (vals.status !== undefined) step.status = vals.status;
             if (vals.service !== undefined) step.service = vals.service;
